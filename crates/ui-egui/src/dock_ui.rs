@@ -174,7 +174,10 @@ impl FilmcraftApp {
         let t = self.tokens;
         let mut body = content;
         // 剪映专业版里工具条贴在时间轴上方；这里只在 `Jianying` 工作区给 Timeline 让出 38 px。
-        if panel == PanelKind::Timeline && self.ui.workspace == "Jianying" && content.height() > 240.0 {
+        // Compact/Medium 的工具条由 `shell_area` 画在时间轴上方；这里只负责 Wide，
+        // 否则同一帧会画两次（重复的 egui id 还会让界面叠出红色告警）。
+        let wide = crate::layout::LayoutClass::from_width(ui.ctx().content_rect().width()) == crate::layout::LayoutClass::Wide;
+        if wide && panel == PanelKind::Timeline && self.ui.workspace == "Jianying" && content.height() > 240.0 {
             let toolbar_height = 38.0_f32.min(content.height() * 0.12);
             let toolbar = Rect::from_min_size(content.min, egui::vec2(content.width(), toolbar_height));
             self.timeline_toolbar(ui, toolbar, &t);
