@@ -20,7 +20,7 @@
 |---|---|---|
 | `jianying-cli` | `openspec/changes/unify-rust-jianying-engine/tasks.md` **9.3** | 本 runbook 的 A 部分；已有草稿编辑仍可能因不透明元数据失败，不因本 runbook 自动完成 |
 | `jianying-cli` | 同上 **9.7** | **不会被本 runbook 关闭**；9.7 还要完整 parity、来源、差分门禁 |
-| `jianyingcraft` | `openspec/changes/derive-from-filmcraft/tasks.md` 第 39 行 | 本 runbook 的 B 部分 |
+| `jianyingcraft` | `openspec/changes/derive-from-filmcraft/tasks.md` 任务 **#39** | 本 runbook 的 B 部分（DMG 布局重生成） |
 
 **判定标准**：
 
@@ -185,7 +185,7 @@ PowerShell 写文件时不要用 `Set-Content -Encoding utf8`（会带 BOM）；
 
 ### 3.3 构建并校验草稿（绝对路径）
 
-工作目录：`$CANARY`
+工作目录：`$CANARY`。`$DRAFT` 必须是**不存在**的目录；重跑前删掉旧目录或换名。
 
 ```sh
 DRAFT="$CANARY/draft"
@@ -197,7 +197,6 @@ DRAFT="$CANARY/draft"
   --width 1280 --height 720 --fps 30 --json
 
 "$JY" project verify "$DRAFT" --json
-"$JY" script-does-not-exist 2>/dev/null || true
 ```
 
 ```powershell
@@ -232,7 +231,7 @@ $DRAFT = Join-Path $CANARY "draft"
     "ok": true,
     "name": "Rust Canary 20261020",
     "duration_us": 6000000,
-    "tracks": 2,
+    "tracks": 3,
     "issues": []
   }
 }
@@ -513,6 +512,9 @@ shasum -a 256 "$CANARY/contact-sheet.png"
 `draft_digest`：对发布后的草稿目录做稳定摘要。可以用
 `shasum -a 256 draft_content.json draft_info.json draft_meta_info.json`，把三行按文件名排序后
 再哈希；或者直接记录 `sha256(sum of the three file digests)`。**不要**用目录 mtime。
+
+> 上面记录里的哈希、字节数、时长都是**示例值**。必须用实际 `shasum` / `ffprobe` 输出替换；
+> `runtime acceptance verify` 会重新计算导出制品、联系表和流信息，任何不一致都会 fail closed。
 
 跑校验（工作目录：`$CLI`）：
 

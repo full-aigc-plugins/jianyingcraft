@@ -47,6 +47,7 @@
       UTF-16 卷名 @0x231f、Carbon 路径 @0x22cf、POSIX 路径 @0x2355），按 README「按卷名解析」规则，
       DMG 背景要等 `generate.py` 重生成后才生效。本机非 macOS，**未做 Finder 可视化验证**，
       只证明 DSDB 结构正确。为避免在缺 mac_alias 验证的环境下手写别名导致布局损坏，未重建别名。*
+      → 步骤见 docs/runbooks/macos-canary.md
 - [x] **构建环境**：`pwsh` 启动即失败（`SetNamedSecurityInfoW failed (Win32 5)`），
       无法 `git`/`cargo`/`wasm-bindgen`；`craft-ui` 为 git 依赖且本机 GitHub DNS 不可达。
       二者不解决，§2 全部无法执行。
@@ -298,6 +299,7 @@
       *遗留不确定*：`timeline audio-effect` 对 `category_id:"timbre"` 也写 `sub_type:1`（场景音效），
       而客户端变声判据是 `sub_type==2`（VCVoiceChange），需真机听感/波形验收后再定。
       *本地模板库仍未做。*
+      → 步骤见 docs/runbooks/voice-change-listening.md
 - [x] 自有品牌资产（logo/图标）替换 favicon 与关于页：`assets/brand/` 生成的 favicon 已进 web 产物（`apps/filmcraft-web/web/favicon.png`），关于页使用自有名称与链接
 - [x] 自有帮助页与 GitHub 链接：`links.rs` 只指向本仓仓库与 issue tracker，上游社区链接刻意不出现（原因是上游品牌许可）
 
@@ -477,11 +479,13 @@
       cue 数 2、时间码单调、中文不乱码。详见 `docs/derivation/10-skill-runbook-verification.md`
 - [ ] 技能实跑未覆盖：`transcript.generate`（本机无语音模型）、字幕面板样式预览、
       `captions.setStyle` 的渲染效果
+      → 步骤见 docs/runbooks/skill-reruns.md
 - [x] **批量混剪核心链路实跑验证**（2026-10-18，headless CLI）：
       `clip.replaceFromBin`（clip 29 → item 6，联动音频 30 一起换）→ `file.saveCopy`（28,245 字节工作副本）
       → `file.exportMedia`（**17,984,537 字节 mp4**，`offlineMedia: []`）；替换后片段时间不变，
       对应技能里"未自适应，时长按模板"。详见 `docs/derivation/10-skill-runbook-verification.md` §8-10
-- [ ] 批量混剪未覆盖：N 条循环与清单生成、失败路径注入、外部 ffprobe 校验（本机无 ffprobe）
+- [x] 批量混剪的 N 条循环 + 清单 + 失败注入：`skill-smoke.mjs::batch-remix-loop` 跑 3 轮（替换→变速→保存副本→导出），`manifest.jsonl` 逐行记 sha256/字节数并回读核对，3 份导出**哈希互不相同**；`batch-remix-failure` 断言不存在的素材 id 让 CLI 以 `ok:false` 退出 1。**仍缺**：外部 ffprobe 校验（本机无 ffprobe，属环境限制）
+      → 步骤见 docs/runbooks/skill-reruns.md
 - [x] **图文成片核心链路实跑验证**（2026-10-18，headless CLI）：
       1080×1920/30 新序列 → 两段画面（Color Matte + Bars and Tone）→ `tts.create`/`tts.render`
       （clip 60，2.98 s）→ `captions.import`（2 条）→ `captions.list`（1 轨 2 条）→
@@ -489,6 +493,7 @@
       详见 `docs/derivation/10-skill-runbook-verification.md` §11-13
 - [ ] 图文成片未覆盖：外部素材 `file.import`、中文配音（`tts.voices` 只有 `en-US`）、
       配音/画面时长自动对齐、成片抽帧校验
+      → 步骤见 docs/runbooks/skill-reruns.md
 - [x] **三个场景技能固化为可重复校验**（2026-10-19，`ui/skill-smoke.mjs`）：
       一条命令跑完三套序列并断言产物 ——
       captions（2 条、SRT 2 cue / 103 字节）、batch-remix（副本 28,245 B + 成片 17,984,537 B，
@@ -497,6 +502,7 @@
 - [ ] 其余三个技能（编辑器/使用指南/场景手册）是交互说明，没有独立命令流可脚本化；
       它们的命令 id 已由 `verify-skills` 校验
 - [ ] ZCode / Codex / Kimi 实机验收（安装 + MCP 调用 + 画面三段证据）
+      → 步骤见 docs/runbooks/three-host-install.md
 
       **更正（同轮复查）**：adapter **本来就**在 `app/index.html` 里注入了
       `<script type="module" src="../connect.js">`，并且有 `/connect.js` 路由去读

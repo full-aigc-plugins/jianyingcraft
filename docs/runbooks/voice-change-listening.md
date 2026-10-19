@@ -29,7 +29,7 @@
 
 | 依赖 | 要求 | 检查命令 | 期望 |
 |---|---|---|---|
-| 剪映专业版 | Windows 或 macOS，已安装且能正常打开草稿 | `jianying runtime discover --json` | `state` 为 `found_unverified` 或 `not_installed` 以外；记录 `version` 与 `executable_identity.sha256` |
+| 剪映专业版 | Windows 或 macOS，已安装且能正常打开草稿 | `jianying runtime discover --json` | `state` 为 `found_unverified`（不是 `not_installed`）；记录 `version` 与 `executable_identity.sha256` |
 | `jianying` CLI | 本仓 `target/debug/jianying.exe`（或 release 版） | `jianying --version` | `jianying 1.7.0`（以实际为准） |
 | `ffprobe` | `media probe` / `quickstart --audio` 必需 | `ffprobe -version` | 第一行含 `ffprobe version` |
 | Python | 仅用于改 `sub_type` 和校验 JSON | `python --version` | 3.10+ |
@@ -93,7 +93,7 @@ export JIANYING_CLI_PROCESS_LIST="$empty"
 "$JY" capabilities --json > "$WS/capabilities.json"
 ```
 
-期望（本机实测，2026-10-20，Windows）：
+期望（本机实测，2026-10-20，Windows；节选，实际还有 CapCut 草稿根）：
 
 ```json
 {
@@ -160,6 +160,7 @@ export JIANYING_CLI_PROCESS_LIST="$empty"
 
 工作目录：`$WS`。**`--out` 和 `--audio` 都用绝对路径**——相对路径会让素材被写成
 `draft\draft\assets\...`，随后 `project verify` 报 `local material file does not exist`。
+`$DRAFT_A` / `$DRAFT_B` 必须是**不存在**的目录；重跑前删掉旧目录或换名。
 
 ```powershell
 $VOICE = Join-Path $WS "voice.wav"   # 换成你自己的 5–10 秒人声
