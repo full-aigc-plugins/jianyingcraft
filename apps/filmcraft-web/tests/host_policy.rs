@@ -124,10 +124,7 @@ fn a_link_pointing_outside_the_workspace_is_rejected() {
     let link = workspace_dir.path().join("escape");
     // 用 `#[ignore]` 显式声明依赖，而不是创建失败就静默 return：后者在 CI 上会把"没跑"
     // 记成"通过"。真跑的时候建不出链接就是环境不满足，应当失败并说明原因。
-    assert!(
-        link_to(outside.path(), &link),
-        "this test needs a directory symlink or junction; run it where they are allowed"
-    );
+    assert!(link_to(outside.path(), &link), "this test needs a directory symlink or junction; run it where they are allowed");
     let ws = Workspace::open(workspace_dir.path()).expect("open the workspace");
     let escaped = "escape/secret.txt";
 
