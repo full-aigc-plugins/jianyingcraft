@@ -220,6 +220,8 @@ fn subclip_in_the_source_monitor_and_project_menu() {
     d.exec("project.select", json!({"items": [ocean]}));
     let sub = d.exec("clip.makeSubclip", json!({"name": "Waves Sub"}))["item"].as_u64().unwrap();
     d.exec("source.open", json!({"item": sub}));
+    // JianyingCraft 的默认工作区是剪映四区，不含 Source 监视器；本用例按需把它打开。
+    d.ok("ui.panel.show", json!({"panel": "Source"}));
     d.frames(4);
     assert_eq!(d.app().session.state.source_playhead, r24.tick_of(24), "opens at the subclip's In");
     // the scrub bar spans the subclip: its left end is the In, its right end the last frame

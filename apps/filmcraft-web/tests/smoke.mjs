@@ -1,4 +1,4 @@
-// Browser smoke test of the FilmCraft web app over the Chrome DevTools Protocol.
+// Browser smoke test of the JianyingCraft web app over the Chrome DevTools Protocol.
 // No npm dependencies (Node ≥ 22: global WebSocket and fetch).
 //
 //   cargo xtask web --serve 8765 &            # build + serve target/web/dist

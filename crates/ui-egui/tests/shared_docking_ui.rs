@@ -1,4 +1,4 @@
-//! Shared docking preserves FilmCraft document state and legacy workspace files.
+//! Shared docking preserves JianyingCraft document state and legacy workspace files.
 
 use craft_ui::docking::{Action, Placement, Zone};
 use egui::{Event, Modifiers, PointerButton, Rect, pos2, vec2};

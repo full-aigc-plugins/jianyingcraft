@@ -17,9 +17,11 @@
 //! Results resolve with the method's `result`; errors reject with the error message.
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 
 use filmcraft_ui_egui::ControlRequest;
+use filmcraft_ui_egui::bridge::{Bridge, MAX_PENDING};
 use serde_json::{Value, json};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
@@ -78,11 +80,107 @@ pub fn request(method: &str, params: Value) -> js_sys::Promise {
         if sent {
             WAITING.with(|w| w.borrow_mut().push((rx, resolve, reject)));
         } else {
-            let _ = reject.call1(&JsValue::NULL, &js_sys::Error::new("FilmCraft is not running yet"));
+            let _ = reject.call1(&JsValue::NULL, &js_sys::Error::new("JianyingCraft is not running yet"));
         }
     });
     crate::repaint();
     p
+}
+
+// ---------------------------------------------------------------- 面板桥（craft_* 四导出）
+//
+// 与 `window.filmcraft.request()` 的区别：那套是 Promise；`craft_*` 是面板桥要的**同步队列**
+// 语义（submit 立即返回 true/false、take_reply 轮询取回、idle 判断）。解析、上限与回复信封
+// 复用 `filmcraft_ui_egui::bridge::Bridge`，执行仍然走同一条控制通道。
+
+thread_local! {
+    static BRIDGE: RefCell<Bridge> = RefCell::new(Bridge::default());
+    static IN_FLIGHT: RefCell<VecDeque<(String, Receiver<Value>)>> = const { RefCell::new(VecDeque::new()) };
+    static REPLIES: RefCell<Bridge> = RefCell::new(Bridge::default());
+}
+
+/// 面板桥：提交一条 `{"id","command","params"}`；队列满或载荷非法返回 false。
+#[wasm_bindgen]
+pub fn craft_submit(request_json: &str) -> bool {
+    let in_flight = IN_FLIGHT.with(|q| q.borrow().len());
+    let queued = BRIDGE.with(|b| b.borrow().pending_bytes() > 0);
+    if in_flight >= MAX_PENDING || queued {
+        // 已满：拒绝新请求，已入队的请求不受影响。
+        return false;
+    }
+    if !BRIDGE.with(|b| b.borrow_mut().submit(request_json)) {
+        return false;
+    }
+    drain_bridge_queue();
+    true
+}
+
+/// 面板桥：取一条回复（JSON 字符串），没有则返回 undefined。
+#[wasm_bindgen]
+pub fn craft_take_reply() -> Option<String> {
+    collect_bridge_replies();
+    REPLIES.with(|r| r.borrow_mut().take_reply())
+}
+
+/// 面板桥：队列空、没有在途命令且没有待取回复时为 true。
+#[wasm_bindgen]
+pub fn craft_idle() -> bool {
+    let in_flight = IN_FLIGHT.with(|q| q.borrow().is_empty());
+    in_flight && BRIDGE.with(|b| b.borrow().idle()) && REPLIES.with(|r| r.borrow().idle())
+}
+
+/// 面板桥：命令目录（`{"commands":[{id,label,menu,shortcut,params}]}`）。
+#[wasm_bindgen]
+pub fn craft_catalog() -> String {
+    let commands: Vec<Value> = filmcraft_engine::command_specs()
+        .iter()
+        .map(|c| json!({"id": c.id, "label": c.label, "menu": c.menu, "shortcut": c.shortcut, "params": c.params}))
+        .collect();
+    json!({"commands": commands}).to_string()
+}
+
+fn drain_bridge_queue() {
+    loop {
+        let Some(request) = BRIDGE.with(|b| b.borrow_mut().take_request()) else { break };
+        let (control, rx) = ControlRequest::new("engine.execute", json!({"command": request.command, "params": request.params}));
+        let sent = TX.with(|t| t.borrow().as_ref().map(|tx| tx.send(control).is_ok()).unwrap_or(false));
+        if sent {
+            IN_FLIGHT.with(|q| q.borrow_mut().push_back((request.id, rx)));
+        } else {
+            REPLIES.with(|r| r.borrow_mut().push_reply(&request.id, Err("JianyingCraft is not running yet".into())));
+        }
+    }
+    crate::repaint();
+}
+
+fn collect_bridge_replies() {
+    IN_FLIGHT.with(|q| {
+        let mut q = q.borrow_mut();
+        loop {
+            // 只看队首：桥的回复必须与提交顺序一致。
+            let ready = {
+                let Some((id, rx)) = q.front_mut() else { break };
+                match rx.try_recv() {
+                    Ok(v) => Some((id.clone(), Some(v))),
+                    Err(TryRecvError::Empty) => None,
+                    Err(TryRecvError::Disconnected) => Some((id.clone(), None)),
+                }
+            };
+            let Some((id, value)) = ready else { break };
+            match value {
+                Some(v) if v.get("ok").and_then(Value::as_bool) == Some(true) => {
+                    let result = v.get("result").cloned().unwrap_or(Value::Null);
+                    REPLIES.with(|r| r.borrow_mut().push_reply(&id, Ok(result)));
+                }
+                Some(v) => {
+                    let message = v.get("error").and_then(Value::as_str).unwrap_or("command failed").to_string();
+                    REPLIES.with(|r| r.borrow_mut().push_reply(&id, Err(message)));
+                }
+                None => REPLIES.with(|r| r.borrow_mut().push_reply(&id, Err("request dropped".into()))),
+            }
+            q.pop_front();
+        }
+    });
 }
 
 fn set_fn(obj: &js_sys::Object, name: &str, f: JsValue) -> Result<(), JsValue> {
