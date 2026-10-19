@@ -49,7 +49,7 @@
 | Medium（768×1024） | 右侧 240 px 侧栏；`layout_ui` 1 条 |
 | Wide（1280×1024） | `Jianying` 工作区四区（左素材/中预览/右属性+关键帧/底时间轴），`layout_ui` 1 条 + 截图 |
 | ☰ 菜单 | 可滚动 + 过滤框；`layout_ui` 2 条 |
-| 截图 | `_ref/ui-snapshots/`：`layout-mobile`、`layout-medium-sidebar`、`layout-wide-four-regions`、`layout-shell-menu-filtered` |
+| 截图 | `target/ui-snapshots/`：`layout-mobile.png`、`layout-tablet.png`、`layout-desktop.png`、`layout-medium-sidebar.png`（另有多张可选的 `layout-*.png`）；一条命令复现，见 §10 |
 
 ### ③ 面板桥
 
@@ -100,6 +100,7 @@ Resources 60+ 模块。据此确认的三处缺口——**变声（pitch）无�
 ```powershell
 cd E:\workspaces\workspace-agent-skills\full-aigc-plugins-repositories\jianyingcraft
 cargo xtask layers; cargo xtask wasm; cargo xtask assets
+cargo xtask snapshots   # UI 验收截图，见 §10
 cargo test -p filmcraft-ui-egui -j 1
 cargo clippy -p filmcraft-ui-egui --all-targets -- -D warnings
 foreach ($p in (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages.name) { cargo fmt -p $p --check }
@@ -157,3 +158,27 @@ target\debug\filmcraft-cli.exe --demo run <remix-export.jsonl>
 `jianyingcraft` @ `feature/jianyingcraft-derivation`：
 `c553b5bf` 品牌 → `b31bd9cc` UI 外壳 → `cb5b1b11` 桥与测试 → `9b61989a` 文档；
 `jianyingcraft-plugin`：`2f79769` 插件与技能（初始提交）。两个工作树均干净，**未推送**。
+
+## 10. UI 验收截图的复现（`cargo xtask snapshots`，2026-10-20）
+
+一条命令产出 IA-1/2/3 的布局截图（§3 ②）：
+
+```powershell
+cargo xtask snapshots              # 渲染，然后校验四张必备截图
+cargo xtask snapshots --skip-run   # 只校验已有目录（CI 检查）
+```
+
+- **落盘位置**：工作区 `target/ui-snapshots/`（跟随 `CARGO_TARGET_DIR`，xtask 把它解析成**绝对路径**再写进
+  `FILMCRAFT_UI_SNAPSHOT_DIR`）。四张必备文件：`layout-mobile.png`（390×884）、`layout-tablet.png`
+  （768×1024）、`layout-desktop.png`（1280×1024）、`layout-medium-sidebar.png`（Medium 右侧 240 px
+  侧栏，900×1024）。跑完打印目录、每张文件大小、目录内 PNG 总数与耗时；缺任何一张都以非零退出
+  并列出缺失文件名（`--skip-run` 同样如此）。
+- **为什么串行**：每个 UI 测试都会建自己的 wgpu harness。默认并行线程让同一进程里多个 harness 并发创建，
+  Windows 上会以 `STATUS_ACCESS_VIOLATION`（0xc0000005）中途崩掉，一次运行就拿不齐截图。
+  `snapshots` 固定用 `--test-threads=1` 跑 `layout_ui`，串行后 28 passed / 24 张 PNG。
+- **只跑 `layout_ui`**：上面四张由它独占；其他 `*_ui.rs` 也写自己的可选截图（`panels-*.png`、
+  `media-*.png`、`export-*.png`…），串行跑完 80 个测试目标要几十分钟，对这份验收证据没有增益。
+  需要时仍可自行设置 `FILMCRAFT_UI_SNAPSHOT_DIR` 单独跑它们。
+- **相对路径不再跟随 CWD**：`filmcraft_ui_egui::test_support::snapshot_dir()` 统一读环境变量；相对值按
+  工作区根目录解析，所以在 `crates/ui-egui` 里直接 `cargo test` 也不会再生成
+  `crates/ui-egui/crates/ui-egui/target/ui-snapshots/` 这种嵌套目录。

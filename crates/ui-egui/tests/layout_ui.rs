@@ -23,7 +23,7 @@ impl Driver {
         session.execute("file.openDemoProject", json!({})).expect("demo project");
         let (tx, rx) = channel();
         let app = FilmcraftApp::new(session).with_control(rx);
-        let snapshots = std::env::var_os("FILMCRAFT_UI_SNAPSHOT_DIR").map(std::path::PathBuf::from);
+        let snapshots = filmcraft_ui_egui::test_support::snapshot_dir();
         let mut b = Harness::builder().with_size(egui::vec2(width, height)).with_max_steps(10_000);
         if snapshots.is_some() {
             b = b.wgpu();
@@ -68,6 +68,39 @@ impl Driver {
             Err(e) => eprintln!("snapshot {name} skipped: {e}"),
         }
     }
+}
+
+/// 顶栏「更多」溢出菜单里的 10 个一级 Tab（沿用收敛前的自动化 id）。
+const OVERFLOW_TAB_IDS: [&str; 10] = [
+    "jy.tab.sticker",
+    "jy.tab.effects",
+    "jy.tab.transitions",
+    "jy.tab.subtitle",
+    "jy.tab.smart",
+    "jy.tab.filters",
+    "jy.tab.adjust",
+    "jy.tab.templates",
+    "jy.tab.avatar",
+    "jy.tab.plugins",
+];
+
+/// `ui.elements {prefix:"jy.tab."}` 报出的 id（同时带出 `jy.tab.more` 与 `jy.tab.inspector`）。
+fn tab_ids(d: &mut Driver) -> Vec<String> {
+    let elements = d.ok("ui.elements", json!({"prefix": "jy.tab."}));
+    elements.as_array().expect("elements").iter().filter_map(|element| element["id"].as_str().map(str::to_string)).collect()
+}
+
+/// 顶栏直排的 3 个主 Tab（「更多」与「属性」不算），顺序即绘制顺序。
+fn primary_tab_ids(ids: &[String]) -> Vec<String> {
+    ids.iter().filter(|id| matches!(id.as_str(), "jy.tab.cut" | "jy.tab.captions" | "jy.tab.audio")).cloned().collect()
+}
+
+/// 元素矩形 `[x, y, w, h]`；缺了就是测试失败。
+fn rect_of(d: &mut Driver, id: &str) -> [f64; 4] {
+    let elements = d.ok("ui.elements", json!({"prefix": id}));
+    let element = elements.as_array().and_then(|list| list.iter().find(|element| element["id"] == json!(id))).unwrap_or_else(|| panic!("{id} missing in {elements}"));
+    let r = element["rect"].as_array().expect("rect");
+    [r[0].as_f64().unwrap(), r[1].as_f64().unwrap(), r[2].as_f64().unwrap(), r[3].as_f64().unwrap()]
 }
 
 /// 该视口下 `ui.inspect` 报告的布局档位，并顺带完成一次空态截图。
@@ -394,7 +427,7 @@ fn empty_project_shows_the_drop_hint() {
     assert!(back.as_array().is_none_or(|list| list.is_empty()), "the hint must disappear once media exists: {back}");
 }
 
-/// 一级 Tab 用左右键循环（跳过未实现的 4 个），面板跟着换。
+/// 一级 Tab 用左右键循环（跳过未实现的 4 个），面板跟着换；循环范围包含「更多」里的溢出 Tab。
 #[test]
 fn shell_tabs_cycle_with_left_right() {
     let mut d = Driver::new(390.0, 884.0);
@@ -410,6 +443,11 @@ fn shell_tabs_cycle_with_left_right() {
     let back = d.ok("ui.shell.tab.step", json!({"step": -1}));
     assert_eq!(back["tab"], json!("cut"), "left goes back to media");
 
+    // 三个主 Tab 之后是「更多」里的溢出 Tab：键盘也必须够得着（贴纸是溢出第一项）。
+    d.ok("ui.shell.tab", json!({"tab": "audio"}));
+    let overflow = d.ok("ui.shell.tab.step", json!({"step": 1}));
+    assert_eq!(overflow["tab"], json!("sticker"), "cycling must continue into the 更多 overflow");
+
     // 从最后一个可用 Tab 继续向右要跳过 4 个未实现的并绕回开头。
     d.ok("ui.shell.tab", json!({"tab": "adjust"}));
     d.frames(2);
@@ -417,27 +455,66 @@ fn shell_tabs_cycle_with_left_right() {
     assert_eq!(wrapped["tab"], json!("cut"), "cycling skips smart/templates/avatar/plugins and wraps");
 }
 
-/// `ui.shell.tab` 能把被裁掉的 Tab 滚进可视区并切到它的面板。
+/// `ui.shell.tab` 能打开不在顶栏直排的 Tab：切到「滤镜」时「更多」菜单会展开，该入口出现在
+/// 屏幕上（390 px 的顶栏放不下 13 个），面板也真的换过去。
 #[test]
 fn shell_tab_command_scrolls_a_clipped_tab_into_view() {
     let mut d = Driver::new(390.0, 884.0);
     d.frames(3);
-    let rect_of = |d: &mut Driver, id: &str| -> [f64; 4] {
-        let elements = d.ok("ui.elements", json!({"prefix": id}));
-        let element = elements.as_array().and_then(|list| list.first()).unwrap_or_else(|| panic!("{id} missing"));
-        let r = element["rect"].as_array().expect("rect");
-        [r[0].as_f64().unwrap(), r[1].as_f64().unwrap(), r[2].as_f64().unwrap(), r[3].as_f64().unwrap()]
-    };
-    // 顶栏 Tab 条可用宽度约 178 px（右侧要留属性与导出），"特效"落在裁切区之外。
-    let before = rect_of(&mut d, "jy.tab.effects");
-    assert!(before[0] > 222.0, "the effects tab starts outside the visible strip, got {before:?}");
+    // 溢出入口默认不在屏幕上——先确认"看不见"是真的，否则下面的断言没有意义。
+    let before = tab_ids(&mut d);
+    assert!(!before.iter().any(|id| id == "jy.tab.filters"), "the filters tab should not be inline: {before:?}");
+    // 「更多」自己必须整颗落在窗口里（390 px 下才点得到）。
+    let more = rect_of(&mut d, "jy.tab.more");
+    assert!(more[0] >= 0.0 && more[0] + more[2] <= 390.0 + 0.5, "更多 must sit inside the window: {more:?}");
 
-    d.ok("ui.shell.tab", json!({"tab": "effects"}));
+    d.ok("ui.shell.tab", json!({"tab": "filters"}));
     d.frames(4);
-    let after = rect_of(&mut d, "jy.tab.effects");
-    assert!(after[0] < before[0], "the strip should scroll left to reveal the tab: {before:?} -> {after:?}");
-    let effects = d.ok("ui.elements", json!({"prefix": "panel.Effects"}));
-    assert!(effects.as_array().is_some_and(|list| !list.is_empty()), "the tab's panel should be drawn in the drawer: {effects}");
+    let info = d.ok("ui.inspect", json!({}));
+    assert_eq!(info["ui"]["jy_tab_more"], json!(true), "an overflow tab must reveal the 更多 menu: {info}");
+    let after = tab_ids(&mut d);
+    assert!(after.iter().any(|id| id == "jy.tab.filters"), "the revealed menu is missing the tab: {after:?}");
+    let rect = rect_of(&mut d, "jy.tab.filters");
+    assert!(
+        rect[0] >= 0.0 && rect[0] + rect[2] <= 390.0 + 0.5 && rect[1] >= 0.0 && rect[1] + rect[3] <= 884.0 + 0.5,
+        "the revealed entry must be on screen: {rect:?}"
+    );
+    let lumetri = d.ok("ui.elements", json!({"prefix": "panel.LumetriColor"}));
+    assert!(lumetri.as_array().is_some_and(|list| !list.is_empty()), "the tab's panel should be drawn in the drawer: {lumetri}");
+}
+
+/// 移动端顶栏收敛成 3 个主 Tab + 「更多」（Compact 与 Medium 都一样）：
+/// 溢出里的 Tab 仍然能从「更多」打开，`ui.inspect` 与面板都跟着变。
+#[test]
+fn top_bar_shows_three_primary_tabs_plus_more() {
+    for (width, height) in [(390.0, 884.0), (900.0, 1024.0)] {
+        let mut d = Driver::new(width, height);
+        d.frames(3);
+        let inline = tab_ids(&mut d);
+        assert_eq!(
+            primary_tab_ids(&inline),
+            ["jy.tab.cut", "jy.tab.captions", "jy.tab.audio"],
+            "{width}x{height}: the top bar must leave exactly the 3 primary tabs inline: {inline:?}"
+        );
+        assert!(inline.iter().any(|id| id == "jy.tab.more"), "{width}x{height}: 更多 is missing: {inline:?}");
+        for hidden in OVERFLOW_TAB_IDS {
+            assert!(!inline.iter().any(|id| id == hidden), "{width}x{height}: {hidden} must live in 更多, not inline: {inline:?}");
+        }
+
+        // 溢出里的 Tab 从「更多」打开：面板真的换过去，状态也记在 ui.inspect 里。
+        d.ok("ui.click", json!({"id": "jy.tab.more"}));
+        d.frames(3);
+        assert_eq!(d.ok("ui.inspect", json!({}))["ui"]["jy_tab_more"], json!(true), "{width}x{height}: 更多 did not open");
+        d.ok("ui.click", json!({"id": "jy.tab.effects"}));
+        d.frames(4);
+        let after = d.ok("ui.inspect", json!({}));
+        assert_eq!(after["ui"]["jy_shell_slug"], json!("effects"), "{width}x{height}: the overflow tab did not activate: {after}");
+        assert!(!after["ui"]["jy_drawer"].is_null(), "{width}x{height}: the overflow tab opened no drawer: {after}");
+        assert!(!after["ui"]["jy_tab_more"].as_bool().unwrap_or(false), "{width}x{height}: the menu should close after a pick: {after}");
+        let effects = d.ok("ui.elements", json!({"prefix": "panel.Effects"}));
+        assert!(effects.as_array().is_some_and(|list| !list.is_empty()), "{width}x{height}: the effects panel is not drawn: {effects}");
+        d.snapshot(&format!("tabs-{}-primary", width as u32));
+    }
 }
 
 /// 移动端顶栏右上角也有「导出」，点了进 Export 模式。
@@ -457,17 +534,26 @@ fn compact_top_bar_has_the_export_button() {
     assert_eq!(info["ui"]["mode"], json!("Export"), "the export button should switch to Export mode");
 }
 
-/// 移动端顶栏是剪映式可横滑的一级 Tab：13 个入口在，点"特效"真的换抽屉面板。
+/// 移动端顶栏是剪映式一级 Tab：只直排 3 个主 Tab + 「更多」，其余 10 个都在「更多」菜单里，
+/// 点"特效"真的换抽屉面板（openspec #233 / `02-ia-mapping.md` §7.7）。
 #[test]
 fn compact_top_bar_scrolls_through_the_jianying_tabs() {
     let mut d = Driver::new(390.0, 884.0);
     d.frames(3);
-    let tabs = d.ok("ui.elements", json!({"prefix": "jy.tab."}));
-    let ids: Vec<String> = tabs.as_array().expect("elements").iter().filter_map(|element| element["id"].as_str().map(str::to_string)).collect();
-    for want in ["jy.tab.cut", "jy.tab.effects", "jy.tab.filters", "jy.tab.templates", "jy.tab.plugins"] {
-        assert!(ids.iter().any(|id| id == want), "the compact tab bar is missing {want}: {ids:?}");
+    let inline = tab_ids(&mut d);
+    assert_eq!(primary_tab_ids(&inline), ["jy.tab.cut", "jy.tab.captions", "jy.tab.audio"], "the compact top bar is not the 3 primary tabs: {inline:?}");
+    assert!(inline.iter().any(|id| id == "jy.tab.more"), "the compact top bar is missing 更多: {inline:?}");
+    for hidden in OVERFLOW_TAB_IDS {
+        assert!(!inline.iter().any(|id| id == hidden), "{hidden} must live in 更多, not inline: {inline:?}");
     }
-    // 390 px 里靠后的 Tab 会被横向裁掉，点击坐标落在可视区外；这里点靠前的「文本」验证导航。
+    // 溢出入口一条不少地列在「更多」里（没有实现的模块也在，只是灰显）。
+    d.ok("ui.click", json!({"id": "jy.tab.more"}));
+    d.frames(3);
+    let opened = tab_ids(&mut d);
+    for want in OVERFLOW_TAB_IDS {
+        assert!(opened.iter().any(|id| id == want), "the 更多 menu is missing {want}: {opened:?}");
+    }
+    // 主 Tab 仍然直接可点，并且换的是真面板。
     d.ok("ui.click", json!({"id": "jy.tab.captions"}));
     d.frames(3);
     let text = d.ok("ui.elements", json!({"prefix": "panel.Text"}));
@@ -475,17 +561,25 @@ fn compact_top_bar_scrolls_through_the_jianying_tabs() {
     d.snapshot("compact-tabs");
 }
 
-/// 移动端顶栏的"模板 / 数字人 / 插件"没有实现，点了不应打开任何面板。
+/// 移动端「更多」里的"模板 / 数字人 / 插件 / 智能包装"没有实现：照样列出来（不能悄悄消失），
+/// 但点了不打开任何面板、也不成为当前 Tab。
 #[test]
 fn compact_tab_bar_disables_unimplemented_modules() {
     let mut d = Driver::new(390.0, 884.0);
     d.frames(3);
     let before = d.ok("ui.inspect", json!({}));
     assert!(before["ui"]["jy_drawer"].is_null(), "no drawer at start");
-    d.ok("ui.click", json!({"id": "jy.tab.templates"}));
+    d.ok("ui.click", json!({"id": "jy.tab.more"}));
     d.frames(3);
-    let after = d.ok("ui.inspect", json!({}));
-    assert!(after["ui"]["jy_drawer"].is_null(), "a disabled tab must not open a drawer");
+    let ids = tab_ids(&mut d);
+    for disabled in ["jy.tab.smart", "jy.tab.templates", "jy.tab.avatar", "jy.tab.plugins"] {
+        assert!(ids.iter().any(|id| id == disabled), "a disabled module must stay listed, not vanish: {ids:?}");
+        d.ok("ui.click", json!({"id": disabled}));
+        d.frames(3);
+        let after = d.ok("ui.inspect", json!({}));
+        assert!(after["ui"]["jy_drawer"].is_null(), "a disabled tab ({disabled}) must not open a drawer: {after}");
+        assert!(after["ui"]["jy_shell_slug"].is_null(), "a disabled tab ({disabled}) must not become the current tab: {after}");
+    }
 }
 
 /// 剪映专业版工作区：左栏竖向 rail 八个入口都在，可用的（素材）点了真换面板。

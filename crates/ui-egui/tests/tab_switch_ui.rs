@@ -94,7 +94,8 @@ fn assert_switch_kept_state(after: &Value, baseline: &Value, clip: u64, what: &s
     assert!(!after["activeSequence"].is_null(), "{what} left no active sequence: {after}");
 }
 
-/// Wide + Jianying：点 `jy.tabstrip.*` 切「文本」再切「音频」，播放与选区全程不变。
+/// Wide + Jianying：点 `jy.tabstrip.*` 切「字幕」再切「音频」（外加不在 dock 里的「滤镜」），
+/// 播放与选区全程不变。
 #[test]
 fn wide_tabstrip_switches_keep_playback_and_selection() {
     let mut d = Driver::new(1280.0, 1024.0);
@@ -119,13 +120,15 @@ fn wide_tabstrip_switches_keep_playback_and_selection() {
         let after = d.inspect();
         assert_switch_kept_state(&after, &baseline, clip, id);
         assert_eq!(after["ui"]["jianying_tab"], json!(slug), "clicking {id} did not activate that tab: {after}");
+        let panels = d.ok("ui.elements", json!({"prefix": "panel."}));
+        let drawn = |id: &str| panels.as_array().is_some_and(|elements| elements.iter().any(|element| element["id"] == json!(id)));
         if slug == "filters" {
-            // 该面板此前不在 dock 里：它必须真的被插进来（重排发生），断言才有意义。
-            let panels = d.ok("ui.elements", json!({"prefix": "panel."}));
-            assert!(
-                panels.as_array().is_some_and(|elements| elements.iter().any(|element| element["id"] == json!("panel.LumetriColor"))),
-                "clicking {id} did not open the LumetriColor panel: {panels}"
-            );
+            // 该面板此前不在 dock 里：它必须真的被插进来（重排发生），且 Program 仍留在 dock 中
+            // （Activate 会让它成为同组的当前 Tab，所以这里断言的是 Tab 按钮而不是面板体）。
+            assert!(drawn("panel.LumetriColor"), "clicking {id} did not open the LumetriColor panel: {panels}");
+            assert!(drawn("panel.tab.Program"), "the dock re-layout for {id} removed the Program monitor: {panels}");
+        } else {
+            assert!(drawn("panel.Program"), "switching to {id} hid the Program monitor: {panels}");
         }
     }
     d.ok("ui.playback", json!({"action": "stop"}));

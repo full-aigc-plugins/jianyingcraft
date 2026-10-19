@@ -23,6 +23,8 @@ macro_rules! uic {
 
 pub const UI_COMMANDS: &[UiCommand] = &[
     uic!("window.dockAction", "Docking Action", [], None),
+    // 顶栏一级 Tab（含「更多」溢出里的 10 个）：参数 `tab` 是 slug（`cut` / `effects` …）。
+    uic!("window.shellTab", "Top-bar Tab", [], None),
     uic!("window.dockPanel", "Dock Panel", [], None),
     uic!("window.floatPanel", "Undock Panel", [], None),
     uic!("window.closePanel", "Close Panel", [], None),

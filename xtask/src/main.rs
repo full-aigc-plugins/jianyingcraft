@@ -16,6 +16,8 @@
 //!   lists, against a reference list (default: the local `plan/premiere/<area>.json`), presence and
 //!   placement reported separately (`parity.rs`, docs/gaps.md G7).
 //! - `ico <out.ico> <in.png>…`: pack PNGs into a Windows `.ico` (used by `packaging/icons.sh`).
+//! - `snapshots [--skip-run]`: render the UI acceptance screenshots into `<target>/ui-snapshots`
+//!   (serialised wgpu harnesses, see `snapshots()`), then check the four expected files.
 //! - `ci`: fmt check, clippy -D warnings, tests, layers, assets, wasm.
 
 mod ico;
@@ -560,6 +562,75 @@ fn root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("xtask lives in the workspace").to_path_buf()
 }
 
+/// The UI test target that renders the acceptance screenshots
+/// (`crates/ui-egui/tests/layout_ui.rs`, docs/derivation/11-acceptance-report.md §3 ②).
+///
+/// Only this target is run: it is the one that owns the four layout PNGs. The other `*_ui.rs` tests
+/// write their own optional screenshots, and serialising the whole suite (80 targets, most of them
+/// minutes of headless rendering) is not worth it for evidence that is already covered here.
+const SNAPSHOT_TEST: &str = "layout_ui";
+
+/// The screenshots `layout_ui` must leave behind (the three target viewports plus the Medium
+/// sidebar), quoted by docs/derivation/11-acceptance-report.md §3 ②.
+const SNAPSHOT_EVIDENCE: &[&str] = &["layout-mobile.png", "layout-tablet.png", "layout-desktop.png", "layout-medium-sidebar.png"];
+
+/// `cargo xtask snapshots [--skip-run]`: one command for the UI acceptance screenshots.
+///
+/// Every UI test builds its own wgpu harness. One per test process is fine, but several, built by
+/// the default parallel test threads, make the Windows driver die part-way through with
+/// `STATUS_ACCESS_VIOLATION` (0xc0000005), so the run passes `--test-threads=1`. The output
+/// directory is absolute (`<target>/ui-snapshots`, honouring `CARGO_TARGET_DIR`) because the test
+/// process' CWD depends on where cargo was started, and a relative value used to create a nested
+/// `crates/ui-egui/crates/ui-egui/target/…` tree. `--skip-run` verifies an earlier run instead of
+/// rendering again, which is what a CI job can do.
+fn snapshots(args: &[String]) -> Result<(), String> {
+    let skip_run = match args {
+        [] => false,
+        [arg] if arg == "--skip-run" => true,
+        _ => return Err(format!("snapshots: unknown argument(s) {args:?} (usage: cargo xtask snapshots [--skip-run])")),
+    };
+    let started = std::time::Instant::now();
+    let dir = root().join(target_dir()).join("ui-snapshots");
+    if !skip_run {
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        // A PNG left by an earlier run must not pass as evidence for this one.
+        for name in SNAPSHOT_EVIDENCE {
+            match std::fs::remove_file(dir.join(name)) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("{}: {e}", dir.join(name).display())),
+            }
+        }
+        let mut cmd = Command::new(env!("CARGO"));
+        cmd.args(["test", "-p", "filmcraft-ui-egui", "--test", SNAPSHOT_TEST, "--", "--test-threads=1", "--nocapture"]);
+        cmd.env("FILMCRAFT_UI_SNAPSHOT_DIR", &dir);
+        run(&mut cmd)?;
+    }
+    let missing: Vec<&str> = SNAPSHOT_EVIDENCE.iter().copied().filter(|name| !dir.join(name).is_file()).collect();
+    if !missing.is_empty() {
+        return Err(format!(
+            "snapshots: {} is missing {} of the {} expected screenshots: {}\n  run `cargo xtask snapshots` (without --skip-run) to render them",
+            dir.display(),
+            missing.len(),
+            SNAPSHOT_EVIDENCE.len(),
+            missing.join(", ")
+        ));
+    }
+    println!("snapshots: {} (--test-threads=1, {SNAPSHOT_TEST})", dir.display());
+    for name in SNAPSHOT_EVIDENCE {
+        let bytes = std::fs::metadata(dir.join(name)).map(|m| m.len()).unwrap_or(0);
+        println!("  {name:<26} {bytes:>9} B");
+    }
+    let pngs = std::fs::read_dir(&dir)
+        .map_err(|e| format!("{}: {e}", dir.display()))?
+        .flatten()
+        .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("png")))
+        .count();
+    let elapsed = started.elapsed().as_secs_f64();
+    println!("snapshots: ok ({} PNGs, {} expected, {elapsed:.1} s)", pngs, SNAPSHOT_EVIDENCE.len());
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let task = std::env::args().nth(1).unwrap_or_default();
     let r = match task.as_str() {
@@ -572,6 +643,7 @@ fn main() -> ExitCode {
         "ci" => ci(),
         "bench" => bench(),
         "bench-playback" => bench_playback(),
+        "snapshots" => snapshots(&std::env::args().skip(2).collect::<Vec<_>>()),
         "web" => web(&std::env::args().skip(2).collect::<Vec<_>>()),
         "version" => {
             let rest: Vec<String> = std::env::args().skip(2).collect();
@@ -586,7 +658,7 @@ fn main() -> ExitCode {
             ico::run(&rest.iter().map(String::as_str).collect::<Vec<_>>())
         }
         _ => Err(
-            "usage: cargo xtask <layers|assets|wasm|web [--dev] [--serve PORT]|fixtures [crate…]|parity [--area menus|effects|transitions] [--reference FILE] [--out FILE] [--min PERCENT]|ico OUT IN…|version [set X.Y.Z]|ci|bench [args]|bench-playback [args]>"
+            "usage: cargo xtask <layers|assets|wasm|web [--dev] [--serve PORT]|fixtures [crate…]|parity [--area menus|effects|transitions] [--reference FILE] [--out FILE] [--min PERCENT]|ico OUT IN…|version [set X.Y.Z]|ci|bench [args]|bench-playback [args]|snapshots [--skip-run]>"
                 .into(),
         ),
     };

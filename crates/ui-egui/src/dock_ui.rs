@@ -24,6 +24,15 @@ fn drag_id() -> egui::Id {
 }
 
 pub(crate) fn route(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    // 一级 Tab 的唯一命令入口：顶栏直排的 3 个和「更多」里的 10 个都走这里，
+    // 因此 `engine.execute` / `ui.menu.invoke` / 顶栏点击是同一条路径。
+    if id == "window.shellTab" {
+        return Some((|| {
+            let slug = params.get("tab").and_then(Value::as_str).ok_or("need `tab`")?;
+            app.shell_tab_activate(slug)?;
+            Ok(json!({"tab": slug, "panel": app.ui.jy_shell_panel.map(|panel| panel.id())}))
+        })());
+    }
     if id == "window.dockAction" {
         return Some((|| {
             let value = params.get("action").cloned().ok_or("missing docking action")?;
@@ -87,9 +96,16 @@ pub(crate) fn default_float_rect(screen: Rect) -> [f32; 4] {
     [center.x - 210.0, center.y - 160.0, 420.0, 320.0]
 }
 
-/// Compact/Medium 顶栏的 13 个剪映式 Tab：(标签, slug, 自动化 id, 目标面板)。
+/// 顶栏一条 Tab 的静态描述：(标签, slug, 自动化 id, 目标面板)。
 /// `None` 表示本仓库没有对应模块（灰显、点了不打开任何面板）。
-pub(crate) const SHELL_TABS: [(&str, &str, &str, Option<PanelKind>); 13] = [
+pub(crate) type ShellTab = (&'static str, &'static str, &'static str, Option<PanelKind>);
+
+/// 剪映式一级 Tab 的完整登记表（13 条）。
+///
+/// 顶栏只横排前 [`SHELL_PRIMARY_COUNT`] 个主 Tab（剪辑/素材、字幕/文本、音频），其余 10 个收进
+/// 「更多」溢出菜单——它们仍然可点、可自动化，只是不再全部挤在顶栏里
+/// （`docs/derivation/02-ia-mapping.md` §7.7：13 Tab 收敛为 3 个主 Tab + "更多"溢出菜单）。
+pub(crate) static SHELL_TABS: [ShellTab; 13] = [
     ("素材", "cut", "jy.tab.cut", Some(PanelKind::Project)),
     ("文本", "captions", "jy.tab.captions", Some(PanelKind::Text)),
     ("音频", "audio", "jy.tab.audio", Some(PanelKind::AudioTrackMixer)),
@@ -105,14 +121,36 @@ pub(crate) const SHELL_TABS: [(&str, &str, &str, Option<PanelKind>); 13] = [
     ("插件", "plugins", "jy.tab.plugins", None),
 ];
 
+/// 顶栏直排的主 Tab 数量：前 3 个（剪辑/素材、字幕/文本、音频）。
+pub(crate) const SHELL_PRIMARY_COUNT: usize = 3;
+
+/// 顶栏直排的主 Tab（剪辑 / 字幕 / 音频），顺序即绘制顺序。
+pub(crate) fn shell_primary_tabs() -> &'static [ShellTab] {
+    &SHELL_TABS[..SHELL_PRIMARY_COUNT]
+}
+
+/// 「更多」溢出菜单里的 10 个 Tab（贴纸 / 特效 / 转场 / 字幕 / 智能包装 / 滤镜 / 调节 /
+/// 模板 / 数字人 / 插件），顺序即菜单顺序。
+pub(crate) fn shell_overflow_tabs() -> &'static [ShellTab] {
+    &SHELL_TABS[SHELL_PRIMARY_COUNT..]
+}
+
+/// 该 slug 是否画在顶栏上（否则在「更多」里）。未知 slug 也算溢出（调用方会按未实现处理）。
+pub(crate) fn shell_tab_is_primary(slug: &str) -> bool {
+    shell_primary_tabs().iter().any(|tab| tab.1 == slug)
+}
+
 /// 顶栏 Tab 的 slug → 面板；`None` 表示未实现（调用方应保持原状）。
 pub fn shell_panel(slug: &str) -> Option<PanelKind> {
     SHELL_TABS.iter().find(|tab| tab.1 == slug).and_then(|tab| tab.3)
 }
 
 /// 顶栏 Tab 的左右循环：跳过未实现的 Tab，首尾相接。`step` 是 +1 / -1。
+///
+/// 循环范围是**整张登记表**（主 Tab + 「更多」里的溢出 Tab），否则 Alt+←/→ 只能摸到前三个，
+/// 溢出里的入口就只剩鼠标一条路。
 pub fn shell_tab_step(current: Option<&str>, step: i32) -> Option<(&'static str, PanelKind)> {
-    let enabled: Vec<&(&str, &str, &str, Option<PanelKind>)> = SHELL_TABS.iter().filter(|tab| tab.3.is_some()).collect();
+    let enabled: Vec<&'static ShellTab> = SHELL_TABS.iter().filter(|tab| tab.3.is_some()).collect();
     if enabled.is_empty() {
         return None;
     }
@@ -127,6 +165,28 @@ pub fn shell_tab_step(current: Option<&str>, step: i32) -> Option<(&'static str,
 }
 
 impl FilmcraftApp {
+    /// 选中顶栏的一级 Tab：记录 slug 与目标面板，并把抽屉切到素材区（沿用旧契约）。
+    ///
+    /// 未知 slug 和没有实现的模块（目标为 `None`）都返回错误——灰显的入口不能被程序打开。
+    /// 顶栏点击、`window.shellTab` 命令和控制通道的 `ui.shell.tab` 共用这一处状态迁移，
+    /// 所以三者不会各写一套。
+    pub fn shell_tab_activate(&mut self, slug: &str) -> Result<(), String> {
+        let Some(panel) = shell_panel(slug) else { return Err("unknown or unimplemented `tab`".into()) };
+        // 前三个主 Tab 沿用旧的 jy_tab 取值（其它 Tab 只记 shell panel）。
+        self.ui.jy_tab = match slug {
+            "cut" => crate::layout::Tab::Cut,
+            "captions" => crate::layout::Tab::Captions,
+            "audio" => crate::layout::Tab::Audio,
+            _ => self.ui.jy_tab,
+        };
+        self.ui.jy_shell_panel = Some(panel);
+        self.ui.jy_shell_slug = Some(slug.to_string());
+        self.ui.jy_drawer = Some(crate::layout::Drawer::Media);
+        // 剪映的"音频"Tab 只列音频素材，"素材"Tab 恢复全部。
+        self.ui.jy_media_filter = (slug == "audio").then(|| "audio".to_string());
+        Ok(())
+    }
+
     fn dock_command(&mut self, ctx: &egui::Context, action: Action<PanelKind>) -> Result<(), String> {
         let value = serde_json::to_value(action).map_err(|error| error.to_string())?;
         crate::menus::invoke(self, ctx, "window.dockAction", json!({"action": value})).map(|_| ())
@@ -265,11 +325,13 @@ impl FilmcraftApp {
         if menu_response.clicked() {
             self.ui.jy_menu_open = !self.ui.jy_menu_open;
             if self.ui.jy_menu_open {
-                // 每次打开都从菜单根开始，不继承上次展开的分组。
+                // 每次打开都从菜单根开始，不继承上次展开的分组；两个弹层不叠加。
                 self.ui.jy_menu_group = None;
+                self.ui.jy_tab_more = false;
             }
         }
-        // 剪映手机端的顶栏就是一条可横向滑动的一级 Tab；这里复用 Wide 的 13 个入口，
+        // 剪映手机端的顶栏只排 3 个主 Tab（剪辑/素材、字幕/文本、音频），其余 10 个收进「更多」：
+        // 390 px 下 13 个横排会被裁掉大半（`docs/derivation/02-ia-mapping.md` §7.7）。
         // 前三个保持旧 id（jy.tab.cut/captions/audio）以维持既有状态与测试契约。
         // 右侧要同时容纳「属性」和「导出」，Tab 条必须让开两者（96 + 52 + 间距）。
         let inspector_width = 160.0_f32;
@@ -277,9 +339,9 @@ impl FilmcraftApp {
             egui::pos2(menu_rect.max.x + 6.0, header.min.y),
             egui::pos2((header.max.x - 8.0 - inspector_width - 6.0).max(menu_rect.max.x + 40.0), header.max.y),
         );
-        let entries = SHELL_TABS;
-        let mut chosen: Option<(String, Option<PanelKind>, bool)> = None;
-        // 控制通道要求"滚到某个 Tab"时，本帧把它滚进可视区（390 px 下靠后的 Tab 否则点不到）。
+        let entries = shell_primary_tabs();
+        let mut chosen: Option<(String, bool)> = None;
+        // 控制通道要求"滚到某个 Tab"时，本帧把它滚进可视区。
         let pending_scroll = self.ui.jy_tab_scroll.clone();
         // Alt+←/→ 切一级 Tab（与剪映桌面一致）；跳过未实现的 Tab，并把目标滚进可视区。
         let step = ui.input(|input| {
@@ -295,22 +357,22 @@ impl FilmcraftApp {
             }
         });
         if step != 0
-            && let Some((slug, panel)) = shell_tab_step(self.ui.jy_shell_slug.as_deref(), step)
+            && let Some((slug, _panel)) = shell_tab_step(self.ui.jy_shell_slug.as_deref(), step)
         {
-            self.ui.jy_shell_panel = Some(panel);
-            self.ui.jy_shell_slug = Some(slug.to_string());
-            self.ui.jy_drawer = Some(crate::layout::Drawer::Media);
+            let _ = self.shell_tab_activate(slug);
             self.ui.jy_tab_scroll = Some(slug.to_string());
-            self.ui.jy_media_filter = (slug == "audio").then(|| "audio".to_string());
         }
+        let mut more_anchor: Option<Rect> = None;
         let mut strip = ui.new_child(egui::UiBuilder::new().max_rect(strip_rect).id_salt("jy-compact-tabs"));
         strip.set_clip_rect(strip_rect);
         egui::ScrollArea::horizontal().id_salt("jy-compact-tabs-scroll").auto_shrink([false, true]).show(&mut strip, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                for (label, slug, id, panel) in entries {
+                for &(label, slug, id, panel) in entries {
                     let enabled = panel.is_some();
-                    let active = self.ui.jy_shell_panel == panel && panel.is_some() && self.ui.jy_drawer.is_some();
+                    // 按 slug 判定高亮：溢出里的「字幕」与主 Tab 的「文本」共用 Text 面板，
+                    // 只看面板会让两个入口同时亮。
+                    let active = self.ui.jy_shell_slug.as_deref() == Some(slug) && self.ui.jy_drawer.is_some();
                     let color = if active {
                         Color32::WHITE
                     } else if enabled {
@@ -319,7 +381,9 @@ impl FilmcraftApp {
                         t.text_dim
                     };
                     let galley = ui.painter().layout_no_wrap(label.to_string(), Tokens::ui(12.0), color);
-                    let width = galley.size().x + 18.0;
+                    // 12 px（而不是旧 18 px）内边距：390 px 下 3 个主 Tab + 「更多」必须整条放得下，
+                    // 被 ScrollArea 裁掉的按钮既点不到、`ui.click` 也命中不了。
+                    let width = galley.size().x + 12.0;
                     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 28.0), if enabled { Sense::click() } else { Sense::hover() });
                     if pending_scroll.as_deref() == Some(slug) {
                         ui.scroll_to_rect(rect, Some(egui::Align::Center));
@@ -334,24 +398,48 @@ impl FilmcraftApp {
                     ui.painter().galley(egui::pos2(rect.center().x - galley.size().x / 2.0, rect.center().y - galley.size().y / 2.0), galley, color);
                     self.auto.add(id, rect, label);
                     if enabled && response.clicked() {
-                        chosen = Some((slug.to_string(), panel, active));
+                        chosen = Some((slug.to_string(), active));
                     }
                 }
+                // 「更多」：其余 10 个 Tab 的溢出入口。选中溢出里的 Tab 时它也跟着高亮，
+                // 否则顶栏会一条都不亮、看不出当前在哪。
+                let more_active = self.ui.jy_shell_slug.as_deref().is_some_and(|slug| !shell_tab_is_primary(slug));
+                let color = if more_active || self.ui.jy_tab_more { Color32::WHITE } else { t.text };
+                let galley = ui.painter().layout_no_wrap("更多".to_string(), Tokens::ui(12.0), color);
+                let width = galley.size().x + 12.0;
+                let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 28.0), Sense::click());
+                if pending_scroll.as_deref().is_some_and(|slug| !shell_tab_is_primary(slug)) {
+                    ui.scroll_to_rect(rect, Some(egui::Align::Center));
+                }
+                if more_active || self.ui.jy_tab_more {
+                    ui.painter().rect_filled(rect, 6.0, t.accent);
+                } else if response.hovered() {
+                    ui.painter().rect_filled(rect, 6.0, t.accent_hover);
+                } else {
+                    ui.painter().rect_filled(rect, 6.0, t.hover);
+                }
+                ui.painter().galley(egui::pos2(rect.center().x - galley.size().x / 2.0, rect.center().y - galley.size().y / 2.0), galley, color);
+                self.auto.add("jy.tab.more", rect, "更多");
+                if response.clicked() {
+                    self.ui.jy_tab_more = !self.ui.jy_tab_more;
+                    if self.ui.jy_tab_more {
+                        // 两个弹层不叠在一起：打开一个就收起另一个。
+                        self.ui.jy_menu_open = false;
+                    }
+                }
+                more_anchor = Some(rect);
             });
         });
-        if let Some((slug, panel, active)) = chosen {
-            // 前三个沿用旧的 jy_tab 取值，其余只记 shell panel。
-            self.ui.jy_tab = match slug.as_str() {
-                "cut" => crate::layout::Tab::Cut,
-                "captions" => crate::layout::Tab::Captions,
-                "audio" => crate::layout::Tab::Audio,
-                _ => self.ui.jy_tab,
-            };
-            self.ui.jy_shell_panel = panel;
-            self.ui.jy_shell_slug = Some(slug.clone());
-            // 剪映的"音频"Tab 只列音频素材，"素材"Tab 恢复全部。
-            self.ui.jy_media_filter = (slug == "audio").then(|| "audio".to_string());
-            self.ui.jy_drawer = if active { None } else { Some(crate::layout::Drawer::Media) };
+        if let Some((slug, active)) = chosen {
+            // 顶栏点击和控制通道走同一条 `window.shellTab` 命令路径。
+            let ctx = ui.ctx().clone();
+            if crate::menus::invoke(self, &ctx, "window.shellTab", json!({ "tab": slug })).is_ok() {
+                // 再点当前 Tab 收起抽屉。
+                if active {
+                    self.ui.jy_drawer = None;
+                }
+                self.ui.jy_tab_more = false;
+            }
         }
         if pending_scroll.is_some() {
             self.ui.jy_tab_scroll = None;
@@ -447,6 +535,71 @@ impl FilmcraftApp {
         // 菜单最后画，保证盖在面板之上。
         if self.ui.jy_menu_open {
             self.shell_menu(ui, header, body, &t);
+        }
+        if self.ui.jy_tab_more
+            && let Some(anchor) = more_anchor
+        {
+            self.shell_tab_overflow(ui, anchor, body, &t);
+        }
+    }
+
+    /// 顶栏「更多」溢出菜单（Compact / Medium）：其余 10 个一级 Tab 都在这里。
+    ///
+    /// 外壳、行高、自动化 id 约定都与 ☰ `shell_menu` 一致，只是行数固定（10 条）。没有实现的
+    /// 模块仍然列出来、灰显、不可点——不能因为收进菜单就"悄悄消失"。每行复用原来的
+    /// `jy.tab.<slug>` id，测试与代理的点击路径不变；点击走 `window.shellTab` 命令。
+    fn shell_tab_overflow(&mut self, ui: &mut egui::Ui, anchor: Rect, body: Rect, t: &Tokens) {
+        let rows = shell_overflow_tabs();
+        let row_height = 26.0;
+        let width = 148.0_f32.min((body.max.x - anchor.min.x - 8.0).max(96.0));
+        let top = anchor.max.y + 4.0;
+        let height = (rows.len() as f32 * row_height + 8.0).min((body.max.y - top - 8.0).max(120.0));
+        let popup = Rect::from_min_size(egui::pos2(anchor.min.x, top), egui::vec2(width, height));
+        // 弹层吃掉落在自己身上的点击，否则会漏到下面的预览/时间轴上。
+        let _ = ui.interact(popup, egui::Id::new("jy.tab.more.background"), Sense::click());
+        ui.painter().rect_filled(popup, 8.0, t.header_bg);
+        ui.painter().rect_stroke(popup, 8.0, egui::Stroke::new(1.0, t.text_dim.gamma_multiply(0.4)), StrokeKind::Inside);
+        self.auto.add("jy.tab.more.panel", popup, "更多");
+        let inner = popup.shrink(4.0);
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).id_salt("jy-tab-more-list"));
+        child.set_clip_rect(popup);
+        let mut chosen: Option<String> = None;
+        egui::ScrollArea::vertical().id_salt("jy-tab-more-scroll").auto_shrink([false, false]).show(&mut child, |ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            for &(label, slug, id, panel) in rows {
+                let enabled = panel.is_some();
+                let active = self.ui.jy_shell_slug.as_deref() == Some(slug);
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 22.0), Sense::hover());
+                let response = ui.interact(rect, egui::Id::new(("jy-tab-more", slug)), if enabled { Sense::click() } else { Sense::hover() });
+                if active && enabled {
+                    ui.painter().rect_filled(rect, 4.0, t.accent);
+                } else if enabled && response.hovered() {
+                    ui.painter().rect_filled(rect, 4.0, t.hover);
+                }
+                let color = if active && enabled {
+                    Color32::WHITE
+                } else if enabled {
+                    t.text
+                } else {
+                    t.text_dim
+                };
+                let galley = ui.painter().layout_no_wrap(label.to_string(), Tokens::ui(12.5), color);
+                ui.painter().galley(egui::pos2(rect.min.x + 10.0, rect.center().y - galley.size().y / 2.0), galley, color);
+                self.auto.add(id, rect, label);
+                if enabled && response.clicked() {
+                    chosen = Some(slug.to_string());
+                }
+            }
+        });
+        if let Some(slug) = chosen {
+            let ctx = ui.ctx().clone();
+            if crate::menus::invoke(self, &ctx, "window.shellTab", json!({ "tab": slug })).is_ok() {
+                self.ui.jy_tab_more = false;
+            }
+        }
+        // Esc 收起；和 ☰ 菜单一样保留到用户明确关掉为止。
+        if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+            self.ui.jy_tab_more = false;
         }
     }
 

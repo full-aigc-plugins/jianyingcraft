@@ -137,20 +137,21 @@ fn ia1_compact_has_no_page_overflow() {
     let elements = d.elements("jy.");
     let list = elements.as_array().expect("elements");
     assert!(!list.is_empty(), "the compact shell draws nothing: {elements}");
-    let mut clipped_tabs = 0;
+    // 顶栏现在只横排 3 个主 Tab，其余收进「更多」；因此**任何**入口都不允许越过视口右边界
+    // （旧断言允许「被裁掉的 jy.tab.*」存在，那是 13 个 Tab 平铺时代的前提）。
+    let mut present: Vec<&str> = Vec::new();
     for element in list {
         let id = element["id"].as_str().unwrap_or("");
         let rect = require_rect(&elements, id);
         assert!(rect[0] >= -0.5, "{id} starts left of the viewport: {rect:?}");
         assert!(rect[1] >= -0.5 && rect[1] + rect[3] <= height + 0.5, "{id} overflows vertically: {rect:?}");
-        if rect[0] + rect[2] <= width + 0.5 {
-            continue;
-        }
-        // 只有顶栏可横滑 Tab 条里被裁掉的入口允许在视口右侧之外。
-        assert!(id.starts_with("jy.tab."), "{id} overflows the 390 px page horizontally: {rect:?}");
-        clipped_tabs += 1;
+        assert!(rect[0] + rect[2] <= width + 0.5, "{id} overflows the 390 px page horizontally: {rect:?}");
+        present.push(id);
     }
-    assert!(clipped_tabs > 0, "390 px cannot fit all 13 tabs, so some tab entries must be clipped: {elements}");
+    // 顶栏只横排 3 个主 Tab + 「更多」（`jy.tab.inspector` 是属性开关，不算 Tab）。
+    for id in ["jy.tab.cut", "jy.tab.captions", "jy.tab.audio", "jy.tab.more"] {
+        assert!(present.contains(&id), "the compact top bar must show {id}: {elements}");
+    }
     // 页面骨架本身必须铺满视口宽度（不越界也不塌陷）。
     for id in ["jy.topbar", "jy.preview", "jy.timeline"] {
         let rect = require_rect(&elements, id);

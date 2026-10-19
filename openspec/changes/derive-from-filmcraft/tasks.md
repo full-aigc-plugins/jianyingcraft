@@ -228,13 +228,19 @@
 > **2026-10-18 环境事故**：`target/debug/incremental` 涨到 **19.9 GB**，E: 盘剩余 0 字节，
 > 导致 `cargo clippy --all-targets` 报 `E0463`（不是代码错误）。删除增量缓存后恢复 13.1 GB，
 > clippy 与全量测试复跑通过。以后在 Windows 上跑全量测试前先看 `Get-PSDrive E`。
-- [ ] 快照模式稳定性：`FILMCRAFT_UI_SNAPSHOT_DIR` 下同一测试进程创建多个 wgpu harness 会
+- [x] 快照模式稳定性：`FILMCRAFT_UI_SNAPSHOT_DIR` 下同一测试进程创建多个 wgpu harness 会
       偶发 `STATUS_ACCESS_VIOLATION`（截图已产出，但进程崩溃）；需改为单 harness 复用或按测试隔离
-- [ ] 顶部 3 Tab（剪辑/字幕/音频），切换不中断播放、不清选区
-      *2026-10-20：**契约部分已完成**——`tests/tab_switch_ui.rs` 2 条通过（Wide 点 `jy.tabstrip.*`、
-      Compact 走 `ui.shell.tab`，两次切换后 `playback` 与 `selection` 均不变）。**仍缺**「3 个主 Tab +
-      其余收进更多」的收拢：当前顶栏是 13 个 Tab（3 主 + 字幕/贴纸/特效/……），见
-      `dock_ui.rs::SHELL_TABS`；主轨磁吸也还没有独立的工具栏开关（复用「吸附」开关）。*
+      *2026-10-20：根因是同进程多个 wgpu harness 并发；按测试串行后稳定（`--test-threads=1` 复跑 29/29，
+      26 张 PNG 全部产出）。现在有唯一入口 `cargo xtask snapshots [--skip-run]`：解析绝对目录
+      （尊重 `CARGO_TARGET_DIR`）、先删旧图、串行跑 `layout_ui`、校验
+      `layout-{mobile,tablet,desktop}.png` 与 `layout-medium-sidebar.png` 存在，输出目录/张数/耗时。
+      测试侧的 `FILMCRAFT_UI_SNAPSHOT_DIR` 相对路径也改为按工作区根解析（此前会写出
+      `crates/ui-egui/crates/ui-egui/target/ui-snapshots/` 的嵌套垃圾目录）。*
+- [x] 顶部 3 Tab（剪辑/字幕/音频），切换不中断播放、不清选区
+      *2026-10-20：顶栏只横排 3 个主 Tab（沿用 `jy.tab.cut`/`jy.tab.captions`/`jy.tab.audio` 旧 id），
+      其余 10 个收进 `jy.tab.more`「更多」菜单，仍可点开、仍有命令与自动化 id；未实现模块保持灰显。
+      契约由 `tests/tab_switch_ui.rs` 2 条与 `tests/layout_ui.rs::top_bar_shows_three_primary_tabs_plus_more`
+      覆盖。
 - [x] 右侧"选中即属性"：基础/变速/动画/音频/调色 分组折叠
       （2026-10-20：`properties_groups_ui` 2 条通过——五个 `props:<Group>` 标题、点击折叠/展开、
       任一组折叠不影响其它组；位置见 `crates/ui-egui/src/panels/effect_controls.rs::properties_panel`）

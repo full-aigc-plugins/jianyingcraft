@@ -30,7 +30,7 @@ impl Driver {
             save_to.as_ref().map(|d| d.join(suggested).to_string_lossy().into_owned())
         }));
         let mut builder = Harness::builder().with_size(egui::vec2(1600.0, 980.0)).with_max_steps(10_000);
-        if std::env::var_os("FILMCRAFT_UI_SNAPSHOT_DIR").is_some() {
+        if filmcraft_ui_egui::test_support::snapshot_dir().is_some() {
             builder = builder.wgpu();
         }
         let harness = builder.build_eframe(move |_cc| app);
@@ -165,8 +165,7 @@ fn marker_csv_menu_exports_sequence_review_notes() {
     d.frames(3);
     let elements = d.ok("ui.elements", json!({"prefix":"menu.markers.exportCsv"}));
     assert!(!elements.as_array().unwrap().is_empty(), "the menu command has an automation id");
-    if let Some(dir) = std::env::var_os("FILMCRAFT_UI_SNAPSHOT_DIR") {
-        let dir = std::path::PathBuf::from(dir);
+    if let Some(dir) = filmcraft_ui_egui::test_support::snapshot_dir() {
         std::fs::create_dir_all(&dir).unwrap();
         d.harness.render().unwrap().save(dir.join("marker-csv-menu.png")).unwrap();
     }

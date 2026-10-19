@@ -58,6 +58,8 @@ pub mod scrub;
 mod shuttle;
 pub mod source_playback;
 pub mod state;
+#[doc(hidden)]
+pub mod test_support;
 pub mod theme;
 mod theme_favorites;
 pub mod widgets;

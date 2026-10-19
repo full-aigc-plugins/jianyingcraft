@@ -463,6 +463,9 @@ pub struct UiState {
     /// 顶栏 Tab 的当前 slug（`cut` / `captions` …）；左右循环与高亮用它。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jy_shell_slug: Option<String>,
+    /// Compact/Medium 顶栏的「更多」溢出菜单是否展开（其余 10 个一级 Tab 在里面）。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub jy_tab_more: bool,
     pub tool: Tool,
     pub mode: Mode,
     pub workspace: String,
@@ -1000,6 +1003,7 @@ impl Default for UiState {
             jy_media_filter: None,
             jy_tab_scroll: None,
             jy_shell_slug: None,
+            jy_tab_more: false,
             tool: Tool::Selection,
             mode: Mode::Edit,
             workspace: "Editing".into(),

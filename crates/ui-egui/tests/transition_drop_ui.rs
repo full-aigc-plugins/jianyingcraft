@@ -44,7 +44,7 @@ fn harness(effect: &str) -> Harness<'static, FilmcraftApp> {
     app.set_workspace("Effects");
     app.ui.effects_search = effect.to_string();
     let mut builder = Harness::builder().with_size(vec2(1600.0, 980.0)).with_max_steps(10_000);
-    if std::env::var_os("FILMCRAFT_UI_SNAPSHOT_DIR").is_some() {
+    if filmcraft_ui_egui::test_support::snapshot_dir().is_some() {
         builder = builder.wgpu();
     }
     let mut h = builder.build_eframe(move |_cc| app);
@@ -98,8 +98,7 @@ fn transition_drag_previews_both_edges_of_short_clips_and_commits_that_span() {
                     h.state().session.prefs.timeline.audio_transition_duration(rate)
                 }
             );
-            if let Some(dir) = std::env::var_os("FILMCRAFT_UI_SNAPSHOT_DIR") {
-                let dir = std::path::PathBuf::from(dir);
+            if let Some(dir) = filmcraft_ui_egui::test_support::snapshot_dir() {
                 std::fs::create_dir_all(&dir).unwrap();
                 h.render().unwrap().save(dir.join(format!("transition-{effect}-{edge}.png"))).unwrap();
             }
