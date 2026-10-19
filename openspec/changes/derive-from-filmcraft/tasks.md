@@ -134,8 +134,10 @@
       Graphics and Titles 43 / View 50 / Window 43 / Help 6），点进去显示该根的命令并给
       `< 返回`；有过滤词时退回扁平结果。
       `tests/layout_ui.rs::shell_menu_drills_into_a_menu_root` 断言"根列表 → 子项 → 返回"，截图 `shell-menu-roots`
-- [ ] 分组视图目前是"整页替换"而不是悬浮二级面板；分隔符刻意用 ASCII，
+- [x] 分组视图是悬浮二级面板（不再整页替换）；分隔符刻意用 ASCII，
       因为 `▸` 在实测字体里渲染成豆腐块
+      *2026-10-20：`tests/panel_float_ui.rs::grouped_menu_opens_a_floating_second_level_panel` 断言
+      分组面板宽 < 90%、高 < 75%、面积 < 半屏且不出界，返回后根列表仍在。*
 - [x] Wide 档：新增内置工作区 `Jianying`（左素材 / 中预览 / 右属性+关键帧 / 底时间轴），
       `WORKSPACES` 由 9 项增至 10 项，11 个语言目录补 `Jianying` 词条；
       `tests/layout_ui.rs::wide_default_workspace_is_the_four_regions` 断言四区存在、
