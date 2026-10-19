@@ -315,3 +315,10 @@ totalBytes: 40,969,658`；随后 `--check` → `drift: []`。`ui/engine/` 已在
 `cargo test` 不编译 `api.rs`。因此 `craft_submit` 的接线（先记账再投递、发送失败 `pop_back` 回滚）与
 `craft_take_reply` 的 `JsValue::NULL` 只经过 wasm32 类型检查；真实浏览器/Node 调用沿用 §10、§14
 已有的运行时证据，本轮没有新增浏览器运行。
+
+**2026-10-20 补强（T6 的两种"永远收不到"情况）**：`bridge.rs` 现在记录每条在途请求的登记时刻，
+超过 `REPLY_TIMEOUT`（15 s，与心跳一致）就由 `expire` 按原 id 合成
+`{"ok":false,"error":{"code":"timeout"}}` 并释放预算，队首不再被一条永不回复的请求永久堵住；
+回复侧单条超过 8 MiB 时回 `reply_too_large`，总预算溢出时把被挤掉的回复原位替换为
+`reply_evicted` 错误信封（不再静默丢最旧）。单测覆盖"挂起条目超时后不阻塞后续回复"与
+"超大回复不吞掉其后的正常回复"。
