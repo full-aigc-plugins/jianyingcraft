@@ -22,6 +22,11 @@ pub mod api;
 pub mod audio;
 pub mod download_pacing;
 pub mod fs;
+// The panel bridge's host imports: `host` is the wasm-only JS glue (`craft_read` / `craft_write` /
+// `craft_screenshot`), `host_policy` is pure `std` and is also included by `tests/host_policy.rs`,
+// which executes it on the host (this crate itself is `wasm32`-only, see the attribute above).
+pub mod host;
+pub mod host_policy;
 pub mod import;
 pub mod opfs;
 pub mod recovery;

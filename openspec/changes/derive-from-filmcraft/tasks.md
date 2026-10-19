@@ -263,13 +263,13 @@
 - [x] 代理 UI：已具备（`project_views` 的 proxy/offline 徽标、`View ▸ Toggle Proxies`、`Clip ▸ Proxy` 的创建/附加/分离/重连命令与预设、`ProxyDraft` 对话框）——此前的"未暴露"结论已过期
 - [ ] 仍缺：**变声（pitch）无对应命令**（需要音频 DSP 命令，属于扩命令面）；本地模板库未做
       （数字人/云素材/AI 生成/支付明确不做）
-- [ ] 自有品牌资产（logo/图标）替换 favicon 与关于页
-- [ ] 自有帮助页与 GitHub 链接（替换 "(upstream)" 标注）
+- [x] 自有品牌资产（logo/图标）替换 favicon 与关于页：`assets/brand/` 生成的 favicon 已进 web 产物（`apps/filmcraft-web/web/favicon.png`），关于页使用自有名称与链接
+- [x] 自有帮助页与 GitHub 链接：`links.rs` 只指向本仓仓库与 issue tracker，上游社区链接刻意不出现（原因是上游品牌许可）
 
 ## 4. 面板桥（智能体宿主内嵌）
 
 - [ ] 对齐 `bridge.rs.in` 四导出契约：submit / take_reply / idle / catalog（细节见 `docs/derivation/03-panel-bridge.md`）
-- [ ] 宿主三导入：`__craftRead` / `__craftWrite` / `__craftScreenshot`
+- [x] 宿主三导入：`apps/filmcraft-web/src/host.rs` + `host_policy.rs`（11 个策略单测通过：只读白名单、写入限工作区、截图仅在桥内）
 - [x] 引擎侧面板桥队列：`crates/ui-egui/src/bridge.rs`（32 条 / 8 MiB、FIFO、失败也回包、
       `idle()`、`rejected()`），7 条单测覆盖非法载荷与上限
 - [x] UI 线程执行：`FilmcraftApp::pump_bridge` 每帧把请求执行在可见 App 上；

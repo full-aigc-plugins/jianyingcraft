@@ -1,7 +1,9 @@
 //! 面板桥的端到端测试：请求经 `Bridge` 入队，由 UI 线程执行在**可见 App** 上，结果回到回复队列。
 //!
-//! 覆盖 `docs/derivation/03-panel-bridge.md` 的 T2（结果同构）、T3（队列上限）、T5（可见性）与 T7（错误回传）。
+//! 覆盖 `docs/derivation/03-panel-bridge.md` 的 T1（目录一致）、T2（结果同构）、T3（队列上限）、
+//! T5（可见性）与 T7（错误回传）。
 
+use std::collections::BTreeSet;
 use std::sync::mpsc::{Sender, channel};
 
 use egui_kittest::Harness;
@@ -140,4 +142,28 @@ fn bridge_results_match_headless_for_representative_commands() {
         assert_eq!(reply["ok"], json!(true), "{command} failed: {reply}");
         assert_eq!(reply["result"], headless[index], "{command}: panel and headless results differ");
     }
+}
+
+/// T1：`craft_catalog` 的命令 id 集合必须与执行 `command.list` 得到的 id 集合完全相等。
+///
+/// `craft_catalog` 在 wasm 里就是 `bridge::catalog()` 的字符串化，所以这里测的是它在 host 上
+/// 同一份实现——导出被换掉、或 `command_specs()` 与 `command.list` 分叉，这个测试都会红。
+#[test]
+fn craft_catalog_ids_match_command_list() {
+    let mut session = Session::default();
+    let listed = session.execute("command.list", json!({})).expect("command.list");
+    let listed: BTreeSet<&str> =
+        listed.as_array().expect("command.list returns an array").iter().filter_map(|command| command.get("id").and_then(Value::as_str)).collect();
+    let catalog = filmcraft_ui_egui::bridge::catalog();
+    let catalog: BTreeSet<&str> = catalog
+        .get("commands")
+        .and_then(Value::as_array)
+        .expect("catalog has a commands array")
+        .iter()
+        .filter_map(|command| command.get("id").and_then(Value::as_str))
+        .collect();
+    let specs: BTreeSet<&str> = filmcraft_engine::command_specs().iter().map(|command| command.id).collect();
+    assert!(!listed.is_empty(), "command.list returned no commands at all");
+    assert_eq!(catalog, listed, "craft_catalog and command.list disagree on the command id set");
+    assert_eq!(specs, listed, "command_specs() and command.list disagree on the command id set");
 }

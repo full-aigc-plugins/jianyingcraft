@@ -5,9 +5,14 @@
 //! adapter 再调 [`Bridge::take_reply`] 取走。队列上限 32 条 / 8 MiB，超限返回 `false`
 //! 而不是丢弃已有请求——这一点由单测锁死。
 //!
+//! wasm 导出（`apps/filmcraft-web/src/api.rs`）没有 UI 线程的队列可存：请求一入队就投给
+//! `ControlRequest`，所以在途请求必须单独记账，否则累计 8 MiB 形同虚设。[`InFlight`] 就是
+//! 导出边界的登记簿；[`catalog`] 是 `craft_catalog` 的目录来源。
+//!
 //! [`FilmcraftApp::pump_bridge`]: crate::FilmcraftApp::pump_bridge
 
 use std::collections::VecDeque;
+use std::sync::mpsc::Receiver;
 
 use serde_json::{Value, json};
 
@@ -117,8 +122,129 @@ impl Bridge {
     }
 }
 
+/// 一条已投递给控制通道、等待 UI 线程回复的面板桥请求。
+#[derive(Debug)]
+pub struct InFlightEntry {
+    id: String,
+    bytes: usize,
+    receiver: Receiver<Value>,
+}
+
+impl InFlightEntry {
+    /// 调用方给的请求 id（回复信封里原样带回）。
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// 回复通道；用 `try_recv` 非阻塞轮询（它只借 `&self`）。
+    pub fn receiver(&self) -> &Receiver<Value> {
+        &self.receiver
+    }
+
+    /// 该条目在累计上限里占用的请求字节数。
+    pub fn bytes(&self) -> usize {
+        self.bytes
+    }
+}
+
+/// 面板桥「已投递、未取回」请求的登记簿（导出边界）。
+///
+/// 与 [`Bridge`] 的分工：`Bridge` 是 UI 线程自己消费的队列，请求入队后下一帧就被取走；
+/// `InFlight` 记的是已经交给 `ControlRequest`、正在等回复的请求。导出层必须**先在这里记账再
+/// 投递**，否则每条请求在 `Bridge` 里只停留一瞬，累计 8 MiB 永远算不到在途的那批
+/// （32 条 × 单条 8 MiB 会一起堆在通道里）。
+///
+/// 上限与 [`Bridge`] 共用 [`MAX_PENDING`] / [`MAX_BYTES`]：条数满、或本条原始 JSON 会让累计
+/// 字节越过 8 MiB 时拒绝，且**不改变任何已有条目**。
+#[derive(Debug, Default)]
+pub struct InFlight {
+    entries: VecDeque<InFlightEntry>,
+    bytes: usize,
+    rejected: u64,
+}
+
+impl InFlight {
+    /// 空登记簿。
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 尝试登记一条在途请求；超限返回 `false` 且**不改变任何状态**（已有的仍可逐条取回）。
+    ///
+    /// `request_json` 只用来计字节，不复制保存：累计上限覆盖的是原始请求载荷，解码后的
+    /// 回复字符串另由 [`Bridge`] 的回复队列按 8 MiB 封顶。
+    pub fn try_push(&mut self, id: &str, request_json: &str, receiver: Receiver<Value>) -> bool {
+        let bytes = request_json.len();
+        if self.entries.len() >= MAX_PENDING || self.bytes.saturating_add(bytes) > MAX_BYTES {
+            self.rejected += 1;
+            return false;
+        }
+        self.entries.push_back(InFlightEntry { id: id.to_string(), bytes, receiver });
+        self.bytes = self.bytes.saturating_add(bytes);
+        true
+    }
+
+    /// 队首（最早投递、必须最先回复的那条），用于非阻塞轮询；不释放字节。
+    pub fn front(&self) -> Option<&InFlightEntry> {
+        self.entries.front()
+    }
+
+    /// 取走队首（回复已收下），同时释放它占用的字节。
+    pub fn pop_front(&mut self) -> Option<InFlightEntry> {
+        let entry = self.entries.pop_front()?;
+        self.bytes = self.bytes.saturating_sub(entry.bytes);
+        Some(entry)
+    }
+
+    /// 回滚刚登记的最后一条（投递 `ControlRequest` 失败时用）：wasm 单线程下它就是
+    /// `try_push` 刚放进去的那条。释放字节，避免一条永远不会有回复的条目占着预算。
+    pub fn pop_back(&mut self) -> Option<InFlightEntry> {
+        let entry = self.entries.pop_back()?;
+        self.bytes = self.bytes.saturating_sub(entry.bytes);
+        Some(entry)
+    }
+
+    /// 是否有在途请求（`craft_idle` 用）。
+    pub fn queued(&self) -> bool {
+        !self.entries.is_empty()
+    }
+
+    /// 在途请求条数。
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// 是否没有在途请求。
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// 在途请求占用的字节数（按原始请求 JSON 计）。
+    pub fn bytes(&self) -> usize {
+        self.bytes
+    }
+
+    /// 被拒绝的登记数，便于诊断 adapter 与上限配置。
+    pub fn rejected(&self) -> u64 {
+        self.rejected
+    }
+}
+
+/// 面板桥的命令目录（`craft_catalog` 的 Rust 侧实现），`{"commands":[{id,label,menu,shortcut,params}]}`。
+///
+/// 与 `command.list` 同源（[`filmcraft_engine::command_specs`]），T1 测试锁死两者 id 集合相等。
+pub fn catalog() -> Value {
+    let commands: Vec<Value> = filmcraft_engine::command_specs()
+        .iter()
+        .map(|c| json!({"id": c.id, "label": c.label, "menu": c.menu, "shortcut": c.shortcut, "params": c.params}))
+        .collect();
+    json!({"commands": commands})
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc::channel;
+
     use super::*;
 
     fn request(id: &str, command: &str) -> String {
@@ -213,5 +339,104 @@ mod tests {
         }
         assert!(bridge.reply_bytes() <= MAX_BYTES);
         assert!(bridge.replies.len() < 64);
+    }
+
+    // ------------------------------------------------ 导出边界：在途登记簿（InFlight）
+
+    /// 累计字节上限：每条略大于 8 MiB / 4，第 4 条必然越界；越界的那条被拒且不改状态，
+    /// 前 3 条仍可逐条取回（这就是 `api.rs` 的 `craft_submit` 边界）。
+    #[test]
+    fn the_cumulative_byte_budget_is_enforced_by_the_bookkeeping() {
+        let mut in_flight = InFlight::default();
+        let padding = "x".repeat(MAX_BYTES / 4);
+        for index in 0..3 {
+            let id = format!("q-{index}");
+            let raw = json!({"id": &id, "command": "file.newBin", "params": {"name": &padding}}).to_string();
+            let (_tx, rx) = channel();
+            assert!(in_flight.try_push(&id, &raw, rx), "request {index} is within the budget");
+        }
+        let before = in_flight.bytes();
+        assert!(before <= MAX_BYTES, "three entries alone must stay under the cap");
+        let raw = json!({"id": "boundary", "command": "file.newBin", "params": {"name": &padding}}).to_string();
+        let (_tx, rx) = channel();
+        assert!(!in_flight.try_push("boundary", &raw, rx), "the request that would cross 8 MiB must be refused");
+        assert_eq!(in_flight.bytes(), before, "a refused request must not change the byte count");
+        assert_eq!(in_flight.len(), 3, "a refused request must not change the entry count");
+        assert_eq!(in_flight.rejected(), 1);
+        // 被拒之后，先前登记的三条仍完整可用，取走时释放字节。
+        let mut ids = Vec::new();
+        while let Some(entry) = in_flight.pop_front() {
+            ids.push(entry.id().to_string());
+        }
+        assert_eq!(ids, ["q-0", "q-1", "q-2"]);
+        assert_eq!(in_flight.bytes(), 0);
+        assert!(!in_flight.queued());
+    }
+
+    /// 第 33 条在导出边界（登记簿）被拒，前 32 条仍可逐条取回——与 App 队列（`Bridge`）无关。
+    #[test]
+    fn the_thirty_third_in_flight_entry_is_refused() {
+        let mut in_flight = InFlight::default();
+        for index in 0..MAX_PENDING {
+            let id = format!("q-{index}");
+            let raw = json!({"id": &id, "command": "file.newBin"}).to_string();
+            let (_tx, rx) = channel();
+            assert!(in_flight.try_push(&id, &raw, rx), "entry {index}");
+        }
+        assert_eq!(in_flight.len(), MAX_PENDING);
+        assert_eq!(in_flight.rejected(), 0);
+        let (_tx, rx) = channel();
+        assert!(!in_flight.try_push("overflow", "{\"id\":\"overflow\"}", rx), "the 33rd entry must be refused");
+        assert_eq!(in_flight.rejected(), 1);
+        assert_eq!(in_flight.len(), MAX_PENDING);
+        let mut ids = Vec::new();
+        while let Some(entry) = in_flight.pop_front() {
+            ids.push(entry.id().to_string());
+        }
+        assert_eq!(ids.len(), MAX_PENDING, "every accepted entry must stay takeable");
+        assert_eq!(ids.first().map(String::as_str), Some("q-0"));
+        assert_eq!(ids.last().map(String::as_str), Some("q-31"));
+    }
+
+    /// 空登记簿取不出东西：`craft_take_reply` 据此返回 `JsValue::NULL`（见 `api.rs`）。
+    #[test]
+    fn taking_from_an_empty_bookkeeping_yields_none() {
+        let mut in_flight = InFlight::default();
+        assert!(in_flight.front().is_none());
+        assert!(in_flight.pop_front().is_none());
+        assert!(in_flight.pop_back().is_none());
+        assert!(!in_flight.queued());
+        assert!(in_flight.is_empty());
+        assert_eq!(in_flight.bytes(), 0);
+    }
+
+    /// 投递失败时的回滚：`pop_back` 释放刚登记的字节。
+    #[test]
+    fn a_rolled_back_entry_releases_its_bytes() {
+        let mut in_flight = InFlight::default();
+        let raw = "{\"id\":\"q-r\"}";
+        let (_tx, rx) = channel();
+        assert!(in_flight.try_push("q-r", raw, rx));
+        assert_eq!(in_flight.bytes(), raw.len());
+        assert!(in_flight.queued());
+        assert_eq!(in_flight.pop_back().as_ref().map(|entry| entry.id()), Some("q-r"));
+        assert_eq!(in_flight.bytes(), 0);
+        assert!(!in_flight.queued());
+    }
+
+    /// 队首的回复通道可读，且取走后字节归零（`collect_bridge_replies` 的取数方式）。
+    #[test]
+    fn the_front_entry_exposes_its_reply_receiver() {
+        let mut in_flight = InFlight::default();
+        let raw = "{\"id\":\"q-v\"}";
+        let (tx, rx) = channel();
+        assert!(in_flight.try_push("q-v", raw, rx));
+        tx.send(json!({"ok": true, "result": {"cuts": 2}})).expect("send reply");
+        let front = in_flight.front().expect("the pushed entry is the front");
+        assert_eq!(front.id(), "q-v");
+        assert_eq!(front.bytes(), raw.len());
+        assert_eq!(front.receiver().try_recv().expect("the reply is ready"), json!({"ok": true, "result": {"cuts": 2}}));
+        assert_eq!(in_flight.pop_front().as_ref().map(|entry| entry.id()), Some("q-v"));
+        assert_eq!(in_flight.bytes(), 0);
     }
 }

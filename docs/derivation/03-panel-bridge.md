@@ -47,11 +47,56 @@ flowchart LR
 | `__craftWrite(path, bytes)` | 原子写工作区内文件 | 失败 → 返回错误对象，不落半成品 |
 | `__craftScreenshot(panel?)` | 取面板/窗口 PNG | 宿主不支持 → 返回 null，由调用方降级为 `render_frame` |
 
+**实现（2026-10-20）**：策略在 `apps/filmcraft-web/src/host_policy.rs`（纯 `std`，不依赖 `web_sys`），
+wasm 侧薄绑定在 `apps/filmcraft-web/src/host.rs`，导出 `craft_read` / `craft_write` / `craft_screenshot`。
+它们和 §10 的四个 `craft_*` 一样是 wasm-bindgen 的模块导出（面板直接 `filmcraft_web.craft_read(path)`），
+不另开端口、不进 `window.filmcraft`。返回/异常形状严格按上表：
+
+| 导出 | 成功 | 失败 |
+|---|---|---|
+| `craft_read(path)` | `Uint8Array` | **抛出** `Error`，`.code` 为 `path_outside_workspace` / `quota_exceeded` / `invalid_path` / `io_error` |
+| `craft_write(path, bytes)` | `{ok:true, path, bytes, overwritten}` | 返回 `{ok:false, error:{code, message}}`（不抛） |
+| `craft_screenshot(panel?)` | `Uint8Array`（PNG） | `undefined`（宿主不支持），调用方降级 `render_frame`，不算错误 |
+
+宿主的写回必须带 `overwritten`（覆盖时为被覆盖的路径，新建时为 `null`）；Rust 侧把"没有返回值"的写回
+判为 `io_error`，不会把未确认的写当成成功。
+
 ## 4. 路径与配额
 
 1. 所有路径先解析 `realpath`，再判断是否位于工作区根内；符号链接逃逸一律拒绝。
 2. 单次导入 ≤ 256 个文件 / 128 MiB；单产物 ≤ 128 MiB；宿主保存对话框另限 50 MiB。
 3. 写入先临时文件再原子改名；覆盖必须在结果里报告被覆盖的路径。
+
+### 4.1 实现与证据（2026-10-20）
+
+**位置与理由**：策略放在 `apps/filmcraft-web/src/host_policy.rs`，不放进 `crates/platform`——`platform`
+是唯一允许 `unsafe` 的 OS 媒体 FFI crate（硬解/硬编），把纯 `std` 的路径策略塞进去会破坏它的职责边界，
+还会让 wasm 构建多背一个媒体 crate；`apps/filmcraft-web` 本来就是"浏览器侧宿主服务"的归属地，且已有同款
+先例：`recovery_policy.rs` 是纯模块，`tests/recovery_policy.rs` 用 `#[path]` 在宿主上执行它。
+
+| 规则 | 实现 | 证明（`apps/filmcraft-web/tests/host_policy.rs`） |
+|---|---|---|
+| realpath + 根内判断 | `Workspace::open` 先 canonicalize 根；`resolve` 对已存在的目标 canonicalize，对新文件 canonicalize 其父目录；`is_within` 按路径分量比较（Windows 忽略大小写） | `absolute_path_outside_the_root_is_rejected`、`absolute_path_inside_the_root_is_allowed` |
+| 拒绝 `../` | `check_syntax` 在碰文件系统之前直接拒绝任何 `ParentDir` 分量（不做归一化） | `parent_dir_escape_is_rejected_for_reads_and_writes` |
+| 拒绝符号链接逃逸 | realpath 之后再做前缀判断 | `a_link_pointing_outside_the_workspace_is_rejected`（Windows 用无需管理员权限的 junction；两种链接都建不出来时打印 skip，不冒充通过）、`a_resolved_path_that_leaves_the_root_is_rejected`（注入 realpath，任何平台都执行） |
+| 拒绝 UNC / 盘符相对路径 | `check_syntax` 拒绝 `\\`、`//`、`\\?\` 与 `C:foo` | `unc_drive_relative_and_nul_paths_are_rejected` |
+| 单次导入 ≤ 256 文件 / 128 MiB | `ImportBatch::admit` 计数累加；第 257 个或超字节的那次被拒，且不入账 | `an_import_admits_at_most_256_files_and_128_mib` |
+| 单产物 ≤ 128 MiB | `Workspace::write` 在解析路径、建临时文件**之前**检查长度 | `a_write_over_the_artifact_quota_leaves_the_previous_file_untouched` |
+| 临时文件 + 原子改名 | 同目录 `create_new` 临时文件 → `write_all` + `sync_all` → `rename`；任一步失败删临时文件并返回 `io_error` | 同上（断言目录里仍只有原文件）；`an_overwrite_reports_the_path_it_replaced`（断言无 `.tmp` 残留） |
+| 覆盖报告被覆盖路径 | `WriteOutcome.overwritten = Some(相对路径)`，新建为 `None` | `an_overwrite_reports_the_path_it_replaced` |
+| 截图不支持 → null | `Screenshot::from_png(None) == Unsupported`，`.png() == None` | `an_unsupported_screenshot_is_none_not_an_error` |
+
+**执行到哪一步（诚实边界）**：
+
+- **真实执行**（宿主 `cargo test -p filmcraft-web`）：上表的路径、配额、原子写、覆盖报告与截图分类。
+  测试直接对临时目录做真实文件操作，没有 mock 文件系统。
+- **只做类型检查**（`cargo check -p filmcraft-web --target wasm32-unknown-unknown`）：`host.rs` 里的
+  `js_sys::Reflect` / `Function` 调用、`Uint8Array` 编码，以及把宿主返回值映射进策略类型。本环境没有
+  "注入了三个全局的宿主页面"，因此这三个导出**没有在浏览器里被真实调用过**，也没有进入 §10 的 Node wasm
+  探针（那组探针只调用了四个 `craft_*`）。
+- **页面内真正的文件系统约束由宿主执行**：浏览器页面没有自己的文件系统，`__craftRead` / `__craftWrite`
+  必须自己完成 realpath、根内判断与原子改名。Rust 侧做它能做的：`check_syntax`、配额、对缺失/不可识别
+  返回值 fail-closed；它不假装替宿主完成了 realpath。宿主实现不在本仓库，本仓库只能约束接口与结果形状。
 
 ## 5. 长任务
 
@@ -70,6 +115,12 @@ flowchart LR
 | T5 可见性 | 面板命令改动的结果能被下一次 `sequence.inspect` 读到（证明改的是可见 App） |
 | T6 断线 | 面板关闭后 pending 请求在 15 s 内失败，不重放 |
 | T7 参数严格 | 未知参数报 `-32602` 并点名参数 |
+
+**T4 实现（2026-10-20）**：`apps/filmcraft-web/tests/host_policy.rs` 的
+`parent_dir_escape_is_rejected_for_reads_and_writes`、`absolute_path_outside_the_root_is_rejected`、
+`a_link_pointing_outside_the_workspace_is_rejected`、`unc_drive_relative_and_nul_paths_are_rejected`
+都断言错误码为 `path_outside_workspace`，并进一步证明工作区外的目标文件字节未变（读不到、写不进）；
+`a_resolved_path_that_leaves_the_root_is_rejected` 用注入 realpath 固定住前缀判断本身。详见 §4.1。
 
 **T2 实现（2026-10-19）**：`crates/ui-egui/tests/bridge_ui.rs::bridge_results_match_headless_for_representative_commands`
 拿 12 条静态查询命令分别走面板桥与 headless `Session`，断言结果 JSON 深度相等。两处有意排除：

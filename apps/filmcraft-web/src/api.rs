@@ -17,11 +17,10 @@
 //! Results resolve with the method's `result`; errors reject with the error message.
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 
 use filmcraft_ui_egui::ControlRequest;
-use filmcraft_ui_egui::bridge::{Bridge, MAX_PENDING};
+use filmcraft_ui_egui::bridge::{Bridge, InFlight};
 use serde_json::{Value, json};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
@@ -90,97 +89,100 @@ pub fn request(method: &str, params: Value) -> js_sys::Promise {
 // ---------------------------------------------------------------- 面板桥（craft_* 四导出）
 //
 // 与 `window.filmcraft.request()` 的区别：那套是 Promise；`craft_*` 是面板桥要的**同步队列**
-// 语义（submit 立即返回 true/false、take_reply 轮询取回、idle 判断）。解析、上限与回复信封
-// 复用 `filmcraft_ui_egui::bridge::Bridge`，执行仍然走同一条控制通道。
+// 语义（submit 立即返回 true/false、take_reply 轮询取回、idle 判断）。信封解析复用
+// `filmcraft_ui_egui::bridge::Bridge`，执行仍然走同一条控制通道；导出的边界条件（32 条 /
+// 累计 8 MiB）由 `bridge::InFlight` 记账——请求一旦投递就离开 `Bridge`，只在 `Bridge` 上
+// 计数会让在途请求完全不设防。
 
 thread_local! {
     static BRIDGE: RefCell<Bridge> = RefCell::new(Bridge::default());
-    static IN_FLIGHT: RefCell<VecDeque<(String, Receiver<Value>)>> = const { RefCell::new(VecDeque::new()) };
+    /// 已投递给控制通道、等待 UI 线程回复的请求（含字节数）。
+    static IN_FLIGHT: RefCell<InFlight> = RefCell::new(InFlight::default());
     static REPLIES: RefCell<Bridge> = RefCell::new(Bridge::default());
 }
 
-/// 面板桥：提交一条 `{"id","command","params"}`；队列满或载荷非法返回 false。
+/// 面板桥：提交一条 `{"id","command","params"}`；载荷非法、队列满或累计超 8 MiB 返回 false。
 #[wasm_bindgen]
 pub fn craft_submit(request_json: &str) -> bool {
-    let in_flight = IN_FLIGHT.with(|q| q.borrow().len());
-    let queued = BRIDGE.with(|b| b.borrow().pending_bytes() > 0);
-    if in_flight >= MAX_PENDING || queued {
-        // 已满：拒绝新请求，已入队的请求不受影响。
-        return false;
-    }
+    // 信封校验复用 `Bridge`（唯一实现）：非法 JSON、缺字段在这里就被挡下。
     if !BRIDGE.with(|b| b.borrow_mut().submit(request_json)) {
         return false;
     }
-    drain_bridge_queue();
+    // 立刻取出并在**投递前**记账：InFlight 超限时 `try_push` 不改任何状态并返回 false，
+    // 所以被拒的请求既不会执行，也不会影响已登记的请求。
+    let Some(request) = BRIDGE.with(|b| b.borrow_mut().take_request()) else {
+        return false;
+    };
+    let (control, rx) = ControlRequest::new("engine.execute", json!({"command": request.command, "params": request.params}));
+    let Some(tx) = TX.with(|t| t.borrow().clone()) else {
+        REPLIES.with(|r| r.borrow_mut().push_reply(&request.id, Err("JianyingCraft is not running yet".into())));
+        crate::repaint();
+        return true;
+    };
+    if !IN_FLIGHT.with(|q| q.borrow_mut().try_push(&request.id, request_json, rx)) {
+        return false;
+    }
+    if tx.send(control).is_err() {
+        // 投递失败：回滚刚登记的条目，避免一条永远不会有回复的请求占着字节。
+        IN_FLIGHT.with(|q| q.borrow_mut().pop_back());
+        REPLIES.with(|r| r.borrow_mut().push_reply(&request.id, Err("JianyingCraft is not running yet".into())));
+    }
+    crate::repaint();
     true
 }
 
-/// 面板桥：取一条回复（JSON 字符串），没有则返回 undefined。
+/// 面板桥：取一条回复（JSON 字符串）；没有则返回 **null**（不是 undefined）。
+///
+/// 返回值用 `JsValue` 而不是 `Option<String>`：wasm-bindgen 会把 `None` 映射成 `undefined`，
+/// 而契约要求 `null`（调用方两种都容忍，但契约与测试都以 null 为准）。
 #[wasm_bindgen]
-pub fn craft_take_reply() -> Option<String> {
+pub fn craft_take_reply() -> JsValue {
     collect_bridge_replies();
-    REPLIES.with(|r| r.borrow_mut().take_reply())
+    match REPLIES.with(|r| r.borrow_mut().take_reply()) {
+        Some(reply) => JsValue::from_str(&reply),
+        None => JsValue::NULL,
+    }
 }
 
-/// 面板桥：队列空、没有在途命令且没有待取回复时为 true。
+/// 面板桥：没有在途命令、没有排队请求且没有待取回复时为 true。
 #[wasm_bindgen]
 pub fn craft_idle() -> bool {
-    let in_flight = IN_FLIGHT.with(|q| q.borrow().is_empty());
-    in_flight && BRIDGE.with(|b| b.borrow().idle()) && REPLIES.with(|r| r.borrow().idle())
+    let idle = !IN_FLIGHT.with(|q| q.borrow().queued());
+    idle && BRIDGE.with(|b| b.borrow().idle()) && REPLIES.with(|r| r.borrow().idle())
 }
 
 /// 面板桥：命令目录（`{"commands":[{id,label,menu,shortcut,params}]}`）。
 #[wasm_bindgen]
 pub fn craft_catalog() -> String {
-    let commands: Vec<Value> = filmcraft_engine::command_specs()
-        .iter()
-        .map(|c| json!({"id": c.id, "label": c.label, "menu": c.menu, "shortcut": c.shortcut, "params": c.params}))
-        .collect();
-    json!({"commands": commands}).to_string()
-}
-
-fn drain_bridge_queue() {
-    loop {
-        let Some(request) = BRIDGE.with(|b| b.borrow_mut().take_request()) else { break };
-        let (control, rx) = ControlRequest::new("engine.execute", json!({"command": request.command, "params": request.params}));
-        let sent = TX.with(|t| t.borrow().as_ref().map(|tx| tx.send(control).is_ok()).unwrap_or(false));
-        if sent {
-            IN_FLIGHT.with(|q| q.borrow_mut().push_back((request.id, rx)));
-        } else {
-            REPLIES.with(|r| r.borrow_mut().push_reply(&request.id, Err("JianyingCraft is not running yet".into())));
-        }
-    }
-    crate::repaint();
+    filmcraft_ui_egui::bridge::catalog().to_string()
 }
 
 fn collect_bridge_replies() {
-    IN_FLIGHT.with(|q| {
-        let mut q = q.borrow_mut();
-        loop {
-            // 只看队首：桥的回复必须与提交顺序一致。
-            let ready = {
-                let Some((id, rx)) = q.front_mut() else { break };
-                match rx.try_recv() {
-                    Ok(v) => Some((id.clone(), Some(v))),
-                    Err(TryRecvError::Empty) => None,
-                    Err(TryRecvError::Disconnected) => Some((id.clone(), None)),
-                }
-            };
-            let Some((id, value)) = ready else { break };
-            match value {
-                Some(v) if v.get("ok").and_then(Value::as_bool) == Some(true) => {
-                    let result = v.get("result").cloned().unwrap_or(Value::Null);
-                    REPLIES.with(|r| r.borrow_mut().push_reply(&id, Ok(result)));
-                }
-                Some(v) => {
-                    let message = v.get("error").and_then(Value::as_str).unwrap_or("command failed").to_string();
-                    REPLIES.with(|r| r.borrow_mut().push_reply(&id, Err(message)));
-                }
-                None => REPLIES.with(|r| r.borrow_mut().push_reply(&id, Err("request dropped".into()))),
+    loop {
+        // 只看队首：桥的回复必须与提交顺序一致。
+        let ready = IN_FLIGHT.with(|q| {
+            let q = q.borrow();
+            let Some(entry) = q.front() else { return None };
+            match entry.receiver().try_recv() {
+                Ok(v) => Some((entry.id().to_string(), Some(v))),
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => Some((entry.id().to_string(), None)),
             }
-            q.pop_front();
+        });
+        let Some((id, value)) = ready else { break };
+        match value {
+            Some(v) if v.get("ok").and_then(Value::as_bool) == Some(true) => {
+                let result = v.get("result").cloned().unwrap_or(Value::Null);
+                REPLIES.with(|r| r.borrow_mut().push_reply(&id, Ok(result)));
+            }
+            Some(v) => {
+                let message = v.get("error").and_then(Value::as_str).unwrap_or("command failed").to_string();
+                REPLIES.with(|r| r.borrow_mut().push_reply(&id, Err(message)));
+            }
+            None => REPLIES.with(|r| r.borrow_mut().push_reply(&id, Err("request dropped".into()))),
         }
-    });
+        IN_FLIGHT.with(|q| q.borrow_mut().pop_front());
+    }
 }
 
 fn set_fn(obj: &js_sys::Object, name: &str, f: JsValue) -> Result<(), JsValue> {

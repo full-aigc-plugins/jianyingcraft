@@ -98,7 +98,8 @@ fn primary_tab_ids(ids: &[String]) -> Vec<String> {
 /// 元素矩形 `[x, y, w, h]`；缺了就是测试失败。
 fn rect_of(d: &mut Driver, id: &str) -> [f64; 4] {
     let elements = d.ok("ui.elements", json!({"prefix": id}));
-    let element = elements.as_array().and_then(|list| list.iter().find(|element| element["id"] == json!(id))).unwrap_or_else(|| panic!("{id} missing in {elements}"));
+    let element =
+        elements.as_array().and_then(|list| list.iter().find(|element| element["id"] == json!(id))).unwrap_or_else(|| panic!("{id} missing in {elements}"));
     let r = element["rect"].as_array().expect("rect");
     [r[0].as_f64().unwrap(), r[1].as_f64().unwrap(), r[2].as_f64().unwrap(), r[3].as_f64().unwrap()]
 }
