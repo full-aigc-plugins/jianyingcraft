@@ -348,7 +348,7 @@ fn shell_menu_filters_commands() {
             .iter()
             .filter(|e| {
                 let id = e["id"].as_str().unwrap_or("");
-                id.starts_with("jy.menu.") && id != "jy.menu.panel" && id != "jy.menu.filter" && id != "jy.menu.back" && !id.starts_with("jy.menu.group.")
+                id.starts_with("jy.menu.") && id != "jy.menu.panel" && id != "jy.menu.filter" && !id.starts_with("jy.menu.group.")
             })
             .count()
     };

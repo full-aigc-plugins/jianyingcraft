@@ -1,55 +1,51 @@
-//! Policy for the three host imports the panel bridge calls: `__craftRead`, `__craftWrite` and
-//! `__craftScreenshot` (§3/§4 of `docs/derivation/03-panel-bridge.md`).
+//! 面板桥所调用的三个宿主导入 `__craftRead`、`__craftWrite` 与 `__craftScreenshot` 的策略
+//! （`docs/derivation/03-panel-bridge.md` §3/§4）。
 //!
-//! This module is deliberately platform-agnostic: no `web_sys`, no `wasm-bindgen`, no JavaScript. It
-//! holds the rules that must be *proved* by tests, not merely declared:
+//! 本模块刻意与平台无关：不使用 `web_sys`、`wasm-bindgen`，也不使用 JavaScript。它承载那些必须由
+//! 测试*证明*、而不能只靠声明的规则：
 //!
-//! - every path is resolved (`realpath`) and must stay inside the workspace root; `..`, symlink
-//!   escapes, UNC paths and drive-relative Windows paths are rejected with the error code
-//!   `path_outside_workspace`;
-//! - one import carries at most [`MAX_IMPORT_FILES`] files / [`MAX_IMPORT_BYTES`]; one artifact is at
-//!   most [`MAX_ARTIFACT_BYTES`];
-//! - a write goes to a temporary file next to its target and is renamed into place, so a rejected or
-//!   failed write leaves the previous file byte-for-byte intact, and an overwrite reports the path it
-//!   replaced;
-//! - a host without screenshots answers `None`, which is [`Screenshot::Unsupported`] and not an error.
+//! - 每个路径都会被解析（`realpath`），且必须留在工作区根目录内；`..`、符号链接逃逸、UNC 路径和
+//!   Windows 盘符相对路径都会以错误码 `path_outside_workspace` 拒绝；
+//! - 一次导入最多 [`MAX_IMPORT_FILES`] 个文件 / [`MAX_IMPORT_BYTES`] 字节；单个产物最多
+//!   [`MAX_ARTIFACT_BYTES`] 字节；
+//! - 写入先落到目标旁的临时文件，再重命名到位，因此被拒绝或失败的写入会让原文件逐字节保持不变，
+//!   而覆盖写入会报告它替换掉的路径；
+//! - 没有截图能力的宿主返回 `None`，即 [`Screenshot::Unsupported`]，而不是错误。
 //!
-//! The filesystem-backed reference implementation ([`Workspace`]) is compiled on the host only: the
-//! panel runs in a browser, where the *host* performs the real I/O (`__craftRead` / `__craftWrite`).
-//! `tests/host_policy.rs` includes this file by path (the same way `tests/recovery_policy.rs` does)
-//! and executes that implementation against real temporary directories, so the rules below are
-//! tested on the host even though the rest of the crate is `wasm32`-only. The wasm glue (`host.rs`)
-//! reuses these types and the portable path/quota checks, and fails closed on anything it cannot
-//! verify.
+//! 基于文件系统的参考实现（[`Workspace`]）只在宿主上编译：面板运行在浏览器中，真正的 I/O 由*宿主*
+//! 执行（`__craftRead` / `__craftWrite`）。`tests/host_policy.rs` 按路径包含本文件（与
+//! `tests/recovery_policy.rs` 的做法相同），并针对真实的临时目录执行该实现，因此即使 crate 的其余
+//! 部分是 `wasm32` 专用，下面的规则仍能在宿主上受测。wasm 胶水层（`host.rs`）复用这些类型以及可移植
+//! 的路径/配额检查，并对任何无法验证的情况失败关闭。
 
 use std::fmt;
 use std::path::{Component, Path};
 
-/// One import carries at most this many files (§4.2).
+/// 一次导入最多包含这么多个文件（§4.2）。
 pub const MAX_IMPORT_FILES: usize = 256;
-/// One import carries at most this many bytes in total (§4.2).
+/// 一次导入的字节总数上限（§4.2）。
 pub const MAX_IMPORT_BYTES: u64 = 128 * 1024 * 1024;
-/// One written artifact is at most this many bytes (§4.2).
+/// 单个写出产物的字节上限（§4.2）。
 pub const MAX_ARTIFACT_BYTES: u64 = 128 * 1024 * 1024;
-/// The host's own save dialog caps a save at this many bytes (§4.2). The panel does not enforce it
-/// (the dialog belongs to the host); it is recorded here so all the §4 numbers live together.
+/// 宿主自身的保存对话框把单次保存限制在这个字节数（§4.2）。面板不强制该限制（对话框属于宿主）；
+/// 记录在此，是为了让 §4 的所有数值集中在一处。
 pub const MAX_SAVE_DIALOG_BYTES: u64 = 50 * 1024 * 1024;
-/// What a caller falls back to when [`Screenshot::Unsupported`] (§3).
+/// 出现 [`Screenshot::Unsupported`] 时调用方退化的目标（§3）。
 pub const SCREENSHOT_FALLBACK: &str = "render_frame";
 
-/// The quota a [`HostError::Quota`] exceeded.
+/// [`HostError::Quota`] 中记录的、被超出的配额。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Quota {
-    /// More than [`MAX_IMPORT_FILES`] files in one import.
+    /// 一次导入的文件数超过 [`MAX_IMPORT_FILES`]。
     ImportFiles,
-    /// More than [`MAX_IMPORT_BYTES`] bytes in one import (also a single file over the limit).
+    /// 一次导入的字节数超过 [`MAX_IMPORT_BYTES`]（单个文件超限也属于此类）。
     ImportBytes,
-    /// More than [`MAX_ARTIFACT_BYTES`] bytes in one written artifact.
+    /// 单个写出产物的字节数超过 [`MAX_ARTIFACT_BYTES`]。
     ArtifactBytes,
 }
 
 impl Quota {
-    /// Stable machine-readable name, reported as `error.quota` next to `error.code`.
+    /// 稳定的机器可读名称，与 `error.code` 并列上报为 `error.quota`。
     pub fn code(self) -> &'static str {
         match self {
             Self::ImportFiles => "import_files",
@@ -58,7 +54,7 @@ impl Quota {
         }
     }
 
-    /// The limit this quota names.
+    /// 该配额对应的上限值。
     pub fn limit(self) -> u64 {
         match self {
             Self::ImportFiles => MAX_IMPORT_FILES as u64,
@@ -68,22 +64,22 @@ impl Quota {
     }
 }
 
-/// Why a host import failed. [`HostError::code`] is the stable string the panel and the host report
-/// in the error object (§3): an escape is always `path_outside_workspace`, never a fallback path.
+/// 宿主导入失败的原因。[`HostError::code`] 是面板与宿主在错误对象中上报的稳定字符串（§3）：
+/// 越界永远是 `path_outside_workspace`，绝不会退化成某个回退路径。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HostError {
-    /// The requested path resolves outside the workspace root (T4).
+    /// 请求的路径解析后落在工作区根目录之外（T4）。
     OutsideWorkspace { path: String },
-    /// A §4.2 quota would be exceeded.
+    /// 将超出 §4.2 的某项配额。
     Quota { quota: Quota, requested: u64 },
-    /// The path cannot name a workspace file at all (empty, NUL, the root itself…).
+    /// 该路径根本无法命名一个工作区文件（空、含 NUL、根目录本身……）。
     InvalidPath { path: String, reason: &'static str },
-    /// The filesystem (or the host) failed.
+    /// 文件系统（或宿主）失败。
     Io { operation: &'static str, path: String, detail: String },
 }
 
 impl HostError {
-    /// Stable error code for the result/error object (§3).
+    /// 结果/错误对象使用的稳定错误码（§3）。
     pub fn code(&self) -> &'static str {
         match self {
             Self::OutsideWorkspace { .. } => "path_outside_workspace",
@@ -114,20 +110,19 @@ fn io(operation: &'static str, path: impl fmt::Display, detail: impl fmt::Displa
     HostError::Io { operation, path: path.to_string(), detail: detail.to_string() }
 }
 
-/// Reject every path that can never name a workspace file, before touching the filesystem (§4.1).
+/// 在触碰文件系统之前，拒绝任何根本不可能命名工作区文件的路径（§4.1）。
 ///
-/// Rejected here:
-/// - an empty path or one containing a NUL byte;
-/// - a UNC / device path (`\\server\share`, `\\?\C:`, `//server/share`): it names another machine
-///   or a device, not a file in the workspace;
-/// - a drive-relative Windows path (`C:foo`, as opposed to `C:\foo`): it resolves against that
-///   drive's current directory, which is outside the workspace by construction;
-/// - any `..` component — rejected outright rather than normalised, so the containment check can not
-///   be defeated by joined-path arithmetic.
+/// 在此拒绝的情况：
+/// - 空路径，或含 NUL 字节的路径；
+/// - UNC / 设备路径（`\\server\share`、`\\?\C:`、`//server/share`）：它们命名的是另一台机器
+///   或某个设备，而不是工作区里的文件；
+/// - Windows 盘符相对路径（`C:foo`，区别于 `C:\foo`）：它相对于该盘的当前目录解析，从构造上
+///   就落在工作区之外；
+/// - 任何 `..` 组件 —— 直接拒绝而不做规范化，这样包含性检查就不会被路径拼接算术击破。
 ///
-/// Drive-absolute paths (`C:\workspace\a.png`) are *not* rejected here: [`Workspace::resolve`] still
-/// has to canonicalise and containment-check them. The wasm glue uses this function too, so a path
-/// the panel can not justify is refused before it reaches the host.
+/// 盘符绝对路径（`C:\workspace\a.png`）*不*在这里拒绝：[`Workspace::resolve`] 仍须对它们做
+/// canonicalise 与包含性检查。wasm 胶水层也使用本函数，因此面板无法自证的路径在到达宿主之前
+/// 就会被拒绝。
 pub fn check_syntax(path: &str) -> Result<(), HostError> {
     if path.is_empty() {
         return Err(HostError::InvalidPath { path: path.to_string(), reason: "empty path" });
@@ -148,8 +143,7 @@ pub fn check_syntax(path: &str) -> Result<(), HostError> {
     Ok(())
 }
 
-/// Compare path components, case-insensitively on Windows (where `C:\Temp` and `c:\temp` are the
-/// same directory).
+/// 比较路径组件；在 Windows 上大小写不敏感（`C:\Temp` 与 `c:\temp` 是同一目录）。
 #[cfg(not(target_arch = "wasm32"))]
 fn component_eq(a: Component<'_>, b: Component<'_>) -> bool {
     #[cfg(windows)]
@@ -162,8 +156,8 @@ fn component_eq(a: Component<'_>, b: Component<'_>) -> bool {
     }
 }
 
-/// Whether `path` is `root` itself or below it. Both are expected to be real paths, so no `..` or
-/// symlink component is left to resolve.
+/// 判断 `path` 是 `root` 本身还是位于其下。两者都应是真实路径，因此不会残留需要解析的 `..`
+/// 或符号链接组件。
 #[cfg(not(target_arch = "wasm32"))]
 fn is_within(root: &Path, path: &Path) -> bool {
     let mut root = root.components();
@@ -171,28 +165,26 @@ fn is_within(root: &Path, path: &Path) -> bool {
         match root.next() {
             Some(expected) if component_eq(expected, component) => {}
             Some(_) => return false,
-            // `path` is deeper than `root`: every root component matched.
+            // `path` 比 `root` 更深：根目录的每个组件都已匹配。
             None => return true,
         }
     }
-    // `path` ended: it is the root (equal) or one of its ancestors (not inside).
+    // `path` 已结束：它等于根目录（相同），或是根目录的祖先（不在其内）。
     root.next().is_none()
 }
 
-/// What a successful write did (§4.3).
+/// 一次成功写入的结果（§4.3）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WriteOutcome {
-    /// Workspace-relative path written, `/`-separated, so every host reports it the same way.
+    /// 实际写出的工作区相对路径，以 `/` 分隔，使每个宿主的上报方式一致。
     pub path: String,
-    /// Bytes written.
+    /// 写出的字节数。
     pub bytes: u64,
-    /// The path whose existing file was replaced; `None` when the write created a new file (or the
-    /// host could not tell).
+    /// 既有文件被替换掉的路径；写入新建了文件（或宿主无法判断）时为 `None`。
     pub overwritten: Option<String>,
 }
 
-/// Files and bytes admitted by one import (§4.2). The first file/count over a limit is rejected and
-/// the batch is left unchanged.
+/// 一次导入已接纳的文件与字节（§4.2）。第一个越过限制的文件/计数会被拒绝，批次保持不变。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ImportBatch {
     files: u64,
@@ -200,17 +192,17 @@ pub struct ImportBatch {
 }
 
 impl ImportBatch {
-    /// Files admitted so far.
+    /// 目前已接纳的文件数。
     pub fn files(&self) -> u64 {
         self.files
     }
 
-    /// Bytes admitted so far.
+    /// 目前已接纳的字节数。
     pub fn bytes(&self) -> u64 {
         self.bytes
     }
 
-    /// Admit one more file of `size` bytes, or reject it without changing the batch.
+    /// 再接纳一个 `size` 字节的文件；超限则拒绝，且不改变批次。
     pub fn admit(&mut self, size: u64) -> Result<(), HostError> {
         let files = self.files.saturating_add(1);
         let bytes = self.bytes.saturating_add(size);
@@ -226,24 +218,24 @@ impl ImportBatch {
     }
 }
 
-/// The host's answer to `__craftScreenshot` (§3). `Unsupported` means the host has no screenshot
-/// support (or answered `null`); the caller degrades to [`SCREENSHOT_FALLBACK`]. It is not an error.
+/// 宿主对 `__craftScreenshot` 的应答（§3）。`Unsupported` 表示宿主没有截图能力（或应答 `null`）；
+/// 调用方退化为 [`SCREENSHOT_FALLBACK`]。它不算错误。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Screenshot {
-    /// No screenshot support: degrade to `render_frame`.
+    /// 无截图能力：退化为 `render_frame`。
     Unsupported,
-    /// PNG bytes of the panel/window.
+    /// 面板/窗口的 PNG 字节。
     Png(Vec<u8>),
 }
 
 impl Screenshot {
-    /// Map the host's reply into a [`Screenshot`]: `None` (an absent global, `null` or `undefined`)
-    /// is `Unsupported`, never an error.
+    /// 把宿主的应答映射为 [`Screenshot`]：`None`（全局量缺失、`null` 或 `undefined`）即
+    /// `Unsupported`，绝不是错误。
     pub fn from_png(png: Option<Vec<u8>>) -> Self {
         png.map_or(Self::Unsupported, Self::Png)
     }
 
-    /// The PNG, or `None` when the host does not support screenshots.
+    /// 取出 PNG；宿主不支持截图时为 `None`。
     pub fn png(self) -> Option<Vec<u8>> {
         match self {
             Self::Unsupported => None,
@@ -251,15 +243,15 @@ impl Screenshot {
         }
     }
 
-    /// Whether the caller has to fall back to [`SCREENSHOT_FALLBACK`].
+    /// 调用方是否必须退化为 [`SCREENSHOT_FALLBACK`]。
     pub fn is_unsupported(&self) -> bool {
         matches!(self, Self::Unsupported)
     }
 }
 
-/// The host-only reference implementation: a workspace root resolved with `realpath`, with reads,
-/// atomic writes and import accounting. The panel's browser build does not link it (the host owns
-/// the file system there); `tests/host_policy.rs` executes it against real directories.
+/// 仅在宿主端编译的参考实现：用 `realpath` 解析出的工作区根目录，提供读取、原子写入与导入计数。
+/// 面板的浏览器构建不会链接它（那里的文件系统归宿主所有）；`tests/host_policy.rs` 会针对真实
+/// 目录执行它。
 #[cfg(not(target_arch = "wasm32"))]
 mod fs_impl {
     use std::ffi::{OsStr, OsString};
@@ -270,13 +262,13 @@ mod fs_impl {
 
     use super::{HostError, ImportBatch, MAX_ARTIFACT_BYTES, MAX_IMPORT_BYTES, Quota, WriteOutcome, check_syntax, is_within};
 
-    /// A workspace root that has been resolved with `realpath`.
+    /// 已用 `realpath` 解析过的工作区根目录。
     #[derive(Clone, Debug)]
     pub struct Workspace {
         root: PathBuf,
     }
 
-    /// A path that passed [`Workspace::resolve`].
+    /// 通过 [`Workspace::resolve`] 校验的路径。
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct Resolved {
         absolute: PathBuf,
@@ -285,28 +277,28 @@ mod fs_impl {
     }
 
     impl Resolved {
-        /// The real, absolute path to operate on.
+        /// 实际操作所用的真实绝对路径。
         pub fn absolute(&self) -> &Path {
             &self.absolute
         }
 
-        /// The path relative to the workspace root.
+        /// 相对于工作区根目录的路径。
         pub fn relative(&self) -> &Path {
             &self.relative
         }
 
-        /// Whether the target already existed (an overwrite) when it was resolved.
+        /// 解析时目标是否已存在（即这是一次覆盖写入）。
         pub fn existed(&self) -> bool {
             self.existed
         }
 
-        /// The `/`-separated path reported in result objects.
+        /// 结果对象中上报的、以 `/` 分隔的路径。
         pub fn report_path(&self) -> String {
             report_path(&self.relative)
         }
     }
 
-    /// Bytes read from inside the workspace, plus the path they came from.
+    /// 从工作区内读到的字节，以及这些字节的来源路径。
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct ReadFile {
         path: String,
@@ -314,17 +306,17 @@ mod fs_impl {
     }
 
     impl ReadFile {
-        /// The `/`-separated workspace path the bytes came from.
+        /// 字节来源的、以 `/` 分隔的工作区路径。
         pub fn path(&self) -> &str {
             &self.path
         }
 
-        /// The file's bytes.
+        /// 文件的字节。
         pub fn bytes(&self) -> &[u8] {
             &self.bytes
         }
 
-        /// Take the bytes.
+        /// 取出字节。
         pub fn into_bytes(self) -> Vec<u8> {
             self.bytes
         }
@@ -342,7 +334,7 @@ mod fs_impl {
     }
 
     impl Workspace {
-        /// Open a workspace root, resolving it with `realpath` first.
+        /// 打开一个工作区根目录，先用 `realpath` 解析它。
         pub fn open(root: impl AsRef<Path>) -> Result<Self, HostError> {
             let root = root.as_ref();
             let root = std::fs::canonicalize(root).map_err(|e| super::io("open workspace", root.display(), e))?;
@@ -352,19 +344,18 @@ mod fs_impl {
             Ok(Self { root })
         }
 
-        /// The real path of the workspace root.
+        /// 工作区根目录的真实路径。
         pub fn root(&self) -> &Path {
             &self.root
         }
 
-        /// Resolve a panel-supplied path and prove it is inside the workspace (§4.1).
+        /// 解析面板给出的路径，并证明它位于工作区内（§4.1）。
         pub fn resolve(&self, path: &str) -> Result<Resolved, HostError> {
             self.resolve_with(path, &mut |candidate| std::fs::canonicalize(candidate))
         }
 
-        /// [`Workspace::resolve`] with the realpath step supplied by the caller. Tests use it to
-        /// prove the containment check on platforms where creating a symlink needs privileges; a
-        /// native host that resolves paths itself can use it too.
+        /// [`Workspace::resolve`] 的变体，realpath 步骤由调用方提供。测试在创建符号链接需要特权的
+        /// 平台上借助它验证包含性检查；自行解析路径的原生宿主也可以使用它。
         pub fn resolve_with(&self, path: &str, realpath: &mut dyn FnMut(&Path) -> io::Result<PathBuf>) -> Result<Resolved, HostError> {
             check_syntax(path)?;
             let given = Path::new(path);
@@ -381,8 +372,8 @@ mod fs_impl {
             match realpath(candidate) {
                 Ok(real) => Ok((real, true)),
                 Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                    // The target may be new. Resolve the directory it will live in instead: a
-                    // symlinked parent that points outside the root is caught here.
+                    // 目标可能是新文件。改为解析它将要所在的目录：指向根目录之外的符号链接父目录
+                    // 会在这里被拦住。
                     let name =
                         candidate.file_name().ok_or_else(|| HostError::InvalidPath { path: candidate.display().to_string(), reason: "not a file path" })?;
                     let parent =
@@ -394,12 +385,11 @@ mod fs_impl {
             }
         }
 
-        /// Read a file inside the workspace; a path that resolves outside is an error, never a
-        /// fallback to another location.
+        /// 读取工作区内的一个文件；解析后落在工作区外的路径是错误，绝不会回退到其他位置。
         pub fn read(&self, path: &str) -> Result<ReadFile, HostError> {
             let resolved = self.resolve(path)?;
             let file = File::open(resolved.absolute()).map_err(|e| super::io("read", resolved.absolute().display(), e))?;
-            // Cap the allocation as well as the result: at most one byte over the quota is read.
+            // 分配量与结果都要设上限：最多只多读一个字节，用来判断是否超限。
             let mut limited = file.take(MAX_IMPORT_BYTES + 1);
             let mut bytes = Vec::new();
             limited.read_to_end(&mut bytes).map_err(|e| super::io("read", resolved.absolute().display(), e))?;
@@ -409,16 +399,15 @@ mod fs_impl {
             Ok(ReadFile { path: resolved.report_path(), bytes })
         }
 
-        /// Read one file of an import and account for it in `batch` (§4.2).
+        /// 读取一次导入中的一个文件，并在 `batch` 中计入（§4.2）。
         pub fn read_import(&self, batch: &mut ImportBatch, path: &str) -> Result<ReadFile, HostError> {
             let file = self.read(path)?;
             batch.admit(file.bytes().len() as u64)?;
             Ok(file)
         }
 
-        /// Write an artifact atomically: a temporary file in the target's directory, then a rename.
-        /// A rejected or failed write leaves any existing file untouched (§4.3), and an overwrite
-        /// reports the path it replaced.
+        /// 原子地写出一份产物：先写目标同目录下的临时文件，再重命名。被拒绝或失败的写入不会改动
+        /// 任何既有文件（§4.3），覆盖写入则报告被替换的路径。
         pub fn write(&self, path: &str, bytes: &[u8]) -> Result<WriteOutcome, HostError> {
             let len = bytes.len() as u64;
             if len > MAX_ARTIFACT_BYTES {
@@ -435,8 +424,7 @@ mod fs_impl {
             let parent = resolved.absolute().parent().ok_or_else(|| HostError::InvalidPath { path: path.to_string(), reason: "no parent directory" })?;
             let name = resolved.absolute().file_name().ok_or_else(|| HostError::InvalidPath { path: path.to_string(), reason: "not a file path" })?;
             let (temp_path, temp) = create_temp(parent, name)?;
-            // The temporary file is closed when this block ends: Windows cannot rename (or remove)
-            // a file that is still open.
+            // 本代码块结束时临时文件即关闭：Windows 无法重命名（或删除）仍处于打开状态的文件。
             let written = {
                 let mut file = temp;
                 file.write_all(bytes).and_then(|()| file.sync_all())
@@ -454,8 +442,8 @@ mod fs_impl {
         }
     }
 
-    /// A new temporary file in `dir`, named after `name` so a leftover is identifiable, created with
-    /// `create_new` so two writers can not share one name.
+    /// 在 `dir` 中新建临时文件，文件名带上 `name` 以便识别残留；用 `create_new` 创建，使两个
+    /// 写入者无法共用同一个名字。
     fn create_temp(dir: &Path, name: &OsStr) -> Result<(PathBuf, File), HostError> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let pid = std::process::id();
@@ -476,5 +464,5 @@ mod fs_impl {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[allow(unused_imports)] // `tests/host_policy.rs` includes this module privately and uses a subset.
+#[allow(unused_imports)] // `tests/host_policy.rs` 以私有方式包含本模块，并使用其中一个子集。
 pub use fs_impl::{ReadFile, Resolved, Workspace};
