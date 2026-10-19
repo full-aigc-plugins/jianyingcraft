@@ -1,19 +1,23 @@
 # macOS DMG window
 
+**The checked-in `dmg-layout.DS_Store` is generated, not hand-edited.**
+`rebuild_ds_store.py` calls `generate.write_ds_store` and skips the TIFF render, so the Finder
+layout (volume `JianyingCraft`, icons `JianyingCraft.app` + `Applications`, background alias to
+`/.background/background.tiff`) can be rewritten on a machine without `resvg`:
+
+    pip install ds_store==1.3.3 mac_alias==2.2.3
+    python3 packaging/macos/dmg/rebuild_ds_store.py
+
+`rename_layout_entry.py` remains for the case where only the app bundle name changes and neither
+`ds_store` nor `mac_alias` can be installed; it patches that one record key in place and verifies
+the DSDB structure. Run `generate.py` whenever the artwork (`background.svg`) changes.
+
 What Finder shows when the DMG opens: a 660 × 400 pt background with the app icon and the
 `Applications` link side by side. `package.sh` copies these files into the image; nothing here is
 generated at build time, so the DMG still builds with `hdiutil makehybrid` (no mounted device, no
 Finder scripting on CI, nothing extra installed in the signing job).
 
-> **The checked-in `dmg-layout.DS_Store` is patched, not regenerated.** It was written for the
-> upstream name, so its app-icon record was keyed `FilmCraft.app`;
-> [`rename_layout_entry.py`](rename_layout_entry.py) renamed that record key in place to
-> `JianyingCraft.app` with the Python standard library alone (the `ds_store`, `mac_alias` and
-> `resvg` dependencies are not installable in every environment) and verifies the block structure.
-> The patch does not rewrite the background alias, which still names the upstream volume, so the
-> background only resolves after regenerating: `python3 generate.py` with `ds_store`, `mac_alias`,
-> `resvg` and Pillow remains the canonical way to rebuild both the layout and the background.
-
+> 
 | File | What |
 |---|---|
 | `background.svg` | Source of the background: the app icon (`assets/app-icon/filmcraft.svg`, linked, not copied) cropped as a cover on the JianyingCraft colour field (`#8b5cf6`), Ink and Paper. Its text (Inter, JetBrains Mono) is outlined, so rendering it needs no fonts. No paper grain: noise doesn't compress, and this keeps `background.tiff` small. |

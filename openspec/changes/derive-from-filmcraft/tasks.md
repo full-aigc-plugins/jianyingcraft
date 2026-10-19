@@ -40,7 +40,7 @@
       *2026-10-20：只用标准库的 `packaging/macos/dmg/rename_layout_entry.py` 就地改名（`--check` /
       `--dry-run` / 幂等，对原文件重打可复现同一 sha256）。文件仍 16388 字节：36 字节头、块头/块偏移、
       其余 4 条记录与两个 16 字节 `Iloc` 载荷逐字节未变，全文件已无 UTF-16BE `FilmCraft.app`。*
-- [ ] `packaging/macos/dmg/dmg-layout.DS_Store` 的 `backgroundImageAlias` 仍指向上游卷名（ASCII 卷名 @0x2210、UTF-16 卷名 @0x231f、Carbon 路径 @0x22cf、POSIX 路径 @0x2355）：需在 macOS（或装了 resvg + ds_store + mac_alias 的机器）上跑 `python3 packaging/macos/dmg/generate.py`。本机非 macOS，未做 Finder 可视化验证 → `docs/runbooks/macos-canary.md`
+- [x] `packaging/macos/dmg/dmg-layout.DS_Store` 的 `backgroundImageAlias` 已指向上游卷名（ASCII 卷名 @0x2210、UTF-16 卷名 @0x231f、Carbon 路径 @0x22cf、POSIX 路径 @0x2355）：需在 macOS（或装了 resvg + ds_store + mac_alias 的机器）上跑 `python3 packaging/macos/dmg/generate.py`。*2026-10-20 补齐*：用 `ds_store==1.3.3` + `mac_alias==2.2.3`（直连 PyPI 下载 wheel 后离线解压安装，`pip` 本身在本机卡死）跑新增的 `packaging/macos/dmg/rebuild_ds_store.py`——它复用 `generate.write_ds_store`，跳过需要 resvg 的 TIFF 渲染。重生成后文件仍 16388 字节，全文件 **0** 处 `FilmCraft`（ASCII 与 UTF-16 均为 0）、`JianyingCraft` 3 处 ASCII + 2 处 UTF-16，图标记录键 `JianyingCraft.app`，`rename_layout_entry.py --check` 报 up to date。**仍未做**：本机非 macOS，没有在 Finder 里实际观察渲染效果 → `docs/runbooks/macos-canary.md`
 - [x] **构建环境**：`pwsh` 启动即失败（`SetNamedSecurityInfoW failed (Win32 5)`），
       无法 `git`/`cargo`/`wasm-bindgen`；`craft-ui` 为 git 依赖且本机 GitHub DNS 不可达。
       二者不解决，§2 全部无法执行。
@@ -478,7 +478,12 @@
       → `file.exportMedia`（**17,984,537 字节 mp4**，`offlineMedia: []`）；替换后片段时间不变，
       对应技能里"未自适应，时长按模板"。详见 `docs/derivation/10-skill-runbook-verification.md` §8-10
 - [x] 批量混剪的 N 条循环 + 清单 + 失败注入：`skill-smoke.mjs::batch-remix-loop` 跑 3 轮（替换→变速→保存副本→导出），`manifest.jsonl` 逐行记 sha256/字节数并回读核对，3 份导出**哈希互不相同**；`batch-remix-failure` 断言不存在的素材 id 让 CLI 以 `ok:false` 退出 1。*2026-10-20 独立复跑：`FILMCRAFT_CLI=<abs>/target/debug/filmcraft-cli.exe node ui/skill-smoke.mjs` 六项全 ok（batch-remix-loop: loops 3 / distinct 3 / manifestBytes 730；batch-remix-failure: status 1）。*
-- [ ] 批量混剪：**外部 ffprobe 校验**未做（本机无 ffprobe，属环境限制）；步骤与证据格式见 `docs/runbooks/skill-reruns.md`
+- [x] 批量混剪：**外部 ffprobe 校验**（2026-10-20 补齐。本机原无 ffprobe，本轮下载 ffmpeg 9.0.2
+      essentials 并把其 `bin` 加入 PATH，`jianying doctor` 随即识别；对 `skill-smoke.mjs::batch-remix-loop`
+      产出的 3 份导出逐份 `ffprobe -show_format -show_streams`：全部 h264 1920x1080 + aac 48 kHz 立体声、
+      时长一致（26.794 s）、sha256 互不相同。证据：CLI 仓
+      `provenance/BATCH_REMIX_FFPROBE_VERIFICATION.json`（含 probe 版本、每份字节数/sha256/时长/流信息与
+      五项布尔校验）。**不证明**画面内容正确——那需要人眼审片。）
 - [x] **图文成片核心链路实跑验证**（2026-10-18，headless CLI）：
       1080×1920/30 新序列 → 两段画面（Color Matte + Bars and Tone）→ `tts.create`/`tts.render`
       （clip 60，2.98 s）→ `captions.import`（2 条）→ `captions.list`（1 轨 2 条）→
