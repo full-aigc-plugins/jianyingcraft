@@ -17,6 +17,8 @@
 
 ## 共同约定
 
+- **变量块只对同一个 shell 会话有效**。新开终端后先重跑对应 runbook 的 `$CRAFT` / `$CLI` /
+  `$JY` / `$WS` 变量块；否则 `$DRAFT`、`$VOICE`、`$DUR` 之类会为空。
 - **一律用绝对路径**。`jianying project quickstart --out` 用相对路径时，素材会被写成
   `draft\draft\assets\...`，随后 `project verify` 报 `local material file does not exist`。
 - **一律加 `--json`**，并解析 `data.ok`。`project verify` / `project quickstart` 即使

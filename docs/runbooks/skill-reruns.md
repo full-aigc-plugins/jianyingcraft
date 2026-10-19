@@ -36,6 +36,7 @@
 | Whisper 模型 | craft 内置下载，或 whisper.cpp GGML | 见 §3.2 | 安装后 `installed: true` |
 | 中文音色 | Windows SAPI / macOS `say` | 见 §3.4 | 至少一个 `zh-CN` 音色 |
 | Python | 解析 JSON、写 SRT | `python --version` / `python3 --version` | 3.10+ |
+| 账号 | **不需要**（只用本地模型/系统音色） | — | 不调用付费云 TTS/ASR |
 
 **环境变量（PowerShell）**
 
@@ -811,6 +812,10 @@ ffprobe -v error -show_entries stream=codec_type,codec_name,width,height,avg_fra
 
 原始产物（`speech.wav`、`speech.srt`、`renders/*.mp4`、`ttv-cli.mp4`）留在仓库外，
 证据里写路径 + SHA-256；不要提交大媒体。
+
+> 示例里的 SHA-256、路径、词数、帧数、时长都是占位；必须用实际文件、
+> 实际 `ffprobe` 和实际 `transcript.inspect` 的值替换。`result: "passed"` 只在三条
+> 验收都实际跑通后写。
 
 ## 6. 失败时先看这 5 种
 

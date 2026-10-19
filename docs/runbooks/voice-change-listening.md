@@ -36,6 +36,7 @@
 | 测试人声 | 5–10 秒、干净、无背景音乐；A/B 必须同一文件 | `ffprobe -v error -show_entries format=duration -of default=nw=1 <voice>` | 时长 ≥ 5 秒 |
 | 耳机/监听 | 同一副耳机、同一音量；建议关闭空间音频 | 人工确认 | — |
 | 剪映进程 | 所有写草稿的命令都要求剪映完全退出 | `tasklist /FI "IMAGENAME eq JianyingPro.exe"`（Windows）/ `pgrep -fl VideoFusion-macOS`（macOS） | 无输出 |
+| 账号 | **不需要** | — | 只用本机剪映与本地文件；不上传素材 |
 
 **环境变量（PowerShell，先执行一次）**
 
@@ -156,16 +157,16 @@ export JIANYING_CLI_PROCESS_LIST="$empty"
 `--params` 必须给**和 `params` 等长**的数组，取值用剪映 UI 的 0–100 标度；
 落盘时除以 100 存进 `audio_adjust_params[].value`。
 
-### 3.3 建 A 稿（`sub_type` 保持 CLI 默认的 1）
+### 3.3 建 X 稿（`sub_type` 保持 CLI 默认的 1）
 
 工作目录：`$WS`。**`--out` 和 `--audio` 都用绝对路径**——相对路径会让素材被写成
 `draft\draft\assets\...`，随后 `project verify` 报 `local material file does not exist`。
 `$DRAFT_A` / `$DRAFT_B` 必须是**不存在**的目录；重跑前删掉旧目录或换名。
 
 ```powershell
-$VOICE = Join-Path $WS "voice.wav"   # 换成你自己的 5–10 秒人声
-$DRAFT_A = Join-Path $WS "draft-a"
-& $JY project quickstart --out $DRAFT_A "Voice A (sub_type 1)" --audio $VOICE --json
+$VOICE = Join-Path $WS "voice.wav"   # 换成你自己的 5–10 秒人声；没有就先用录音机录一段
+$DRAFT_A = Join-Path $WS "draft-x"
+& $JY project quickstart --out $DRAFT_A "Voice X" --audio $VOICE --json
 & $JY project verify $DRAFT_A --json
 
 $segments = & $JY timeline segments $DRAFT_A --json | ConvertFrom-Json
@@ -177,8 +178,8 @@ $SEG_A = $segments.data[0].id
 
 ```sh
 VOICE="$WS/voice.wav"
-DRAFT_A="$WS/draft-a"
-"$JY" project quickstart --out "$DRAFT_A" "Voice A (sub_type 1)" --audio "$VOICE" --json
+DRAFT_A="$WS/draft-x"
+"$JY" project quickstart --out "$DRAFT_A" "Voice X" --audio "$VOICE" --json
 "$JY" project verify "$DRAFT_A" --json
 SEG_A=$("$JY" timeline segments "$DRAFT_A" --json | python3 -c "import json,sys; print(json.load(sys.stdin)['data'][0]['id'])")
 "$JY" timeline audio-effect "$DRAFT_A" "$SEG_A" "大叔" --json
@@ -233,15 +234,15 @@ SEG_A=$("$JY" timeline segments "$DRAFT_A" --json | python3 -c "import json,sys;
 }
 ```
 
-### 3.4 建 B 稿（把 `timbre` 的 `sub_type` 改成 2）
+### 3.4 建 Y 稿（把 `timbre` 的 `sub_type` 改成 2）
 
-**不要复制 A 稿目录**：`draft_meta_info.json` 里的 `draft_fold_path` 绑定原路径，
+**不要复制 X 稿目录**：`draft_meta_info.json` 里的 `draft_fold_path` 绑定原路径，
 复制后 `project verify` 会报 `draft metadata path draft_fold_path is invalid`。
 从零再建一份，只改 `sub_type`。
 
 ```powershell
-$DRAFT_B = Join-Path $WS "draft-b"
-& $JY project quickstart --out $DRAFT_B "Voice B (sub_type 2)" --audio $VOICE --json
+$DRAFT_B = Join-Path $WS "draft-y"
+& $JY project quickstart --out $DRAFT_B "Voice Y" --audio $VOICE --json
 $segments = & $JY timeline segments $DRAFT_B --json | ConvertFrom-Json
 $SEG_B = $segments.data[0].id
 & $JY timeline audio-effect $DRAFT_B $SEG_B "大叔" --json
@@ -267,8 +268,8 @@ print("patched entries:", n)
 ```
 
 ```sh
-DRAFT_B="$WS/draft-b"
-"$JY" project quickstart --out "$DRAFT_B" "Voice B (sub_type 2)" --audio "$VOICE" --json
+DRAFT_B="$WS/draft-y"
+"$JY" project quickstart --out "$DRAFT_B" "Voice Y" --audio "$VOICE" --json
 SEG_B=$("$JY" timeline segments "$DRAFT_B" --json | python3 -c "import json,sys; print(json.load(sys.stdin)['data'][0]['id'])")
 "$JY" timeline audio-effect "$DRAFT_B" "$SEG_B" "大叔" --json
 "$JY" timeline audio-effect-param "$DRAFT_B" "$SEG_B" "大叔" --params "[83.4,100]" --json
@@ -299,7 +300,7 @@ PY
 ```powershell
 @'
 import json, sys, hashlib
-for label, path in (("A", sys.argv[1]), ("B", sys.argv[2])):
+for label, path in (("X", sys.argv[1]), ("Y", sys.argv[2])):
     raw = open(path, "rb").read()
     d = json.loads(raw)
     fx = [x for x in d["materials"]["audio_effects"] if x.get("category_id") == "timbre"]
@@ -309,7 +310,7 @@ for label, path in (("A", sys.argv[1]), ("B", sys.argv[2])):
 '@ | python - "$DRAFT_A\draft_content.json" "$DRAFT_B\draft_content.json"
 ```
 
-期望：A 的 `sub_type` 是 `[1]`，B 是 `[2]`，`values` 都是 `[[0.8340000000000001, 1.0]]`。
+期望：X 的 `sub_type` 是 `[1]`，Y 是 `[2]`，`values` 都是 `[[0.8340000000000001, 1.0]]`。
 `sha256` 必然不同；这正是唯一需要听感来裁决的差异。
 
 ### 3.5 发布到剪映草稿库
@@ -332,6 +333,9 @@ DRAFT_ROOT="<store directories 里 namespace=jianying 且 exists=true 的 path>"
 "$JY" store list --root "$DRAFT_ROOT" --json
 ```
 
+如果两个 root 都是 `exists=false`，先启动一次剪映让它生成草稿根，或手动创建目录；
+`store publish` 不会替你创建 root，会报 `draft root ... does not exist`。
+
 期望：
 
 ```json
@@ -339,8 +343,8 @@ DRAFT_ROOT="<store directories 里 namespace=jianying 且 exists=true 的 path>"
   "ok": true,
   "data": {
     "status": "published",
-    "name": "Voice A (sub_type 1)",
-    "draft": "<DRAFT_ROOT>/Voice A (sub_type 1)",
+    "name": "Voice X",
+    "draft": "<DRAFT_ROOT>/Voice X",
     "store_key": "all_draft_store",
     "editor_running": []
   }
@@ -349,12 +353,13 @@ DRAFT_ROOT="<store directories 里 namespace=jianying 且 exists=true 的 path>"
 
 ### 3.6 盲听（人工）
 
-1. 打开剪映，草稿列表里应出现 `Voice A (sub_type 1)` 与 `Voice B (sub_type 2)`。
-2. 先不要看文件名里的 `sub_type`；让第二个人把两份草稿随机改名为 `X` / `Y`，或由脚本随机决定播放顺序。
+1. 打开剪映，草稿列表里应出现 `Voice X` 与 `Voice Y`。
+   **X/Y 与 `sub_type` 的对应只写在证据 JSON 里**；听的人不要打开 JSON 文件，
+   也不要在剪映里查看素材参数。
+2. 基准：先试听 X 的原声（禁用/旁路音效）。
 3. 对同一段人声，分别试听：
-   - 草稿 A 的原声（先把音效禁用/旁路，作为基准）；
-   - 草稿 A 的「大叔」；
-   - 草稿 B 的「大叔」；
+   - X 的「大叔」；
+   - Y 的「大叔」；
    - 剪映内置「音色 → 大叔」的官方试听（如果版本提供）。
 4. 每份至少听 3 遍，记录：
    - 音调是否明显下移、是否像"大叔"；
@@ -363,17 +368,17 @@ DRAFT_ROOT="<store directories 里 namespace=jianying 且 exists=true 的 path>"
    - 与官方试听的接近程度（1–5 分）。
 5. 揭盲，把分数和判断写进证据 JSON。
 
-> 建议顺序：基准 → A → B → 官方试听 → B → A，减少顺序偏差。
+> 建议顺序：原声 → X → Y → 官方试听 → Y → X，减少顺序偏差。
 > 不要在同一段音频上反复切换超过 6 次，听觉疲劳会让结论偏向"听不出差别"。
 
 ### 3.7 判定与动作
 
 | 盲听结果 | 结论 | 动作 |
 |---|---|---|
-| B 明显更像官方预设；A 只像普通音效或几乎无变化 | `timbre` 应写 `sub_type: 2` | 改 `src/timeline_ops.rs` 的 `audio_effect`：按 `category_id` 决定 `sub_type`；补 `timeline_cli_contract` 断言；重跑本节 A/B |
-| A、B 听不出差别，或剪映对两者渲染一致 | 保留 `sub_type: 1` | 在证据里写明"该版本/该预设下无差异"；不改代码 |
-| A、B 都不像官方预设，或 B 被剪映拒绝/静音 | 协议层无法用 `sub_type` 表达 | 不改默认值；把现象和版本记入证据，升级为协议问题 |
-| B 能播放但出现爆音/吞字 | `sub_type: 2` 需要额外字段 | 记录缺失字段；不要只改 `sub_type` 就宣称通过 |
+| Y 明显更像官方预设；X 只像普通音效或几乎无变化 | `timbre` 应写 `sub_type: 2` | 改 `src/timeline_ops.rs` 的 `audio_effect`：按 `category_id` 决定 `sub_type`；补 `timeline_cli_contract` 断言；重跑本节 X/Y |
+| X、Y 听不出差别，或剪映对两者渲染一致 | 保留 `sub_type: 1` | 在证据里写明"该版本/该预设下无差异"；不改代码 |
+| X、Y 都不像官方预设，或 Y 被剪映拒绝/静音 | 协议层无法用 `sub_type` 表达 | 不改默认值；把现象和版本记入证据，升级为协议问题 |
+| Y 能播放但出现爆音/吞字 | `sub_type: 2` 需要额外字段 | 记录缺失字段；不要只改 `sub_type` 就宣称通过 |
 
 **能力状态**：本条通过后，`timeline.audio_effect_params` 才具备从 `partial` 提升的证据；
 提升本身是代码/能力清单变更，不是本 runbook 自动完成的。
@@ -383,8 +388,8 @@ DRAFT_ROOT="<store directories 里 namespace=jianying 且 exists=true 的 path>"
 | 检查 | 期望 |
 |---|---|
 | `project verify $DRAFT_A` / `$DRAFT_B` | `data.ok: true`，`data.issues: []` |
-| A 的 `materials.audio_effects[*].sub_type` | `1` |
-| B 的 `materials.audio_effects[*].sub_type` | `2` |
+| X 的 `materials.audio_effects[*].sub_type` | `1` |
+| Y 的 `materials.audio_effects[*].sub_type` | `2` |
 | `category_id` / `category_name` | `timbre` / `音色` |
 | `audio_adjust_params` | 2 项，`value` 为 `0.8340000000000001` 与 `1.0` |
 | `store publish` | `data.status: "published"`，`editor_running: []` |
@@ -428,32 +433,32 @@ python3 -c "import json,sys; d=json.load(open('$WS/verify-b.json')); sys.exit(0 
     "resource_id": "7020344898033291790",
     "params": { "音调": 83.4, "音色": 100.0 }
   },
-  "draft_a": {
-    "path": "C:/Users/me/AppData/Local/Temp/jy-voice-listening/draft-a",
+  "draft_x": {
+    "path": "C:/Users/me/AppData/Local/Temp/jy-voice-listening/draft-x",
     "content_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
     "sub_type": 1
   },
-  "draft_b": {
-    "path": "C:/Users/me/AppData/Local/Temp/jy-voice-listening/draft-b",
+  "draft_y": {
+    "path": "C:/Users/me/AppData/Local/Temp/jy-voice-listening/draft-y",
     "content_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
     "sub_type": 2
   },
   "listen": {
     "blind": true,
-    "order": ["A", "B", "official", "B", "A"],
+    "order": ["original", "X", "Y", "official", "Y", "X"],
     "repeats": 3,
     "headphones": "wired, no spatial audio",
     "volume": "same for both drafts"
   },
   "observations": {
-    "a_vs_official": "A 只像普通 EQ，音调下移不明显；与官方试听差距大",
-    "b_vs_official": "B 的音调与共振峰更接近官方试听，第 3 遍仍能分辨",
-    "artifacts": "B 无爆音/吞字；A 无异常"
+    "x_vs_official": "X 只像普通 EQ，音调下移不明显；与官方试听差距大",
+    "y_vs_official": "Y 的音调与共振峰更接近官方试听，第 3 遍仍能分辨",
+    "artifacts": "Y 无爆音/吞字；X 无异常"
   },
   "decision": {
     "affects_timbre_sub_type": true,
     "decided_sub_type": 2,
-    "rationale": "盲听后 B 更接近官方预设；A 与 B 可稳定区分",
+    "rationale": "盲听后 Y 更接近官方预设；X 与 Y 可稳定区分",
     "follow_up": "修改 audio_effect 的 sub_type 选择并补测试；本证据只覆盖该版本与大叔预设"
   },
   "reviewer": {
@@ -466,6 +471,9 @@ python3 -c "import json,sys; d=json.load(open('$WS/verify-b.json')); sys.exit(0 
 同一目录可选再放一份标准记录 `provenance/VOICE_CHANGE_LISTENING_20261020.evidence.json`，
 使用 `schemas/evidence-record-v1.schema.json` 的 `jianying-evidence-record/v1`，把上面的文件
 放进 `artifacts`。两份都保留时，标准记录只做索引，不重复主观结论。
+
+> 示例里的 SHA-256、路径、评审人都是占位；必须用实际 `shasum`、真实路径和真实评审人替换。
+> `sub_type` 的结论只对这次听过的剪映版本与预设负责。
 
 **原始材料**（不要提交进仓库）：
 
@@ -488,7 +496,7 @@ python3 -c "import json,sys; d=json.load(open('$WS/verify-b.json')); sys.exit(0 
 
 - `draft metadata path draft_fold_path is invalid`：复制草稿到新路径导致；不要复制，重建。
 - 剪映打开后看不到素材/黑屏：先 `project verify` 与 `ffprobe` 检查素材是否在线；离线素材不会自动修复。
-- B 被剪映拒绝或静音：记录剪映版本与预设，不要改协议去"猜"。
+- Y 被剪映拒绝或静音：记录剪映版本与预设，不要改协议去"猜"。
 
 ## 7. 本文不证明什么
 

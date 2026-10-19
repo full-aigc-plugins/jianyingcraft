@@ -38,6 +38,7 @@
 | 插件源 | `jianyingcraft-plugin` 同级仓 | `Test-Path ..\jianyingcraft-plugin\ui\dist\adapter.mjs` | `True` |
 | CLI 锁 | `ui/cli.lock.json` | `Get-Content ..\jianyingcraft-plugin\ui\cli.lock.json -Raw` | `resolvedVersion: 1.6.31` |
 | 工作区 | 一个绝对路径，插件只写其内部 | `New-Item -ItemType Directory -Force $WS` | 存在 |
+| 宿主账号 | 已登录、能新建任务/安装本地插件 | 打开宿主确认 | 不是只读/访客模式 |
 | 网络 | 首次运行可能下载 1.6.31 CLI；离线时用 `JIANYINGCRAFT_CLI_BIN` | 见 §2.1 | — |
 
 **本机实测基线（2026-10-20）**：Node `v24.14.1`、npm `11.11.0`、Kimi `0.27.0`；
@@ -89,8 +90,9 @@ node --test tests/*.test.mjs
 它会真的拉起 `dist/adapter.mjs`、真的调 CLI、真的落草稿。
 
 > `npm ci` 若报 lockfile 与 `package.json` 不一致，改用 `npm install` 并记录
-> `package-lock.json` 的变化；不要用 `--force` 掩盖。`dist/` 是构建产物，
-> 只用于本次安装，不要把它当成源码提交。
+> `package-lock.json` 的变化；不要用 `--force` 掩盖。离线且 `node_modules/` 已存在时，
+> 可以跳过 `npm ci` 直接 `npm run build`，但要在证据里写明"未做干净安装"。
+> `dist/` 是构建产物，只用于本次安装，不要把它当成源码提交。
 
 ## 3. 步骤
 
@@ -238,11 +240,11 @@ print("updated", p)
 
 ```sh
 python3 - "$KIMI/mcp.json" "$KIMI/plugins/jianyingcraft" <<'PY'
-import json, os, sys
+import json, os, shutil, sys
 p, root = sys.argv[1], sys.argv[2]
-if os.path.exists(p):
-    os.replace(p, p + ".bak")
 d = json.load(open(p, encoding="utf-8")) if os.path.exists(p) else {}
+if os.path.exists(p):
+    shutil.copy2(p, p + ".bak")
 d.setdefault("mcpServers", {})["jianyingcraft-editor"] = {
     "command": "node",
     "args": [root + "/ui/dist/adapter.mjs"],
@@ -404,6 +406,9 @@ skipped 2
 **不要**把 `result` 写成 `passed` 除非三样证据齐全。缺截图或 MCP 调用失败时写
 `failed` 或 `blocked`，并在 `notes` 写清原因。
 
+> 示例里的哈希、端口、token、版本都是占位；必须用实际 `Get-FileHash` / `shasum`、
+> 浏览器地址栏里的真实 URL 和宿主实际版本替换。
+
 ## 6. 失败时先看这 5 种
 
 | 现象 | 含义 | 处理 |
@@ -427,6 +432,7 @@ Kimi 专属：
 - **不证明创作正确性**。`screenshot` 只能证明"画面出来了"，不证明剪得对、导出对。
 - **不证明其他宿主版本**。只覆盖记录下来的 ZCode/Codex/Kimi 版本；升级后要重跑。
 - **不自动发布或提升支持级别**。`supportedPluginHosts`、市场发布、CI 门禁是另外的决策；
-  三份 JSON 先作为评审输入。
+  三份 JSON 先作为评审输入。也**不自动改写**插件的 `runtime/host-acceptance.json`——
+  那需要维护者复核三份证据后再更新。
 - **不证明宿主内嵌面板与浏览器打开等价**。如果只是在浏览器里打开 `editorUrl`，
   要在 `notes` 写明；真正的宿主内嵌验收需要 MCP Apps/宿主面板里的截图。

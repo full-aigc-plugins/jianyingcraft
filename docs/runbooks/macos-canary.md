@@ -46,6 +46,7 @@
 | `mac_alias` | 固定 `2.2.3` | `python3 -c "import mac_alias; print('ok')"` | `ok` |
 | Pillow | `>= 12`（2x 144 dpi 检查） | `python3 -c "import PIL; print(PIL.__version__)"` | `12.x` 或更高 |
 | 授权 | 原生导出会启动 GUI、写用户目录 | 人工确认 | 记录 `approval_id`（见 §5） |
+| 账号 | **不需要** | — | 导出时关闭云备份/发布；不上传草稿 |
 
 **released 二进制怎么来**：用 `jianying-cli v1.6.31` 的 GitHub Release 资产，并按
 `../jianyingcraft-plugin/ui/cli.lock.json` 校验（这些摘要是仓库里已有的，不是现场编的）：
@@ -60,6 +61,11 @@
 > `release_ref` 是 `null`。`runtime acceptance verify` 要求记录里声明 `released` 且
 > `release_ref == v<version>`；用工作树二进制跑 GUI canary 仍然有价值，但**不能**产出
 > 9.3 的机器可验证记录。先在别的机器/临时目录准备 released 二进制，再开始 A 部分。
+
+> 本文的命令面按 1.7.0 工作树核对。开始前跑一次
+> `"$JY" runtime acceptance verify --help` 和 `"$JY" project quickstart --help`；
+> 如果 released 版本缺少某个子命令，换一个包含它的 released 版本，并把证据里的
+> `cli.version` / `release_ref` 改成实际值。不要用工作树二进制冒充 released。
 
 **环境变量（macOS，先执行一次）**
 
@@ -205,7 +211,7 @@ $DRAFT = Join-Path $CANARY "draft"
 & $JY project verify $DRAFT --json
 ```
 
-期望（实测，Lint 为 0 时 `data.ok: true`）：
+期望（结构字段来自本机 `quickstart` 实测；macOS 路径与 `tracks` 数按实际替换）：
 
 ```json
 {
@@ -264,6 +270,9 @@ $DRAFT_ROOT = "<store directories 里 namespace=jianying 且 exists=true 的 pat
 & $JY store publish $DRAFT --root $DRAFT_ROOT --json
 & $JY store list --root $DRAFT_ROOT --json
 ```
+
+如果 `store directories` 里没有 `exists=true` 的剪映 root，先启动一次剪映让它创建草稿根；
+`store publish` 不会替你创建 root。
 
 期望：
 
