@@ -771,7 +771,7 @@ fn jianying_workspace_shows_the_tab_strip() {
     d.snapshot("wide-tabstrip");
 }
 
-/// 两级 ☰ 菜单：先列菜单根，点进去只显示该根的命令，返回能回到根列表。
+/// 两级 ☰ 菜单：先列菜单根；点开的分组出现在**悬浮二级面板**里，根列表仍然可见（不再整页替换）。
 #[test]
 fn shell_menu_drills_into_a_menu_root() {
     let mut d = Driver::new(900.0, 1024.0);
@@ -784,17 +784,34 @@ fn shell_menu_drills_into_a_menu_root() {
 
     d.ok("ui.click", json!({"id": "jy.menu.group.File"}));
     d.frames(3);
-    let children = d.ok("ui.elements", json!({"prefix": "jy.menu.file."}));
-    assert!(children.as_array().is_some_and(|list| !list.is_empty()), "the File root should list its commands: {children}");
-    let back = d.ok("ui.elements", json!({"prefix": "jy.menu.back"}));
-    assert!(back.as_array().is_some_and(|list| !list.is_empty()), "a group view needs a way back");
-    let groups_gone = d.ok("ui.elements", json!({"prefix": "jy.menu.group."}));
-    assert!(groups_gone.as_array().is_none_or(|list| list.is_empty()), "the root list must be replaced by the group view: {groups_gone}");
+    // 二级面板出现，命令列在面板里。
+    let panel = d.ok("ui.elements", json!({"prefix": "group.panel"}));
+    let panel_rect = panel.as_array().and_then(|list| list.first()).expect("the floating group panel")["rect"].clone();
+    let rows = d.ok("ui.elements", json!({"prefix": "group.row."}));
+    assert!(rows.as_array().is_some_and(|list| !list.is_empty()), "the group panel should list File's commands: {rows}");
+    // 原来的根列表没有被替换：File 这类根仍然画着（用户还能看到自己在哪一层）。
+    let roots_kept = d.ok("ui.elements", json!({"prefix": "jy.menu.group."}));
+    assert!(
+        roots_kept.as_array().is_some_and(|list| list.iter().any(|e| e["id"] == json!("jy.menu.group.File"))),
+        "the root list must stay visible under the floating panel: {roots_kept}"
+    );
+    // 悬浮二级面板不铺满内容区：宽高都小于页面，面积不到页面的一半。
+    let info = d.ok("ui.inspect", json!({}));
+    let width = info["window"][0].as_f64().expect("window width");
+    let height = info["window"][1].as_f64().expect("window height");
+    let (x, y) = (panel_rect[0].as_f64().unwrap(), panel_rect[1].as_f64().unwrap());
+    let (w, h) = (panel_rect[2].as_f64().unwrap(), panel_rect[3].as_f64().unwrap());
+    assert!(w > 80.0 && h > 60.0, "the group panel is too small: {panel_rect}");
+    assert!(x >= 0.0 && x + w <= width + 0.5 && y >= 0.0 && y + h <= height + 0.5, "the group panel is off screen: {panel_rect} in {width}x{height}");
+    assert!(w < width * 0.9 && h < height * 0.75 && w * h < width * height * 0.5, "the group panel covers the whole page: {panel_rect} in {width}x{height}");
+    d.snapshot("shell-menu-group-panel");
 
-    d.ok("ui.click", json!({"id": "jy.menu.back"}));
+    d.ok("ui.click", json!({"id": "group.back"}));
     d.frames(3);
+    let closed = d.ok("ui.elements", json!({"prefix": "group.panel"}));
+    assert!(closed.as_array().is_none_or(|list| list.is_empty()), "back should close the floating group panel: {closed}");
     let roots_again = d.ok("ui.elements", json!({"prefix": "jy.menu.group."}));
-    assert!(roots_again.as_array().is_some_and(|list| !list.is_empty()), "back should return to the roots");
+    assert!(roots_again.as_array().is_some_and(|list| !list.is_empty()), "back should return to the roots list");
 }
 
 /// Compact 底部工具条：分割真的在播放头切一刀，撤销能还原——不是只画了五个按钮。

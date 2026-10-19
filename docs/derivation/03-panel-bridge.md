@@ -122,6 +122,12 @@ wasm 侧薄绑定在 `apps/filmcraft-web/src/host.rs`，导出 `craft_read` / `c
 都断言错误码为 `path_outside_workspace`，并进一步证明工作区外的目标文件字节未变（读不到、写不进）；
 `a_resolved_path_that_leaves_the_root_is_rejected` 用注入 realpath 固定住前缀判断本身。详见 §4.1。
 
+**T1 实现（2026-10-20）**：`crates/ui-egui/tests/bridge_ui.rs::craft_catalog_ids_match_command_list`
+把 `bridge::catalog()`（`craft_catalog` 在 wasm 里的同一份实现）的命令 id 集合与
+`Session::default().execute("command.list")` 的 id 集合逐项比较，并同时断言
+`filmcraft_engine::command_specs()` 与 `command.list` 同源。三方任一漂移都会红，不再依赖
+"catalog = 701" 这种只查数量的抽查。
+
 **T2 实现（2026-10-19）**：`crates/ui-egui/tests/bridge_ui.rs::bridge_results_match_headless_for_representative_commands`
 拿 12 条静态查询命令分别走面板桥与 headless `Session`，断言结果 JSON 深度相等。两处有意排除：
 `command.list`（面板会话多注册了 `tool.*` / `playback.toggle` / `window.*`，目录本就不同）与
@@ -129,7 +135,8 @@ wasm 侧薄绑定在 `apps/filmcraft-web/src/host.rs`，导出 `craft_read` / `c
 
 **T5 实现**：`bridge_executes_commands_against_the_visible_app` —— 经桥提交 `file.newBin`，
 随后控制通道 `project.inspect` 能看到它，证明改的是可见 App。T3/T7 由
-`bridge_limits_are_enforced_at_the_app_boundary` 与 `bridge_reports_command_failures_instead_of_dropping_them` 覆盖。
+`bridge_limits_are_enforced_at_the_app_boundary` 与 `bridge_reports_command_failures_instead_of_dropping_them` 覆盖；
+导出边界（`InFlight`）的 32 条 / 累计 8 MiB 另由 `bridge::tests` 的三条单测锁死（见 §15）。
 
 **T6 实现（2026-10-19）**：adapter 的 pending 超时从 45 s 收紧到 `HEARTBEAT_MS`（15 s）——
 面板 15 s 没有心跳就视为掉线；超时同时把这条从队列里移除，面板回来不会当新请求重放
@@ -154,15 +161,23 @@ wasm 侧薄绑定在 `apps/filmcraft-web/src/host.rs`，导出 `craft_read` / `c
   - 信封：接受 `{"id","command","params"}`，同时兼容设计稿里的 `id_command` 拼写。
   - `take_request`（UI 线程取）、`take_reply`（adapter 取）、`idle`、`pending_bytes`、`rejected`。
   - 回复信封：`{"id","ok":true,"result":…}` / `{"id","ok":false,"error":{"code":"command_failed","message":…}}`。
+- 导出边界记账：`bridge::InFlight` 保存「已投递、未取回」的请求及其原始 JSON 字节数，
+  `try_push` 同时校验 `MAX_PENDING` 与累计 `MAX_BYTES`；超限时**不改任何状态**，已登记请求仍可逐条取回。
+  `apps/filmcraft-web/src/api.rs` 的 `craft_submit` 在投递 `ControlRequest` **之前**登记，
+  所以累计上限真正落在导出边界，而不是刚入队就被排空的 `Bridge`。
+- 命令目录：`bridge::catalog()` 是 `craft_catalog` 的唯一来源（`command_specs()` 的静态副本）。
 - UI 线程执行：`FilmcraftApp::pump_bridge(ctx)` 每帧在 `eframe::App::logic` 里执行队列，
   命令落在**可见 App** 上；失败也回包，不重放。
-- 测试：`bridge::tests`（7 条单测）+ `tests/bridge_ui.rs`（3 条端到端：副作用可见、错误回传、
-  第 33 条被拒且前 32 条各回一包）。
+- 测试：`bridge::tests`（12 条单测，含 InFlight 的累计字节 / 第 33 条 / 空取 / 回滚）
+  + `tests/bridge_ui.rs`（5 条端到端：副作用可见、错误回传、第 33 条被拒且前 32 条各回一包、
+  T1 目录 id 集合相等）。
 - 插件侧工具目录：`jianyingcraft-plugin/ui/tools.mjs` 为唯一来源（17 工具 / 14 公开 + 3 面板内部），
   `ui/build-tools.mjs` 生成 `ui/dist/tools.json`，`build.mjs` 随构建产出并写进 `build-info.json`；
   `ui/tests/tools.test.mjs` 4 条校验目录与来源同步。
-- **未完成**：wasm 侧四个 JS 导出（`craft_submit` / `craft_take_reply` / `craft_idle` /
-  `craft_catalog`）尚未接到 `apps/filmcraft-web`。
+- wasm 侧四个 JS 导出（`craft_submit` / `craft_take_reply` / `craft_idle` / `craft_catalog`）
+  已在 `apps/filmcraft-web/src/api.rs` 实现（`#[wasm_bindgen]`），并通过 wasm32 类型检查；
+  `craft_take_reply` 空队列返回 `null`（`JsValue::NULL`，不是 `undefined`）。运行时验证见 §10、§14，
+  2026-10-20 的审计修复见 §15。
 
 ## 9. 运行时验证（2026-10-18）
 
@@ -185,8 +200,8 @@ wasm 侧薄绑定在 `apps/filmcraft-web/src/host.rs`，导出 `craft_read` / `c
 
 | 导出 | 行为 |
 |---|---|
-| `craft_submit(json) -> bool` | 复用 `Bridge` 解析与 32 条 / 8 MiB 上限；成功后立刻通过 `ControlRequest` 投递，返回是否受理 |
-| `craft_take_reply() -> string?` | 按提交顺序收取回复（轮询 `Receiver`），信封为 `{"id","ok",...}` |
+| `craft_submit(json) -> bool` | 复用 `Bridge` 解析；32 条 / 累计 8 MiB 由 `InFlight` 在投递前记账，超限返回 `false` 且不执行 |
+| `craft_take_reply() -> string \| null` | 按提交顺序收取回复（轮询 `InFlight` 队首的 `Receiver`），空队列返回 `null`；信封为 `{"id","ok",...}` |
 | `craft_idle() -> bool` | 无在途、无排队、无待取回复 |
 | `craft_catalog() -> string` | `command_specs()` 的 `{commands:[{id,label,menu,shortcut,params}]}` |
 
@@ -281,3 +296,22 @@ totalBytes: 40,969,658`；随后 `--check` → `drift: []`。`ui/engine/` 已在
 
 即：**真实浏览器里运行 App → 打开 demo → 读序列 → 分割 → 撤销**，控制通道可用。
 脚本：`jianyingcraft-plugin/ui/browser-app-smoke.mjs`（缺 `CHROME_PATH`/`JIANYINGCRAFT_WEB_DIST` 时 skip）。
+
+## 15. 审计修复（2026-10-20）：导出边界的累计上限与 `null` 哨兵
+
+两条真实分歧、两条证明缺口，修复如下：
+
+| 问题 | 修复 | 证明（测试名） |
+|---|---|---|
+| `api.rs` 每次 submit 后同步排空 `Bridge`，回复又存在另一个 `Bridge`，所以在每次 submit 时 `pending_bytes()` 都是 0；在途条目只有 `(String, Receiver<Value>)`，没有字节数——最多 32 条 × 单条约 8 MiB 一起堆在通道里 | 新增 `bridge::InFlight`（`VecDeque<InFlightEntry>` + 累计 `bytes`）：`try_push` 原子地校验 32 条与累计 8 MiB，超限不改状态；`craft_submit` 先登记再投递，`collect_bridge_replies` 收下队首回复后 `pop_front` 释放字节 | `bridge::tests::the_cumulative_byte_budget_is_enforced_by_the_bookkeeping`、`the_thirty_third_in_flight_entry_is_refused`、`a_rolled_back_entry_releases_its_bytes`、`the_front_entry_exposes_its_reply_receiver` |
+| `craft_take_reply` 原先返回 `Option<String>`，wasm-bindgen 把 `None` 映射成 `undefined`，而契约要求 `null` | 改为一律返回 `JsValue`：有回复 `JsValue::from_str`，空队列 `JsValue::NULL` | 空取由 `bridge::tests::taking_from_an_empty_bookkeeping_yields_none` 在 host 上证明；`JsValue::NULL` 只在 wasm 目标编译（`cargo check -p filmcraft-web --target wasm32-unknown-unknown`），**host 测试无法执行** |
+| T1（catalog id 集合 == `command.list` id 集合）没有自动化测试 | `bridge::catalog()` 成为 `craft_catalog` 的唯一实现，测试三方比对 | `tests/bridge_ui.rs::craft_catalog_ids_match_command_list` |
+| 32 条 / 溢出只在 App 的 `Bridge` 上证明 | 同上，改在导出边界的 `InFlight` 上证明 | `bridge::tests` 的 InFlight 三条（见上） |
+
+另外两处随之收紧：`craft_idle` 现在用 `InFlight::queued()`（旧代码里的 `queued` 标志因 `Bridge`
+每帧被排空而永远为 false）；`craft_submit` 去掉了重复的 `len()` 预检，上限判断只有 `InFlight` 一处。
+
+**诚实边界**：`apps/filmcraft-web` 整 crate 是 `#![cfg(target_arch = "wasm32")]`，host 上的
+`cargo test` 不编译 `api.rs`。因此 `craft_submit` 的接线（先记账再投递、发送失败 `pop_back` 回滚）与
+`craft_take_reply` 的 `JsValue::NULL` 只经过 wasm32 类型检查；真实浏览器/Node 调用沿用 §10、§14
+已有的运行时证据，本轮没有新增浏览器运行。

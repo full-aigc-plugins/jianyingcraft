@@ -147,8 +147,7 @@ pub fn craft_take_reply() -> JsValue {
 /// 面板桥：没有在途命令、没有排队请求且没有待取回复时为 true。
 #[wasm_bindgen]
 pub fn craft_idle() -> bool {
-    let idle = !IN_FLIGHT.with(|q| q.borrow().queued());
-    idle && BRIDGE.with(|b| b.borrow().idle()) && REPLIES.with(|r| r.borrow().idle())
+    !IN_FLIGHT.with(|q| q.borrow().queued()) && BRIDGE.with(|b| b.borrow().idle()) && REPLIES.with(|r| r.borrow().idle())
 }
 
 /// 面板桥：命令目录（`{"commands":[{id,label,menu,shortcut,params}]}`）。
@@ -162,7 +161,7 @@ fn collect_bridge_replies() {
         // 只看队首：桥的回复必须与提交顺序一致。
         let ready = IN_FLIGHT.with(|q| {
             let q = q.borrow();
-            let Some(entry) = q.front() else { return None };
+            let entry = q.front()?;
             match entry.receiver().try_recv() {
                 Ok(v) => Some((entry.id().to_string(), Some(v))),
                 Err(TryRecvError::Empty) => None,

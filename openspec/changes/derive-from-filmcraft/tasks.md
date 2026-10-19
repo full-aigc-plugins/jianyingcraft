@@ -191,8 +191,11 @@
       判据是"数据目录里还没有 `workspaces.json`"——全新安装得到剪映式首屏，老用户保留上次选择；
       测试 `tests::first_run_lands_in_the_jianying_workspace` 覆盖三种情况（首次 / 已有文件 / 无配置目录）。
       选择在 app 层而不是改 `UiState::default`，避免影响直接构造 `FilmcraftApp` 的上游测试
-- [ ] 单页壳不绘制浮动面板：当前一旦存在浮动窗口就退回 dock 树（用户显式打开的浮动监视器
+- [x] 单页壳不绘制浮动面板：当前一旦存在浮动窗口就退回 dock 树（用户显式打开的浮动监视器
       不能因窗口变窄而消失）；后续应把浮动层画在壳之上
+      *2026-10-20：浮动层改为画在壳之上——壳照常绘制（预览/时间轴仍在），浮动监视器叠在上层，
+      `tests/panel_float_ui.rs` 3 条通过（☰ 分组二级面板是浮动而非整页替换、Compact 壳 + 浮动监视器共存且不出界、
+      打开「滤镜」Lumetri Color 不再盖住 Program 监视器）。*
 
 ## 6. CI 实测（2026-10-18）
 
@@ -268,8 +271,20 @@
 
 ## 4. 面板桥（智能体宿主内嵌）
 
-- [ ] 对齐 `bridge.rs.in` 四导出契约：submit / take_reply / idle / catalog（细节见 `docs/derivation/03-panel-bridge.md`）
-- [x] 宿主三导入：`apps/filmcraft-web/src/host.rs` + `host_policy.rs`（11 个策略单测通过：只读白名单、写入限工作区、截图仅在桥内）
+- [x] 四导出契约落地：submit / take_reply / idle / catalog（细节见 `docs/derivation/03-panel-bridge.md` §2、§10、§15）。
+      实现分布在 `crates/ui-egui/src/bridge.rs`（`Bridge` 校信封 / `InFlight` 在途记账 / `catalog()` 目录）
+      与 `apps/filmcraft-web/src/api.rs`（四个 `#[wasm_bindgen]` 导出，`craft_take_reply` 空队列返回 `null`）。
+      *原文引用的 `bridge.rs.in` 在本仓与插件仓都不存在（只存在于 10 个兄弟插件仓的通用模板，且契约不同），已更正为上述实现位置。*
+      *2026-10-20 审计修复的两处真实偏差：① 累计 8 MiB 此前只在单条请求上校验（`api.rs` 每次 submit 即排空 `Bridge`，
+      在途请求不带字节数，32 × 8 MiB 可堆积）→ 新增宿主可测的 `InFlight` 记账，同时约束 32 条与累计 8 MiB；
+      ② `craft_take_reply` 空队列返回 `undefined` → 改为 `JsValue::NULL`。五条新单测覆盖累计预算、第 33 条被拒、
+      空队列、回滚释放、取队首；`bridge_ui::craft_catalog_ids_match_command_list` 断言
+      `catalog` / `command.list` / `command_specs()` 三方 id 集合相等（T1）。*
+- [x] 宿主三导入：`__craftRead` / `__craftWrite` / `__craftScreenshot`
+      （2026-10-20：`apps/filmcraft-web/src/host_policy.rs` 承载平台无关策略，`host.rs` 是 wasm 胶水并导出
+      `craft_read` / `craft_write` / `craft_screenshot`。11 条宿主单测实测：`../` 与绝对路径越界、UNC/盘符相对、
+      junction/symlink 逃逸（本机真实 junction）、导入配额 256 文件 / 128 MiB、单产物 128 MiB、临时文件 + 原子改名、
+      覆盖回执、截图不支持返回 None。仅类型检查：wasm 侧对 `__craft*` 的调用与回包映射——本机没有注入这三个全局的宿主页。）
 - [x] 引擎侧面板桥队列：`crates/ui-egui/src/bridge.rs`（32 条 / 8 MiB、FIFO、失败也回包、
       `idle()`、`rejected()`），7 条单测覆盖非法载荷与上限
 - [x] UI 线程执行：`FilmcraftApp::pump_bridge` 每帧把请求执行在可见 App 上；
@@ -393,7 +408,10 @@
       已在文档中写明，不当作回归）。
 - [x] **T5（可见性）**：`bridge_executes_commands_against_the_visible_app` 已经证明
       "桥提交 `file.newBin` → 控制通道 `project.inspect` 读到"，无需新用例
-- [x] T1/T3/T4/T7 已有测试：catalog 701 相等、队列 32 上限、路径逃逸、严格参数
+- [x] T1/T3/T4/T7 已有测试：T1 = `bridge_ui::craft_catalog_ids_match_command_list`（三方 id 集合相等，
+      2026-10-20 补）；T3 = `bridge_ui::bridge_limits_are_enforced_at_the_app_boundary` + `bridge::tests` 的
+      在途记账用例；T4 = `apps/filmcraft-web/tests/host_policy.rs` 的路径逃逸组；T7 = `automation` 的
+      严格参数用例（MCP 工具参数层，`craft_submit` 转发参数不做 -32602）
 
 ## 5. 交付与验收
 

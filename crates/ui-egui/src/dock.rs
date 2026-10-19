@@ -448,6 +448,10 @@ impl DockNode {
         }
     }
     /// Add a panel as a tab next to `near` (or into the first group).
+    ///
+    /// 监视器（`Program`）所在的 tab 组不接受别的面板：把它当锚点插 Tab 会把预览盖住（剪映式
+    /// 「滤镜 / 调节」Tab 打开 Lumetri Color 时踩过）。此时改放到最近的**相邻组**；Program 独处、
+    /// 没有相邻组时在它旁边拆出一组并排，Program 仍留在左半边。
     pub fn open_near(&mut self, p: PanelKind, near: PanelKind) {
         if crate::dock_shared::encode(self, &[]).is_err() {
             return;
@@ -457,7 +461,69 @@ impl DockNode {
             self.panels(&mut panels);
             panels.first().copied()
         });
-        crate::dock_shared::apply_tree(self, craft_ui::docking::Action::Open { panel: p, anchor });
+        let Some(anchor) = anchor else {
+            // 空树：交给 Open 建出第一组（与旧行为一致）。
+            crate::dock_shared::apply_tree(self, craft_ui::docking::Action::Open { panel: p, anchor: None });
+            return;
+        };
+        match self.monitor_safe_anchor(anchor) {
+            Some(anchor) => {
+                crate::dock_shared::apply_tree(self, craft_ui::docking::Action::Open { panel: p, anchor: Some(anchor) });
+            }
+            // Program 单独成组：拆成并排的两组，预览留在原来那一半。
+            None => {
+                let placement = craft_ui::docking::Placement::Split(craft_ui::docking::Zone::Right);
+                crate::dock_shared::apply_tree(self, craft_ui::docking::Action::OpenAt { panel: p, anchor, placement });
+            }
+        }
+    }
+
+    /// 为 `anchor` 找一个**不会盖住 Program** 的落点：锚点所在组不含 Program 时原样返回；
+    /// 含 Program 时沿路径向上找最近的、含其它组的兄弟子树，取其中第一个面板。
+    /// `None` 表示 Program 组没有兄弟（整棵树只有它），调用方应改用并排拆分。
+    fn monitor_safe_anchor(&self, anchor: PanelKind) -> Option<PanelKind> {
+        let path = self.group_path(anchor)?;
+        match node_at(self, &path)? {
+            DockNode::Tabs { panels, .. } if !panels.contains(&PanelKind::Program) => Some(anchor),
+            DockNode::Tabs { .. } => {
+                for level in (0..path.len()).rev() {
+                    let mut sibling = path[..level].to_vec();
+                    sibling.push(!path[level]);
+                    let Some(node) = node_at(self, &sibling) else { continue };
+                    let mut panels = Vec::new();
+                    node.panels(&mut panels);
+                    if let Some(first) = panels.first().copied() {
+                        return Some(first);
+                    }
+                }
+                None
+            }
+            _ => Some(anchor),
+        }
+    }
+
+    /// 从根到含 `panel` 的 tab 组的路径（`true` = 第二个子节点）；深度由工作区模型限制。
+    fn group_path(&self, panel: PanelKind) -> Option<Vec<bool>> {
+        fn walk(node: &DockNode, panel: PanelKind, out: &mut Vec<bool>) -> bool {
+            match node {
+                DockNode::Tabs { panels, .. } => panels.contains(&panel),
+                DockNode::Split { a, b, .. } => {
+                    out.push(false);
+                    if walk(a, panel, out) {
+                        return true;
+                    }
+                    out.pop();
+                    out.push(true);
+                    if walk(b, panel, out) {
+                        return true;
+                    }
+                    out.pop();
+                    false
+                }
+            }
+        }
+        let mut path = Vec::new();
+        walk(self, panel, &mut path).then_some(path)
     }
 }
 
@@ -906,6 +972,16 @@ pub fn placeholder(ui: &mut egui::Ui, rect: Rect, t: &Tokens, text: &str) {
     ui.painter().text(rect.center(), Align2::CENTER_CENTER, text, Tokens::ui(12.0), t.text_faint);
 }
 
+/// 按根 → 子的路径取节点；空路径就是节点本身。
+fn node_at<'a>(node: &'a DockNode, path: &[bool]) -> Option<&'a DockNode> {
+    let mut node = node;
+    for &second in path {
+        let DockNode::Split { a, b, .. } = node else { return None };
+        node = if second { b } else { a };
+    }
+    Some(node)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -973,5 +1049,31 @@ mod tests {
         d.open_near(PanelKind::Info, PanelKind::Source);
         assert!(d.is_visible(PanelKind::Info));
         assert_eq!(d, hsplit(SplitSize::Ratio(0.5), tabs(&[PanelKind::Effects, PanelKind::Info], 1), tabs(&[PanelKind::Markers], 0)));
+    }
+
+    /// 打开「滤镜 / 调节」（Lumetri Color）这类侧栏面板时，不能作为 Tab 插进 Program 所在组：
+    /// 那会把预览盖住。它应当落到最近的相邻组，Program 保持可见（本次修复的已记录缺口）。
+    #[test]
+    fn open_near_never_tabs_onto_the_program_monitor() {
+        for name in ["Editing", "Jianying", "Effects", "Assembly", "Audio", "Captions and Graphics"] {
+            let mut d = workspace(name);
+            assert!(!d.contains(PanelKind::LumetriColor), "{name}: the fixture already has Lumetri Color");
+            d.open_near(PanelKind::LumetriColor, PanelKind::Program);
+            assert!(d.contains(PanelKind::LumetriColor), "{name}: the panel did not open");
+            assert!(d.is_visible(PanelKind::LumetriColor), "{name}: the new panel is not the active tab");
+            assert!(d.is_visible(PanelKind::Program), "{name}: opening a side panel must not hide the Program monitor");
+        }
+    }
+
+    /// Program 单独成组、没有相邻组可用时，退化为并排拆分：Program 留在原来那一半。
+    #[test]
+    fn open_near_splits_beside_a_lone_program_group() {
+        let mut d = tabs(&[PanelKind::Program], 0);
+        d.open_near(PanelKind::LumetriColor, PanelKind::Program);
+        assert!(d.contains(PanelKind::Program) && d.contains(PanelKind::LumetriColor));
+        assert!(d.is_visible(PanelKind::Program), "the split must keep Program in its own half");
+        assert!(d.is_visible(PanelKind::LumetriColor));
+        // 两个面板各自独立成组（并排），不是同一个 Tab 组。
+        assert!(matches!(d, DockNode::Split { .. }), "a lone Program group should split, got {d:?}");
     }
 }

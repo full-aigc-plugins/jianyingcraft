@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 
 use crate::dock::{self, DockAction, DockNode, Group, PanelKind};
 use crate::layout::LayoutClass;
+use crate::menus::MenuItem;
 use crate::theme::Tokens;
 use crate::{FilmcraftApp, panels};
 
@@ -514,7 +515,11 @@ impl FilmcraftApp {
             self.timeline_toolbar(ui, toolbar, &t);
         }
         self.auto.add("jy.preview", preview, PanelKind::Program.title());
-        self.panel_body(ui, PanelKind::Program, preview, class);
+        // Program 被用户浮动出去时，单页壳的预览区不再画第二台监视器：否则同一个面板会画两遍、
+        // 自动化 id 也会重复；那台监视器就是壳之上的浮动窗口。
+        if self.ui.dock.contains(PanelKind::Program) {
+            self.panel_body(ui, PanelKind::Program, preview, class);
+        }
         if let Some((drawer, rect)) = drawer {
             // 顶栏选的 Tab 决定抽屉画哪个面板；属性开关始终是 Properties；没选过就退回旧映射。
             let panel = if drawer == crate::layout::Drawer::Inspector {
@@ -628,12 +633,10 @@ impl FilmcraftApp {
         let list_rect = Rect::from_min_max(egui::pos2(inner.min.x, search_rect.max.y + 4.0), inner.max);
         let mut list = child.new_child(egui::UiBuilder::new().max_rect(list_rect).id_salt("jy-menu-rows"));
         list.set_clip_rect(popup);
-        // 两级菜单：无过滤词时先列菜单根（File / Edit / …），点进去再看该菜单的命令；
+        // 两级菜单：无过滤词时先列菜单根（File / Edit / …），点开的分组在**悬浮二级面板**里展开；
         // 有过滤词时退回扁平结果——搜索时不该再要求用户先选分组。
-        let group = self.ui.jy_menu_group.clone().filter(|_| needle.is_empty());
         enum Row {
             Group(String),
-            Back,
             Command(String),
         }
         let mut rows: Vec<(String, String, bool, Row)> = Vec::new();
@@ -643,13 +646,6 @@ impl FilmcraftApp {
                 if label.to_lowercase().contains(&needle) {
                     rows.push((format!("jy.menu.{}", item.id), label, item.enabled, Row::Command(item.id.clone())));
                 }
-            }
-        } else if let Some(group) = &group {
-            rows.push(("jy.menu.back".to_string(), format!("< {group}"), true, Row::Back));
-            for item in items.iter().filter(|item| item.path.first().is_some_and(|first| first == group)) {
-                let rest: Vec<&str> = item.path.iter().skip(1).map(String::as_str).collect();
-                let label = if rest.is_empty() { item.label.clone() } else { format!("{} / {}", rest.join(" / "), item.label) };
-                rows.push((format!("jy.menu.{}", item.id), label, item.enabled, Row::Command(item.id.clone())));
             }
         } else {
             let mut roots: Vec<(String, usize)> = Vec::new();
@@ -664,8 +660,10 @@ impl FilmcraftApp {
                 rows.push((format!("jy.menu.group.{root}"), format!("{root} ({count})"), true, Row::Group(root)));
             }
         }
+        // 点击分组时记住那一行的矩形，悬浮二级面板贴着分组标题栏出现。
         let mut next_group: Option<Option<String>> = None;
         let mut chosen: Option<String> = None;
+        let mut root_rows: Vec<(String, Rect)> = Vec::new();
         egui::ScrollArea::vertical().id_salt("jy-menu-scroll").auto_shrink([false, false]).show(&mut list, |ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             for (id, label, enabled, row) in &rows {
@@ -675,13 +673,16 @@ impl FilmcraftApp {
                 if response.hovered() && *enabled {
                     ui.painter().rect_filled(rect, 4.0, t.hover);
                 }
+                if let Row::Group(name) = row {
+                    root_rows.push((name.clone(), rect));
+                }
                 let galley = ui.painter().layout_no_wrap(label.clone(), Tokens::ui(12.5), color);
                 ui.painter().galley(egui::pos2(rect.min.x + 10.0, rect.center().y - galley.size().y / 2.0), galley, color);
                 self.auto.add(id, rect, label);
                 if response.clicked() && *enabled {
                     match row {
+                        // 根列表原地保留；分组命令画在它上面的悬浮二级面板里。
                         Row::Group(name) => next_group = Some(Some(name.clone())),
-                        Row::Back => next_group = Some(None),
                         Row::Command(command) => chosen = Some(command.clone()),
                     }
                 }
@@ -695,6 +696,93 @@ impl FilmcraftApp {
             let ctx = ui.ctx().clone();
             let _ = crate::menus::invoke(self, &ctx, &id, json!({}));
         }
+        // 点开的分组：命令不再整页替换根列表，而是出现在一个悬浮二级面板里（原内容仍可见）。
+        if let Some(group) = self.ui.jy_menu_group.clone().filter(|_| needle.is_empty()) {
+            let anchor = root_rows.iter().find(|(root, _)| *root == group).map(|(_, rect)| *rect).unwrap_or(popup);
+            if let Some(id) = self.shell_menu_group_panel(ui, body, popup, anchor, &group, &items, t) {
+                self.ui.jy_menu_open = false;
+                let ctx = ui.ctx().clone();
+                let _ = crate::menus::invoke(self, &ctx, &id, json!({}));
+            }
+        }
+    }
+
+    /// ☰ 菜单的悬浮二级面板：点开的分组命令列在这里，根列表仍留在下面的主弹层里。
+    ///
+    /// 面板优先贴在主弹层右侧；窄窗口放不下时叠在弹层内侧，宽度和高度都留出可见的原内容。
+    /// 分隔符只用 ASCII（`<` / `-` / `/`），实测字体里 `▸` 会渲染成豆腐块。
+    /// 返回被点中的命令 id；调用方负责关菜单并执行。
+    fn shell_menu_group_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        body: Rect,
+        popup: Rect,
+        anchor: Rect,
+        group: &str,
+        items: &[MenuItem],
+        t: &Tokens,
+    ) -> Option<String> {
+        let commands: Vec<&MenuItem> = items.iter().filter(|item| item.path.first().is_some_and(|first| first == group)).collect();
+        let row_h = 22.0_f32;
+        let header_h = 24.0_f32;
+        let pad = 12.0_f32;
+        let width = 300.0_f32.min((body.width() - 24.0).max(160.0));
+        // 面板高度按行数算，但最多占内容区的 62%：它是悬浮二级面板，不是新的整页。
+        let wanted = header_h + 2.0 + commands.len() as f32 * row_h + pad;
+        let height = wanted.min((body.height() * 0.62).max(140.0));
+        let right = popup.max.x + 6.0;
+        let x = if right + width <= body.max.x - 8.0 { right } else { (popup.max.x - width).max(body.min.x + 8.0) };
+        let y = (anchor.max.y + 2.0).min(body.max.y - height - 8.0).max(body.min.y + 8.0);
+        let panel = Rect::from_min_size(egui::pos2(x, y), egui::vec2(width, height));
+        let id = egui::Id::new("jy-menu-group-panel");
+        let mut chosen: Option<String> = None;
+        egui::Area::new(id).order(egui::Order::Foreground).fixed_pos(panel.min).constrain(false).show(ui.ctx(), |ui| {
+            // 面板吃掉落在自己身上的点击，否则会漏到下面的根列表上。
+            let _ = ui.interact(panel, id.with("surface"), Sense::click());
+            ui.painter().rect_filled(panel, 8.0, t.header_bg);
+            ui.painter().rect_stroke(panel, 8.0, egui::Stroke::new(1.0, t.text_dim.gamma_multiply(0.45)), StrokeKind::Inside);
+            self.auto.add("group.panel", panel, group);
+            let inner = panel.shrink(6.0);
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).id_salt("jy-menu-group-body"));
+            child.set_clip_rect(panel);
+            // 标题栏就是「返回」：`< File  -  51`（ASCII 分隔符）。
+            let header = Rect::from_min_size(inner.min, egui::vec2(inner.width(), header_h));
+            let back = child.interact(header, id.with("back"), Sense::click());
+            if back.hovered() {
+                child.painter().rect_filled(header, 4.0, t.hover);
+            }
+            let title = format!("< {group}  -  {}", commands.len());
+            let galley = child.painter().layout_no_wrap(title, Tokens::ui(12.5), t.text);
+            child.painter().galley(egui::pos2(header.min.x + 4.0, header.center().y - galley.size().y / 2.0), galley, t.text);
+            self.auto.add("group.back", header, group);
+            if back.clicked() {
+                self.ui.jy_menu_group = None;
+            }
+            child.painter().line_segment([egui::pos2(inner.min.x, header.max.y), egui::pos2(inner.max.x, header.max.y)], egui::Stroke::new(1.0, t.separator));
+            let list_rect = Rect::from_min_max(egui::pos2(inner.min.x, header.max.y + 2.0), inner.max);
+            let mut list = child.new_child(egui::UiBuilder::new().max_rect(list_rect).id_salt("jy-menu-group-rows"));
+            list.set_clip_rect(panel);
+            egui::ScrollArea::vertical().id_salt("jy-menu-group-scroll").auto_shrink([false, false]).show(&mut list, |ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                for command in &commands {
+                    let color = if command.enabled { t.text } else { t.text_dim };
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 20.0), Sense::hover());
+                    let response = ui.interact(rect, egui::Id::new(("group-row", command.id.as_str())), Sense::click());
+                    if response.hovered() && command.enabled {
+                        ui.painter().rect_filled(rect, 4.0, t.hover);
+                    }
+                    let rest: Vec<&str> = command.path.iter().skip(1).map(String::as_str).collect();
+                    let label = if rest.is_empty() { command.label.clone() } else { format!("{} / {}", rest.join(" / "), command.label) };
+                    let galley = ui.painter().layout_no_wrap(label.clone(), Tokens::ui(12.0), color);
+                    ui.painter().galley(egui::pos2(rect.min.x + 8.0, rect.center().y - galley.size().y / 2.0), galley, color);
+                    self.auto.add(&format!("group.row.{}", command.id), rect, &label);
+                    if command.enabled && response.clicked() {
+                        chosen = Some(command.id.clone());
+                    }
+                }
+            });
+        });
+        chosen
     }
 
     /// 时间轴工具条：剪映式高频动作（撤销 / 重做 / 分割 / 删除 / 播放 / 定格 / 倒放）。
@@ -874,11 +962,16 @@ impl FilmcraftApp {
 
     /// 绘制编辑模式的 dock 区。`class` 由 `frame` 按窗口宽度每帧算一次，全区共用。
     pub(crate) fn dock_area(&mut self, ui: &mut egui::Ui, body: Rect, class: LayoutClass) {
-        // 有浮动面板时退回 dock 树：单页壳目前不绘制浮动窗口（见 tasks.md 已知限制），
-        // 用户显式打开的浮动监视器不能因为窗口变窄就消失。
-        let floating = !self.ui.floating.is_empty();
-        if class != LayoutClass::Wide && !floating && self.ui.keys.maximized.is_none() {
+        // 单页壳（Compact / Medium）照常画；浮动面板**叠加在壳之上**，不再因为存在浮动窗口
+        // 就退回 dock 树——用户显式打开的浮动监视器不能因为窗口变窄就消失
+        // （tasks.md 已记录缺口：单页壳不绘制浮动面板）。
+        if class != LayoutClass::Wide && self.ui.keys.maximized.is_none() {
             self.shell_area(ui, body, class);
+            let ctx = ui.ctx().clone();
+            self.raise_pending_panel(&ctx);
+            self.draw_floating_panels(&ctx, body, class);
+            panels::panel_menu_popup(self, ui);
+            self.cancel_value_drag(ui.ctx());
             return;
         }
         let t = self.tokens;
@@ -901,11 +994,7 @@ impl FilmcraftApp {
             body
         };
         let ctx = ui.ctx().clone();
-        if let Some(panel) = self.pending_panel_raise.take()
-            && let Some(owner) = self.ui.floating.iter().find(|group| group.panels.contains(&panel)).and_then(|group| group.panels.first())
-        {
-            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(("floating-panel", owner.id()))));
-        }
+        self.raise_pending_panel(&ctx);
         let maximized =
             self.ui.keys.maximized.filter(|panel| self.ui.dock.contains(*panel) || self.ui.floating.iter().any(|group| group.panels.contains(panel)));
         let mut dock = match maximized {
@@ -915,22 +1004,7 @@ impl FilmcraftApp {
         let mut groups = vec![];
         let mut layout_actions = Vec::new();
         dock::layout_with_actions(ui, &mut dock, body, &t, "", &mut groups, &mut self.auto, &mut layout_actions);
-        let seqs = dock::SeqTabs {
-            open: self
-                .session
-                .state
-                .open_sequences
-                .iter()
-                .filter_map(|id| {
-                    self.session
-                        .project
-                        .item(*id)
-                        .filter(|item| matches!(item.kind, filmcraft_project::ItemKind::Sequence(_)))
-                        .map(|item| (id.0, item.name.clone()))
-                })
-                .collect(),
-            active: self.session.state.active_sequence.map(|id| id.0),
-        };
+        let seqs = self.seq_tabs();
         let mut actions = vec![];
         let mut targets = vec![];
         for group in &groups {
@@ -960,20 +1034,55 @@ impl FilmcraftApp {
         for action in layout_actions {
             let _ = self.dock_command(&ctx, action);
         }
+        self.dispatch_dock_actions(&ctx, actions);
+        self.panel_drag(&ctx, body, &targets);
+        panels::panel_menu_popup(self, ui);
+        self.cancel_value_drag(ui.ctx());
+    }
+
+    /// 把待置顶的浮动面板提到最上面（与点击顺序无关）。
+    fn raise_pending_panel(&mut self, ctx: &egui::Context) {
+        let Some(panel) = self.pending_panel_raise.take() else { return };
+        let Some(owner) = self.ui.floating.iter().find(|group| group.panels.contains(&panel)).and_then(|group| group.panels.first()) else { return };
+        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(("floating-panel", owner.id()))));
+    }
+
+    /// 当前打开的序列（Timeline 的 tab 条用）。
+    fn seq_tabs(&self) -> dock::SeqTabs {
+        dock::SeqTabs {
+            open: self
+                .session
+                .state
+                .open_sequences
+                .iter()
+                .filter_map(|id| {
+                    self.session
+                        .project
+                        .item(*id)
+                        .filter(|item| matches!(item.kind, filmcraft_project::ItemKind::Sequence(_)))
+                        .map(|item| (id.0, item.name.clone()))
+                })
+                .collect(),
+            active: self.session.state.active_sequence.map(|id| id.0),
+        }
+    }
+
+    /// 处理 dock 组与浮动面板绘制时收集到的交互（激活 / 关闭 / 拖动 / 序列 tab）。
+    fn dispatch_dock_actions(&mut self, ctx: &egui::Context, actions: Vec<DockAction>) {
         for action in actions {
             match action {
                 DockAction::Activate(panel) => {
-                    let _ = self.dock_command(&ctx, Action::Activate { panel });
+                    let _ = self.dock_command(ctx, Action::Activate { panel });
                 }
                 DockAction::Close(panel) => {
-                    let _ = self.dock_command(&ctx, Action::Close { panel });
+                    let _ = self.dock_command(ctx, Action::Close { panel });
                 }
                 DockAction::Focus(panel) => self.ui.focused = panel,
                 DockAction::BeginDrag(panel) => {
                     ctx.data_mut(|data| data.insert_temp(drag_id(), panel));
                 }
                 DockAction::OpenSequence(id) => {
-                    let _ = self.dock_command(&ctx, Action::Activate { panel: PanelKind::Timeline });
+                    let _ = self.dock_command(ctx, Action::Activate { panel: PanelKind::Timeline });
                     if self.session.state.active_sequence.map(|item| item.0) != Some(id)
                         && let Err(error) = self.session.execute("sequence.open", json!({"item": id}))
                     {
@@ -999,9 +1108,23 @@ impl FilmcraftApp {
                 }
             }
         }
-        self.panel_drag(&ctx, body, &targets);
-        panels::panel_menu_popup(self, ui);
-        self.cancel_value_drag(ui.ctx());
+    }
+
+    /// 单页壳之上的浮动层：壳照常画，浮动窗口用 egui Area 叠加（窄窗口里也不会消失）。
+    fn draw_floating_panels(&mut self, ctx: &egui::Context, body: Rect, class: LayoutClass) {
+        if self.ui.floating.is_empty() {
+            return;
+        }
+        let seqs = self.seq_tabs();
+        let mut actions = vec![];
+        let mut targets = vec![];
+        for index in self.floating_order(ctx) {
+            if let Some(target) = self.floating_group(ctx, index, &seqs, &mut actions, class) {
+                targets.push(target);
+            }
+        }
+        self.dispatch_dock_actions(ctx, actions);
+        self.panel_drag(ctx, body, &targets);
     }
 
     fn floating_group(
