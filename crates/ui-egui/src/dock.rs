@@ -447,34 +447,75 @@ impl DockNode {
             self.open_near(PanelKind::Timeline, PanelKind::Project);
         }
     }
-    /// Add a panel as a tab next to `near` (or into the first group).
+    /// Add a panel as a tab next to `near`, reporting a placement failure instead of dropping it.
     ///
     /// 监视器（`Program`）所在的 tab 组不接受别的面板：把它当锚点插 Tab 会把预览盖住（剪映式
     /// 「滤镜 / 调节」Tab 打开 Lumetri Color 时踩过）。此时改放到最近的**相邻组**；Program 独处、
     /// 没有相邻组时在它旁边拆出一组并排，Program 仍留在左半边。
-    pub fn open_near(&mut self, p: PanelKind, near: PanelKind) {
+    ///
+    /// **锚点必须是已停靠的面板。** `near` 可能正在浮动：浮动组不在这棵树里，把它当锚点去
+    /// `Split` 会被共享 docking 模型判成 `InvalidPlacement`（浮动组只接受 `Tab` / `Center`）。
+    /// 这里先把「树里真正存在的面板」收集出来再选锚点，浮动面板自然被排除；一棵空树则走
+    /// `Open { anchor: None }` 建出第一组。失败原因返回给调用方，不再像 [`Self::apply_tree`]
+    /// 的 `bool` 那样被丢弃。
+    pub fn try_open_near(&mut self, p: PanelKind, near: PanelKind) -> Result<(), String> {
         if crate::dock_shared::encode(self, &[]).is_err() {
-            return;
+            return Err("the workspace dock tree cannot be encoded".into());
         }
-        let anchor = [near, PanelKind::Project, PanelKind::Program].into_iter().find(|panel| self.contains(*panel)).or_else(|| {
-            let mut panels = Vec::new();
-            self.panels(&mut panels);
-            panels.first().copied()
-        });
-        let Some(anchor) = anchor else {
-            // 空树：交给 Open 建出第一组（与旧行为一致）。
-            crate::dock_shared::apply_tree(self, craft_ui::docking::Action::Open { panel: p, anchor: None });
-            return;
+        if self.contains(p) {
+            return if self.activate(p) { Ok(()) } else { Err(format!("{} is docked but its tab could not be activated", p.title())) };
+        }
+        let mut docked = Vec::new();
+        self.panels(&mut docked);
+        let Some(anchor) = [near, PanelKind::Project, PanelKind::Program].into_iter().find(|panel| docked.contains(panel)).or_else(|| docked.first().copied())
+        else {
+            // 没有已停靠组：浮动面板不能当锚点，交给 Open 建出第一组。
+            return if crate::dock_shared::apply_tree(self, craft_ui::docking::Action::Open { panel: p, anchor: None }) {
+                Ok(())
+            } else {
+                Err(format!("could not open {} in an empty workspace", p.title()))
+            };
         };
-        match self.monitor_safe_anchor(anchor) {
-            Some(anchor) => {
-                crate::dock_shared::apply_tree(self, craft_ui::docking::Action::Open { panel: p, anchor: Some(anchor) });
-            }
+        let opened = match self.monitor_safe_anchor(anchor) {
+            Some(anchor) => crate::dock_shared::apply_tree(self, craft_ui::docking::Action::Open { panel: p, anchor: Some(anchor) }),
             // Program 单独成组：拆成并排的两组，预览留在原来那一半。
             None => {
                 let placement = craft_ui::docking::Placement::Split(craft_ui::docking::Zone::Right);
-                crate::dock_shared::apply_tree(self, craft_ui::docking::Action::OpenAt { panel: p, anchor, placement });
+                crate::dock_shared::apply_tree(self, craft_ui::docking::Action::OpenAt { panel: p, anchor, placement })
             }
+        };
+        if opened { Ok(()) } else { Err(format!("the docking model rejected placing {} beside {}", p.title(), anchor.title())) }
+    }
+
+    /// Add a panel as a tab next to `near` (or into the first group).
+    ///
+    /// 兼容入口：调用 [`Self::try_open_near`]；万一共享模型拒绝，就把面板直接放进第一个已停靠组
+    /// （空树则新建一组），而不是像旧代码那样把 `false` 丢掉、让点击「滤镜」毫无反应。
+    pub fn open_near(&mut self, p: PanelKind, near: PanelKind) {
+        if let Err(error) = self.try_open_near(p, near) {
+            log::warn!("{error}; opening {} in the first docked group", p.title());
+            self.open_in_first_group(p);
+        }
+    }
+
+    /// 最后兜底：把 `p` 放进树里的第一个 tab 组；没有组就新建一个。不会失败。
+    fn open_in_first_group(&mut self, p: PanelKind) {
+        if self.contains(p) {
+            self.activate(p);
+            return;
+        }
+        fn first_group(node: &mut DockNode) -> Option<&mut DockNode> {
+            match node {
+                DockNode::Tabs { .. } => Some(node),
+                DockNode::Split { a, b, .. } => first_group(a).or_else(|| first_group(b)),
+            }
+        }
+        match first_group(self) {
+            Some(DockNode::Tabs { panels, active }) => {
+                panels.push(p);
+                *active = panels.len().saturating_sub(1);
+            }
+            _ => *self = tabs(&[p], 0),
         }
     }
 
@@ -1063,6 +1104,32 @@ mod tests {
             assert!(d.is_visible(PanelKind::LumetriColor), "{name}: the new panel is not the active tab");
             assert!(d.is_visible(PanelKind::Program), "{name}: opening a side panel must not hide the Program monitor");
         }
+    }
+
+    /// M-3：`near` 正在浮动（因此不在停靠树里）时，不能把它当锚点，也不能静默失败：
+    /// 改投最近的已停靠组，并如实返回结果。
+    #[test]
+    fn try_open_near_falls_back_when_the_near_panel_is_floating() {
+        let mut d = workspace("Jianying");
+        // Program 浮动后就不在这棵树里了；这里用 Close 表达同一事实。
+        d.close(PanelKind::Program);
+        assert!(!d.contains(PanelKind::Program));
+        d.try_open_near(PanelKind::LumetriColor, PanelKind::Program).expect("a floating anchor must fall back to a docked group");
+        assert!(d.contains(PanelKind::LumetriColor), "the panel did not open beside a docked group");
+        assert!(!d.contains(PanelKind::Program), "the floating Program must stay out of the dock");
+    }
+
+    /// `try_open_near` 把共享模型拒绝落点的原因返回出来（旧 `open_near` 丢掉了这个 `false`）。
+    #[test]
+    fn try_open_near_reports_a_rejected_placement() {
+        let mut d = DockNode::Split {
+            vertical: false,
+            size: SplitSize::Ratio(f32::NAN),
+            a: Box::new(tabs(&[PanelKind::Project], 0)),
+            b: Box::new(tabs(&[PanelKind::Markers], 0)),
+        };
+        let error = d.try_open_near(PanelKind::Info, PanelKind::Project).expect_err("a non-finite split size must be rejected");
+        assert!(!error.is_empty(), "the failure reason should be reported");
     }
 
     /// Program 单独成组、没有相邻组可用时，退化为并排拆分：Program 留在原来那一半。

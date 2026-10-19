@@ -63,6 +63,10 @@ impl Driver {
         let r = e["rect"].as_array().expect("rect");
         [r[0].as_f64().expect("x"), r[1].as_f64().expect("y"), r[2].as_f64().expect("w"), r[3].as_f64().expect("h")]
     }
+
+    fn has(&mut self, id: &str) -> bool {
+        self.ok("ui.elements", json!({"prefix": id})).as_array().is_some_and(|list| list.iter().any(|element| element["id"] == json!(id)))
+    }
 }
 
 const MAX_HEADER_W: f64 = 96.0;
@@ -103,6 +107,44 @@ fn caption_tracks_sit_above_the_video_tracks() {
     let clip = seq["video"][0]["items"][0]["clip"].as_u64().expect("a video clip");
     let body = d.rect(&format!("timeline.clip.{clip}"));
     assert!(cap[1] < body[1], "caption track is above the video clip: caption {}, clip {}", cap[1], body[1]);
+}
+
+/// L-1：`minimize all` 的矮轨道（22 px）里，轨道头的第二行控件不能画到下一行。
+///
+/// 旧代码把 `lower_y` 固定成 `hrect.min.y + 32.0`，22 px 的轨道放不下，眼球 / M / S 就落到
+/// 下一行；现在行高不足时整行隐藏，所有留下的控件矩形都在自己的轨道头内。
+#[test]
+fn short_track_headers_keep_the_second_row_inside_the_header() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"timeline": {"videoTrackHeight": 22.0, "audioTrackHeight": 22.0}}));
+    d.frames(6);
+    let v1 = d.rect("timeline.track.V1.header");
+    assert!((v1[3] - 22.0).abs() < 0.5, "the V1 header should be 22 px high: {v1:?}");
+
+    // 第二行控件整行隐藏——不是画在轨道头外，更不是画到下一行。
+    for id in ["timeline.track.V1.enabled", "timeline.track.A1.muted", "timeline.track.A1.solo"] {
+        assert!(!d.has(id), "{id} must be hidden on a 22 px track");
+    }
+    let inside = |id: &str, d: &mut Driver, header: [f64; 4]| {
+        let r = d.rect(id);
+        assert!(r[1] >= header[1] - 0.5 && r[1] + r[3] <= header[1] + header[3] + 0.5, "{id} left its track header {header:?}: {r:?}");
+    };
+    // 第一行控件仍然画着，而且都在轨道头里。
+    for id in ["timeline.track.V1.sourcePatch", "timeline.track.V1.locked", "timeline.track.V1.target", "timeline.track.V1.syncLock"] {
+        inside(id, &mut d, v1);
+    }
+    let a1 = d.rect("timeline.track.A1.header");
+    assert!((a1[3] - 22.0).abs() < 0.5, "the A1 header should be 22 px high: {a1:?}");
+    for id in ["timeline.track.A1.sourcePatch", "timeline.track.A1.locked", "timeline.track.A1.target", "timeline.track.A1.syncLock"] {
+        inside(id, &mut d, a1);
+    }
+
+    // 恢复常规高度后第二行回来，仍然落在轨道头内。
+    d.ok("ui.set", json!({"timeline": {"videoTrackHeight": 64.0}}));
+    d.frames(6);
+    let v1 = d.rect("timeline.track.V1.header");
+    assert!(d.has("timeline.track.V1.enabled"), "the second row should return on a 64 px track");
+    inside("timeline.track.V1.enabled", &mut d, v1);
 }
 
 /// 主轨（V1）上的片段拖动到相邻片段边缘附近时吸附到该边缘（SNAP_PX = 9）。

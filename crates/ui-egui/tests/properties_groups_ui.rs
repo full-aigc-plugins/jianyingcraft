@@ -137,6 +137,23 @@ fn properties_panel_has_the_five_jianying_groups_and_they_collapse() {
     }
 }
 
+/// L-2：纯音频选区也必须有「变速」入口。Speed 分组原先包在 `kind == Video` 分支里，
+/// 只选音频片段时整组消失；现在它和视频/音频共用，按钮仍走 `clip.speedDuration`。
+#[test]
+fn audio_only_selection_has_the_speed_group() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"workspace": "Jianying"}));
+    d.ok("ui.panel.show", json!({"panel": "Properties"}));
+    let seq = d.exec("sequence.inspect", json!({}));
+    let audio = seq["audio"][0]["items"][0]["clip"].as_u64().expect("an audio clip");
+    // `linked: false`：只选音频本身，不把链接的视频一起选进来（否则又变成视频选区）。
+    d.exec("timeline.select", json!({"clips": [audio], "linked": false}));
+    d.frames(4);
+    assert!(d.has("props:Speed"), "an audio-only selection must still offer the Speed group");
+    assert!(d.has("properties.speed"), "the Speed group's button must be laid out for audio clips");
+    assert!(!d.has("props:Basic"), "an audio clip has no video Basic group: {:?}", d.ids("props:"));
+}
+
 /// 调色组的数值控件走现有的 Lumetri 参数：改动会先应用 Lumetri，再写参数。
 #[test]
 fn color_group_edits_the_lumetri_effect() {

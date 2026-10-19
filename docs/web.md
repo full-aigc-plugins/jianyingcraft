@@ -19,6 +19,21 @@ cargo xtask web --dev           # unoptimised build (faster to compile, slow to 
 cargo xtask web --serve 8765    # build, then serve dist on http://127.0.0.1:8765/
 ```
 
+### nodejs 目标的胶水（给插件仓的 wasm 契约测试用）
+
+`cargo xtask web` 产出的是 **web 目标**（ESM，调用前需要 `await init()`）。插件仓
+`jianyingcraft-plugin/ui/tests/editor-wasm.test.mjs` 需要能同步调用的 nodejs 胶水：
+
+```sh
+wasm-bindgen --target nodejs --no-typescript --out-dir target/web/node \
+  target/wasm32-unknown-unknown/release/filmcraft_web.wasm
+```
+
+输入必须是 **cargo 原始产物**。不要把 `target/web/dist/filmcraft_web_bg.wasm` 或插件仓
+`ui/engine/filmcraft_web_bg.wasm` 再喂给 CLI：那是 wasm-bindgen 已经处理过的输出，重处理会生成
+`*_bg_bg.wasm`，并在实例化时报
+`LinkError: Import #0 __wbg_construct_…: function import requires a callable`。
+
 `--serve` is a tiny localhost-only static server that sends `Cross-Origin-Opener-Policy` /
 `Cross-Origin-Embedder-Policy`, so the page is cross-origin isolated like a production deployment
 should be. Any static server works (`python3 -m http.server -d target/web/dist 8765`); it must

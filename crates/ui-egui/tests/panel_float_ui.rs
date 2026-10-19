@@ -149,6 +149,58 @@ fn compact_shell_keeps_a_floating_monitor_above_the_shell() {
     assert!(d.has("panel.float.0.move"), "the floating monitor should expose its move handle");
 }
 
+/// 把 `ui.inspect` 返回的 dock 树里的面板名按树序收集起来（serde 外部标签：
+/// `{"Tabs": {"panels": [...]}}` / `{"Split": {"a": ..., "b": ...}}`）。
+fn dock_panels(node: &Value, out: &mut Vec<String>) {
+    if let Some(tabs) = node.get("Tabs") {
+        for panel in tabs["panels"].as_array().into_iter().flatten() {
+            if let Some(name) = panel.as_str() {
+                out.push(name.to_string());
+            }
+        }
+    } else if let Some(split) = node.get("Split") {
+        dock_panels(&split["a"], out);
+        dock_panels(&split["b"], out);
+    }
+}
+
+/// 已记录缺口 M-3：Program 已经浮动时再激活「滤镜」（Lumetri Color），面板必须真的打开。
+///
+/// 旧行为：`open_near` 把浮动的 Program 当锚点去 `Split(Right)`，共享 docking 模型对
+/// 「锚点在浮动组 + Split」返回 `InvalidPlacement`，`apply_tree` 的 `false` 被丢掉，
+/// 于是点击「滤镜」没有任何反应。修复后浮动锚点改投最近的已停靠组：Lumetri Color 出现在
+/// dock 树里，Program 仍在自己的浮动窗口里可见。
+#[test]
+fn showing_lumetri_color_while_program_floats_opens_it() {
+    let mut d = Driver::new(1280.0, 1024.0);
+    d.ok("ui.set", json!({"workspace": "Jianying"}));
+    d.frames(4);
+    assert!(d.has("panel.Program"), "the Jianying workspace starts with a docked Program monitor");
+    let rect = [40.0, 40.0, 420.0, 300.0];
+    d.ok("engine.execute", json!({"command": "window.floatPanel", "params": {"panel": "Program", "rect": rect}}));
+    d.frames(4);
+    let info = d.ok("ui.inspect", json!({}));
+    let floating = info["ui"]["floating"].as_array().expect("floating state");
+    assert!(floating.iter().any(|group| group["panels"] == json!(["Program"])), "the Program monitor should be floating before Lumetri Color opens: {info}");
+    let program_float = d.rect("panel.Program");
+
+    // 激活「滤镜」：走 `show_panel(LumetriColor)`，锚点是浮动的 Program。
+    d.ok("ui.panel.show", json!({"panel": "LumetriColor"}));
+    d.frames(4);
+    let info = d.ok("ui.inspect", json!({}));
+    let mut docked = Vec::new();
+    dock_panels(&info["ui"]["dock"], &mut docked);
+    assert!(docked.iter().any(|panel| panel == "LumetriColor"), "Lumetri Color did not open in the dock while Program floats: {info}");
+    assert!(d.has("panel.LumetriColor"), "the Lumetri Color panel was not drawn: {info}");
+    // Program 仍然浮动、可见，而且没有被挪动。
+    let floating = info["ui"]["floating"].as_array().expect("floating state");
+    assert!(floating.iter().any(|group| group["panels"] == json!(["Program"])), "opening Lumetri Color must leave the Program monitor floating: {info}");
+    assert_eq!(d.rect("panel.Program"), program_float, "the floating Program monitor moved when Lumetri Color opened");
+    // 浮动窗口本来就叠在停靠区之上：只要求两边都还在、位置没被换掉。
+    let lumetri = d.rect("panel.LumetriColor");
+    assert!(lumetri[2] > 0.0 && lumetri[3] > 0.0, "the new Lumetri Color group has no size: {lumetri:?}");
+}
+
 /// 已记录缺口：菜单 / Tab 激活「滤镜」（Lumetri Color）时，面板不能被插进 Program 所在 tab 组。
 /// 断言 Program 仍然画着、位置不变，且与 Lumetri Color 不重叠。
 #[test]

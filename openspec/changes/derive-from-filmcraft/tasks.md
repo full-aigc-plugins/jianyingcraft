@@ -302,6 +302,10 @@
       `craft_submit(合法)` = true、`craft_take_reply()` 返回
       `{"id":"t-1","ok":false,"error":{"code":"command_failed","message":"JianyingCraft is not running yet"}}`、
       `craft_idle()` = true、`craft_submit("not json")` = false
+      *2026-10-20 复核（新构建）：`cargo xtask web` 后从 **cargo 原始 wasm** 生成 nodejs 胶水，
+      插件仓 `node --test tests/editor-wasm.test.mjs` 通过（catalog 701 条、submit true、
+      未启动时回包 `command_failed`、idle true、非法输入 false）。此前「CLI 与 crate 版本不一致」
+      的判断是错的：真因是把已处理的 `_bg.wasm` 又喂回 wasm-bindgen；步骤已写进 `docs/web.md`。*
 - [x] 跨仓接线与契约测试（插件仓）：
       `ui/editor-boot.mjs` 把 `craft_*` 包成稳定接口（形状校验、回复解析、超时），
       `ui/tests/editor-boot.test.mjs` 8 条单测；`ui/tests/editor-wasm.test.mjs` 直接加载

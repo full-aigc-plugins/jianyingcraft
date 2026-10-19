@@ -236,8 +236,32 @@ $ node --test tests/panel-live.test.mjs
 `POST /<token>/reply`。`panel-live` 在真实 Chrome 中断言 `editor_status.ready=true` 且
 `file.openDemoProject` + `sequence.inspect` 返回 7 个片段。
 
-未闭合的一项：`editor-wasm.test.mjs`（wasm 桥契约）需要 **nodejs 目标**的 wasm-bindgen 胶水，
-而仓库产物是 web 目标；用本机 `wasm-bindgen 0.2.129` 从既有 `.wasm` 重新生成会因
-**CLI 与 crate 版本不一致**（导入符号带签名哈希）在实例化时报
-`LinkError: Import #0 __wbg_construct_…: function import requires a callable`。
-需用与 `Cargo.lock` 相同版本的 CLI 重新构建后再跑，本轮未改变结论。
+`editor-wasm.test.mjs`（wasm 桥契约）也在本轮跑通，并且纠正了一条此前的错误结论：
+
+- **不是** wasm-bindgen CLI 与 crate 版本不一致（两者都是 0.2.129，`Cargo.toml` 用 `=0.2.129`
+  钉死，`xtask/src/main.rs:280-305` 还有运行时校验）。
+- 真因是**把已经过 wasm-bindgen 处理的 `_bg.wasm` 又喂回 CLI**：输出会变成
+  `filmcraft_web_bg_bg.wasm`，且新胶水定义不了 wasm 需要的 `__wbg_*` 符号，于是实例化报
+  `LinkError: Import #0 __wbg_construct_…: function import requires a callable`。
+  正确的输入是 cargo 原始产物 `target/wasm32-unknown-unknown/release/filmcraft_web.wasm`。
+
+正确步骤与结果（HEAD `d667982b`，`cargo xtask web` 用时 2m38s 产出 40.8 MB wasm）：
+
+```
+wasm-bindgen --target nodejs --no-typescript --out-dir target\web\node ^
+  target\wasm32-unknown-unknown\release\filmcraft_web.wasm
+cd ..\jianyingcraft-plugin\ui
+$env:JIANYINGCRAFT_WASM_JS = "<abs>\jianyingcraft\target\web\node\filmcraft_web.js"
+node --test tests/editor-wasm.test.mjs
+✔ the engine wasm satisfies the panel bridge contract
+ℹ tests 1   ℹ pass 1   ℹ fail 0   ℹ skipped 0   ℹ duration_ms 129.6
+```
+
+直接探针：`craft_catalog()` = **701 条**（全部带命名空间）；`craft_submit({"id":"x-1",
+"command":"file.newBin"})` = true；`craft_take_reply()` 返回
+`{"error":{"code":"command_failed","message":"JianyingCraft is not running yet"},"id":"x-1","ok":false}`
+（页面未启动时的预期回包）；`craft_idle()` = true；非法 JSON/缺 command = false。
+导出集合含 `craft_submit/craft_take_reply/craft_idle/craft_catalog/craft_read/craft_write/craft_screenshot`。
+
+插件仓 `ui/engine/` 的产物仍早于当前 HEAD（未覆盖，避免未授权改动插件仓）；如需让面板服务当前源码，
+执行 `node ui/sync-engine.mjs --source <abs>\jianyingcraft\target\web\dist`。
