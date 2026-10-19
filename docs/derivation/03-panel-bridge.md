@@ -80,6 +80,11 @@ wasm 侧薄绑定在 `apps/filmcraft-web/src/host.rs`，导出 `craft_read` / `c
 | 拒绝 `../` | `check_syntax` 在碰文件系统之前直接拒绝任何 `ParentDir` 分量（不做归一化） | `parent_dir_escape_is_rejected_for_reads_and_writes` |
 | 拒绝符号链接逃逸 | realpath 之后再做前缀判断 | `a_link_pointing_outside_the_workspace_is_rejected`（Windows 用无需管理员权限的 junction；两种链接都建不出来时打印 skip，不冒充通过）、`a_resolved_path_that_leaves_the_root_is_rejected`（注入 realpath，任何平台都执行） |
 | 拒绝 UNC / 盘符相对路径 | `check_syntax` 拒绝 `\\`、`//`、`\\?\` 与 `C:foo` | `unc_drive_relative_and_nul_paths_are_rejected` |
+
+> **已知取舍（2026-10-20）**：`check_syntax` 用「字母 + 冒号」判定盘符相对路径，因此在 POSIX 上会连带
+> 拒绝 `a:b.png` 这类合法文件名。**保留现值**：这段代码编译进 wasm32，页面并不知道宿主 OS，无法用
+> `cfg(windows)` 区分；真正的隔离由宿主的 `realpath`/根内判断完成，页面这层只是保守的语法筛查。
+> 放宽它会削掉「盘符相对路径」这条明确的拒绝规则，收益（极少数带冒号的文件名）不抵风险。
 | 单次导入 ≤ 256 文件 / 128 MiB | `ImportBatch::admit` 计数累加；第 257 个或超字节的那次被拒，且不入账 | `an_import_admits_at_most_256_files_and_128_mib` |
 | 单产物 ≤ 128 MiB | `Workspace::write` 在解析路径、建临时文件**之前**检查长度 | `a_write_over_the_artifact_quota_leaves_the_previous_file_untouched` |
 | 临时文件 + 原子改名 | 同目录 `create_new` 临时文件 → `write_all` + `sync_all` → `rename`；任一步失败删临时文件并返回 `io_error` | 同上（断言目录里仍只有原文件）；`an_overwrite_reports_the_path_it_replaced`（断言无 `.tmp` 残留） |
