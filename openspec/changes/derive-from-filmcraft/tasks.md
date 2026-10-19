@@ -39,9 +39,13 @@
 - [ ] `packaging/macos/dmg/dmg-layout.DS_Store` 是二进制，里面仍是 `FilmCraft.app` 的位置信息；
       需要 macOS（或装了 resvg + ds_store + mac_alias）上跑
       `python3 packaging/macos/dmg/generate.py` 重生成
-- [ ] **构建环境**：`pwsh` 启动即失败（`SetNamedSecurityInfoW failed (Win32 5)`），
+- [x] **构建环境**：`pwsh` 启动即失败（`SetNamedSecurityInfoW failed (Win32 5)`），
       无法 `git`/`cargo`/`wasm-bindgen`；`craft-ui` 为 git 依赖且本机 GitHub DNS 不可达。
       二者不解决，§2 全部无法执行。
+      *2026-10-20：该条已过期——本机 PowerShell 5.1.26100 / git 2.55.0 / cargo 1.99.0 /
+      wasm-bindgen 0.2.129 均可用；`craft-ui` 的 git 依赖（`storytold/craft-libs` @ 5c874d51）
+      已在本地 cargo registry 缓存中，`cargo build/clippy/test` 全部可跑；§2 各条在本轮之前
+      已实际执行并产出证据。*
 
 ## 1. 派生骨架（已完成）
 
@@ -489,3 +493,7 @@
 > 缺少可复现的验证，且连续多轮的探测脚本出现无法解释的异常。该线程需要 Playwright trace / CDP
 > 网络日志级别的调试，不再用试探方式推进。剩余工作优先：代理/变声 UI、文档收尾、以及
 > **提交整理（待授权）**。
+- [ ] **已知取舍（2026-10-20 复查）**：`host_policy::check_syntax` 按"字母+冒号"拒绝盘符相对路径
+  （`C:secret.txt`），在 POSIX 上会把 `a:b.png` 这类合法文件名一起拒掉。不能用 `cfg(windows)` 修：
+  这段代码编译到 wasm32，页面并不知道宿主 OS。真正的隔离由宿主的 `realpath` 完成，页面这层是
+  保守的语法筛查；保留现值并在 `03-panel-bridge.md` 记明，不再放宽。

@@ -24,6 +24,24 @@ fn drag_id() -> egui::Id {
     egui::Id::new("dock-panel-drag")
 }
 
+/// 弹层的竖直安放：先量锚点上下两侧的真实可用空间。
+///
+/// 下方放得下期望高度就挂在锚点下；放不下、并且上方比下方更宽裕时翻到锚点上方
+/// （`anchor.min.y - gap - height`）。高度一律取 `min(期望, 可用)`，所以返回值保证落在
+/// `bounds` 的竖直范围内——矮窗口里是"变矮"，而不是"压出 body"。
+fn popover_top_and_height(anchor: Rect, desired_height: f32, bounds: Rect, gap: f32) -> (f32, f32) {
+    let below = (bounds.max.y - (anchor.max.y + gap)).max(0.0);
+    let above = (anchor.min.y - gap - bounds.min.y).max(0.0);
+    let desired = desired_height.max(0.0);
+    // 上方没有更多空间时宁可在下方变矮：翻上去只会更挤。
+    if desired <= below || below >= above {
+        (anchor.max.y + gap, desired.min(below))
+    } else {
+        let height = desired.min(above);
+        (anchor.min.y - gap - height, height)
+    }
+}
+
 pub(crate) fn route(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, params: &Value) -> Option<Result<Value, String>> {
     // 一级 Tab 的唯一命令入口：顶栏直排的 3 个和「更多」里的 10 个都走这里，
     // 因此 `engine.execute` / `ui.menu.invoke` / 顶栏点击是同一条路径。
@@ -560,13 +578,20 @@ impl FilmcraftApp {
     /// 外壳、行高、自动化 id 约定都与 ☰ `shell_menu` 一致，只是行数固定（10 条）。没有实现的
     /// 模块仍然列出来、灰显、不可点——不能因为收进菜单就"悄悄消失"。每行复用原来的
     /// `jy.tab.<slug>` id，测试与代理的点击路径不变；点击走 `window.shellTab` 命令。
+    ///
+    /// 弹层先量可用空间再定尺寸：下方放得下就挂在「更多」下面，放不下才向上翻；
+    /// 高度取 `min(期望, 可用)`，最后与 `body.shrink(8.0)` 求交——任何窗口尺寸下都不会越过
+    /// body 的右 / 下边界（矮窗口不会再把 10 行整条压出内容区）。
     fn shell_tab_overflow(&mut self, ui: &mut egui::Ui, anchor: Rect, body: Rect, t: &Tokens) {
         let rows = shell_overflow_tabs();
         let row_height = 26.0;
-        let width = 148.0_f32.min((body.max.x - anchor.min.x - 8.0).max(96.0));
-        let top = anchor.max.y + 4.0;
-        let height = (rows.len() as f32 * row_height + 8.0).min((body.max.y - top - 8.0).max(120.0));
-        let popup = Rect::from_min_size(egui::pos2(anchor.min.x, top), egui::vec2(width, height));
+        let bounds = body.shrink(8.0);
+        let desired = vec2(148.0, (rows.len() as f32 * row_height + 8.0).max(120.0));
+        let width = desired.x.min(bounds.width()).max(0.0);
+        let (top, height) = popover_top_and_height(anchor, desired.y, bounds, 4.0);
+        // 菜单右边缘不出 body：靠右的锚点在窄窗口里会向左让位。
+        let x = anchor.min.x.min(bounds.max.x - width).max(bounds.min.x);
+        let popup = Rect::from_min_size(egui::pos2(x, top), egui::vec2(width, height)).intersect(bounds);
         // 弹层吃掉落在自己身上的点击，否则会漏到下面的预览/时间轴上。
         let _ = ui.interact(popup, egui::Id::new("jy.tab.more.background"), Sense::click());
         ui.painter().rect_filled(popup, 8.0, t.header_bg);
@@ -716,7 +741,9 @@ impl FilmcraftApp {
 
     /// ☰ 菜单的悬浮二级面板：点开的分组命令列在这里，根列表仍留在下面的主弹层里。
     ///
-    /// 面板优先贴在主弹层右侧；窄窗口放不下时叠在弹层内侧，宽度和高度都留出可见的原内容。
+    /// 面板优先贴在主弹层右侧；窄窗口放不下时叠在弹层内侧。竖直方向先量锚点上下两侧的可用
+    /// 空间：下方放不下就向上翻，高度取 `min(期望, 可用)`，最后与 `body.shrink(8.0)` 求交——
+    /// 矮窗口里是变矮，而不是被 `.max(body.min.y + 8.0)` 反推出 body 下边界。
     /// 分隔符只用 ASCII（`<` / `-` / `/`），实测字体里 `▸` 会渲染成豆腐块。
     /// 返回被点中的命令 id；调用方负责关菜单并执行。
     fn shell_menu_group_panel(
@@ -733,14 +760,19 @@ impl FilmcraftApp {
         let row_h = 22.0_f32;
         let header_h = 24.0_f32;
         let pad = 12.0_f32;
-        let width = 300.0_f32.min((body.width() - 24.0).max(160.0));
+        let bounds = body.shrink(8.0);
+        // 宽度按内容区收缩：300 px 是期望宽度，但绝不能宽过 body（下限 160 只作可读性兜底）。
+        let width = 300.0_f32.min((body.width() - 24.0).max(160.0)).min(bounds.width()).max(0.0);
         // 面板高度按行数算，但最多占内容区的 62%：它是悬浮二级面板，不是新的整页。
         let wanted = header_h + 2.0 + commands.len() as f32 * row_h + pad;
-        let height = wanted.min((body.height() * 0.62).max(140.0));
+        let desired = wanted.min((body.height() * 0.62).max(140.0));
+        // 水平：优先贴在主弹层右侧；放不下就叠回主弹层内侧，并保证右边不出 body。
         let right = popup.max.x + 6.0;
-        let x = if right + width <= body.max.x - 8.0 { right } else { (popup.max.x - width).max(body.min.x + 8.0) };
-        let y = (anchor.max.y + 2.0).min(body.max.y - height - 8.0).max(body.min.y + 8.0);
-        let panel = Rect::from_min_size(egui::pos2(x, y), egui::vec2(width, height));
+        let x = if right + width <= bounds.max.x { right } else { popup.max.x - width };
+        let x = x.min(bounds.max.x - width).max(bounds.min.x);
+        // 竖直：先算上下可用空间，下方放不下就向上翻（高度取 min(期望, 可用)）。
+        let (y, height) = popover_top_and_height(anchor, desired, bounds, 2.0);
+        let panel = Rect::from_min_size(egui::pos2(x, y), egui::vec2(width, height)).intersect(bounds);
         let id = egui::Id::new("jy-menu-group-panel");
         let mut chosen: Option<String> = None;
         egui::Area::new(id).order(egui::Order::Foreground).fixed_pos(panel.min).constrain(false).show(ui.ctx(), |ui| {

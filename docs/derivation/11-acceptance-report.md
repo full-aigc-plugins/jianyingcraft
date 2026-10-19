@@ -265,3 +265,15 @@ node --test tests/editor-wasm.test.mjs
 
 插件仓 `ui/engine/` 的产物仍早于当前 HEAD（未覆盖，避免未授权改动插件仓）；如需让面板服务当前源码，
 执行 `node ui/sync-engine.mjs --source <abs>\jianyingcraft\target\web\dist`。
+
+### 2026-10-20 桥的超时与超限（Round 3）
+
+| 项 | 证据 |
+|---|---|
+| 在途请求 15 s 超时 | `bridge.rs::InFlight::expire` 合成 `{"ok":false,"error":{"code":"timeout"}}`；`--lib bridge` 16 passed |
+| 超大回复可解释 | 单条 >8 MiB → `reply_too_large`；预算溢出 → 原位替换 `reply_evicted`；`bridge_ui` 6 passed |
+| 浮动安全的落点 | `try_open_near` 只用已停靠面板作锚点；`--lib dock::` 8 passed，`panel_float_ui` 4 passed |
+| 音频变速入口 | `properties_groups_ui` 3 passed（audio-only 用例） |
+| 矮轨道头 | 22 px 行高隐藏第二行控件；`timeline_layout_ui` 7 passed |
+
+全量 `cargo test -p filmcraft-ui-egui`：**88 目标 / 0 失败**。

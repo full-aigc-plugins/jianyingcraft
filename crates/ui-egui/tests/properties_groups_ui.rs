@@ -17,6 +17,19 @@ struct Driver {
 }
 
 impl Driver {
+    /// A demo project in a taller window: the colour rows sit below the fold at 980 px, and
+    /// `ui.click` is coordinate-based, so the test needs them on screen.
+    fn demo_tall() -> Self {
+        let mut session = Session::default();
+        session.execute("file.openDemoProject", json!({})).expect("demo project");
+        let (tx, rx) = channel();
+        let app = FilmcraftApp::new(session).with_control(rx);
+        let harness = Harness::builder().with_size(egui::vec2(1600.0, 2400.0)).with_max_steps(10_000).build_eframe(move |_cc| app);
+        let mut d = Driver { harness, tx };
+        d.frames(5);
+        d
+    }
+
     fn demo() -> Self {
         let mut session = Session::default();
         session.execute("file.openDemoProject", json!({})).expect("demo project");
@@ -157,7 +170,7 @@ fn audio_only_selection_has_the_speed_group() {
 /// 调色组的数值控件走现有的 Lumetri 参数：改动会先应用 Lumetri，再写参数。
 #[test]
 fn color_group_edits_the_lumetri_effect() {
-    let mut d = Driver::demo();
+    let mut d = Driver::demo_tall();
     d.ok("ui.set", json!({"workspace": "Jianying"}));
     d.ok("ui.panel.show", json!({"panel": "Properties"}));
     let seq = d.exec("sequence.inspect", json!({}));
@@ -166,4 +179,16 @@ fn color_group_edits_the_lumetri_effect() {
     d.frames(4);
     assert!(d.has("props:Color"), "the Color group is present");
     assert!(d.has("properties.lumetri.temperature.addKeyframe"), "its rows are laid out");
+    // 真的改一次：点关键帧按钮会先 `effects.apply lumetri` 再写参数——只断言"分组存在"
+    // 的用例在删掉 apply 逻辑后仍然会绿，所以这里必须看序列里有没有 lumetri。
+    d.ok("ui.click", json!({"id": "properties.lumetri.temperature.addKeyframe"}));
+    d.frames(4);
+    let after = d.exec("sequence.inspect", json!({}));
+    let item = after["video"][0]["items"]
+        .as_array()
+        .and_then(|items| items.iter().find(|item| item["clip"] == json!(clip)))
+        .expect("the selected clip is still in the sequence");
+    let text = serde_json::to_string(item).expect("item json");
+    assert!(text.contains("lumetri"), "editing a Color row must apply the Lumetri effect: {text}");
+    assert!(text.contains("temperature"), "and write the temperature parameter: {text}");
 }
