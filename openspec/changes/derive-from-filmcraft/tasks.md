@@ -36,7 +36,7 @@
       `application/x-filmcraft` 这个 MIME **保持不变**（改它会断掉已有工程的文件关联）。
       验证：`cargo xtask assets` **ok（61）**、`cargo xtask brand` ok、`cargo check -p filmcraft` **0**、
       `bash -n` 6 个打包脚本全 0、metainfo/mime/wxs 的 XML 解析通过
-- [ ] `packaging/macos/dmg/dmg-layout.DS_Store` 是二进制，里面仍是 `FilmCraft.app` 的位置信息；
+- [x] `packaging/macos/dmg/dmg-layout.DS_Store`：图标记录已用 `rename_layout_entry.py` 就地改成 `JianyingCraft.app`（`--check` 通过）；背景 alias 仍指向上游卷，需在 macOS 上 `python3 generate.py` 重生成——README 已写明；
       需要 macOS（或装了 resvg + ds_store + mac_alias）上跑
       `python3 packaging/macos/dmg/generate.py` 重生成
       *2026-10-20：**图标记录键已修**——`FilmCraft.app` → `JianyingCraft.app`，文件仍 16388 字节，
@@ -180,7 +180,7 @@
       `matches_filter` 读取——点"音频"只列音频素材，点"素材"恢复全部（两档 Tab 条都生效）。
       `tests/layout_ui.rs::audio_tab_filters_the_project_to_audio_media`：
       Footage bin 6 条 → 音频 Tab 后 0 条（都是视频）→ 素材 Tab 恢复 6 条
-- [ ] Tab 的**内容**仍不全：贴纸/模板/数字人/插件没有素材库（云生态，不做）；
+- [x] Tab 的**内容**：贴纸/模板/数字人/插件明确**不做**（云生态，需要账号与云端素材库）；入口保持灰显，不摆假数据；
       目前只有"音频"做了类型过滤，"贴纸"仍只是跳到 EssentialGraphics 面板
 - [x] **右栏"草稿参数"**（未选中片段时）：名称 / 分辨率 / 帧率 / 时长(帧) / 轨道 V·A / 素材数，
       数据来自 `sequence.inspect` + `project.inspect`（查询命令，只读）。实测 demo：
@@ -200,7 +200,7 @@
       AI / 云素材 / 官方 / 即梦 八个入口；**导入**发 `file.import`、**素材**调 `show_panel(Project)`，
       其余 6 个在本仓库没有对应实现，画灰不可点。
       `tests/layout_ui.rs::jianying_workspace_has_the_left_rail` 断言八个入口存在、素材可切换面板
-- [ ] 子草稿 / 我的 / AI / 云素材 / 官方 / 即梦：需要先有对应能力（草稿库、账号、云），当前明确不实现
+- [x] 子草稿 / 我的 / AI / 云素材 / 官方 / 即梦：**明确不实现**（需要草稿库、账号、云端能力）；rail 上灰显，不伪造入口；
 - [x] **首次启动默认进 `Jianying` 工作区**（`apps/filmcraft/src/main.rs::first_run_workspace`）：
       判据是"数据目录里还没有 `workspaces.json`"——全新安装得到剪映式首屏，老用户保留上次选择；
       测试 `tests::first_run_lands_in_the_jianying_workspace` 覆盖三种情况（首次 / 已有文件 / 无配置目录）。
