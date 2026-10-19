@@ -36,18 +36,11 @@
       `application/x-filmcraft` 这个 MIME **保持不变**（改它会断掉已有工程的文件关联）。
       验证：`cargo xtask assets` **ok（61）**、`cargo xtask brand` ok、`cargo check -p filmcraft` **0**、
       `bash -n` 6 个打包脚本全 0、metainfo/mime/wxs 的 XML 解析通过
-- [x] `packaging/macos/dmg/dmg-layout.DS_Store`：图标记录已用 `rename_layout_entry.py` 就地改成 `JianyingCraft.app`（`--check` 通过）；背景 alias 仍指向上游卷，需在 macOS 上 `python3 generate.py` 重生成——README 已写明；
-      需要 macOS（或装了 resvg + ds_store + mac_alias）上跑
-      `python3 packaging/macos/dmg/generate.py` 重生成
-      *2026-10-20：**图标记录键已修**——`FilmCraft.app` → `JianyingCraft.app`，文件仍 16388 字节，
-      36 字节头、块头/块偏移、其余 4 条记录与两个 16 字节 `Iloc` 载荷逐字节未变；全文件已无
-      UTF-16BE `FilmCraft.app`。补了只用标准库的 `packaging/macos/dmg/rename_layout_entry.py`
-      （`--check` / `--dry-run` / 幂等，对原文件重打可复现同一 sha256）。*
-      *仍未完成*：`icvp` 内嵌的 `backgroundImageAlias` 仍有 4 处上游卷名（ASCII 卷名 @0x2210、
-      UTF-16 卷名 @0x231f、Carbon 路径 @0x22cf、POSIX 路径 @0x2355），按 README「按卷名解析」规则，
-      DMG 背景要等 `generate.py` 重生成后才生效。本机非 macOS，**未做 Finder 可视化验证**，
-      只证明 DSDB 结构正确。为避免在缺 mac_alias 验证的环境下手写别名导致布局损坏，未重建别名。*
-      → 步骤见 docs/runbooks/macos-canary.md
+- [x] `packaging/macos/dmg/dmg-layout.DS_Store` 的**图标记录键**：`FilmCraft.app` → `JianyingCraft.app`
+      *2026-10-20：只用标准库的 `packaging/macos/dmg/rename_layout_entry.py` 就地改名（`--check` /
+      `--dry-run` / 幂等，对原文件重打可复现同一 sha256）。文件仍 16388 字节：36 字节头、块头/块偏移、
+      其余 4 条记录与两个 16 字节 `Iloc` 载荷逐字节未变，全文件已无 UTF-16BE `FilmCraft.app`。*
+- [ ] `packaging/macos/dmg/dmg-layout.DS_Store` 的 `backgroundImageAlias` 仍指向上游卷名（ASCII 卷名 @0x2210、UTF-16 卷名 @0x231f、Carbon 路径 @0x22cf、POSIX 路径 @0x2355）：需在 macOS（或装了 resvg + ds_store + mac_alias 的机器）上跑 `python3 packaging/macos/dmg/generate.py`。本机非 macOS，未做 Finder 可视化验证 → `docs/runbooks/macos-canary.md`
 - [x] **构建环境**：`pwsh` 启动即失败（`SetNamedSecurityInfoW failed (Win32 5)`），
       无法 `git`/`cargo`/`wasm-bindgen`；`craft-ui` 为 git 依赖且本机 GitHub DNS 不可达。
       二者不解决，§2 全部无法执行。
@@ -484,8 +477,8 @@
       `clip.replaceFromBin`（clip 29 → item 6，联动音频 30 一起换）→ `file.saveCopy`（28,245 字节工作副本）
       → `file.exportMedia`（**17,984,537 字节 mp4**，`offlineMedia: []`）；替换后片段时间不变，
       对应技能里"未自适应，时长按模板"。详见 `docs/derivation/10-skill-runbook-verification.md` §8-10
-- [x] 批量混剪的 N 条循环 + 清单 + 失败注入：`skill-smoke.mjs::batch-remix-loop` 跑 3 轮（替换→变速→保存副本→导出），`manifest.jsonl` 逐行记 sha256/字节数并回读核对，3 份导出**哈希互不相同**；`batch-remix-failure` 断言不存在的素材 id 让 CLI 以 `ok:false` 退出 1。**仍缺**：外部 ffprobe 校验（本机无 ffprobe，属环境限制）
-      → 步骤见 docs/runbooks/skill-reruns.md
+- [x] 批量混剪的 N 条循环 + 清单 + 失败注入：`skill-smoke.mjs::batch-remix-loop` 跑 3 轮（替换→变速→保存副本→导出），`manifest.jsonl` 逐行记 sha256/字节数并回读核对，3 份导出**哈希互不相同**；`batch-remix-failure` 断言不存在的素材 id 让 CLI 以 `ok:false` 退出 1。*2026-10-20 独立复跑：`FILMCRAFT_CLI=<abs>/target/debug/filmcraft-cli.exe node ui/skill-smoke.mjs` 六项全 ok（batch-remix-loop: loops 3 / distinct 3 / manifestBytes 730；batch-remix-failure: status 1）。*
+- [ ] 批量混剪：**外部 ffprobe 校验**未做（本机无 ffprobe，属环境限制）；步骤与证据格式见 `docs/runbooks/skill-reruns.md`
 - [x] **图文成片核心链路实跑验证**（2026-10-18，headless CLI）：
       1080×1920/30 新序列 → 两段画面（Color Matte + Bars and Tone）→ `tts.create`/`tts.render`
       （clip 60，2.98 s）→ `captions.import`（2 条）→ `captions.list`（1 轨 2 条）→
