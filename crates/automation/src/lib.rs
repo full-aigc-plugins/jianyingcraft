@@ -1,6 +1,6 @@
 //! # filmcraft-automation
 //!
-//! The FilmCraft MCP server (official `rmcp` SDK, stdio transport).
+//! The JianyingCraft MCP server (official `rmcp` SDK, stdio transport).
 //!
 //! * **Headless** mode drives an in-process [`filmcraft_engine::Session`]: every engine command,
 //!   project/sequence inspection and frame rendering (PNG) — no window needed.

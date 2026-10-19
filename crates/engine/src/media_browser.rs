@@ -74,7 +74,7 @@ pub const ALL_COLUMNS: [&str; 10] =
 pub const DEFAULT_COLUMNS: [&str; 5] = ["Name", "Frame Rate", "Media Duration", "Video Info", "Size"];
 
 /// Project and interchange files the browser can import. Avid Log Exchange (`.ale`) is left out:
-/// FilmCraft writes it (File ▸ Export) but, like Premiere, does not read it (#1292).
+/// JianyingCraft writes it (File ▸ Export) but, like Premiere, does not read it (#1292).
 const PROJECT_EXTENSIONS: [&str; 5] = ["fcproj", "edl", "xml", "fcpxml", "otio"];
 const CAPTION_EXTENSIONS: [&str; 3] = ["srt", "vtt", "scc"];
 const RECENT_MAX: usize = 10;

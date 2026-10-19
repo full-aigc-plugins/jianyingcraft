@@ -231,7 +231,7 @@ impl Exp<'_, '_> {
             MediaRef::Generator(g) => json!({
                 "OTIO_SCHEMA": "GeneratorReference.1",
                 "name": name,
-                "generator_kind": match g { Generator::ColorMatte { .. } => "SolidColor", Generator::BlackVideo => "black", Generator::BarsAndTone => "SMPTEBars", _ => "FilmCraftGenerator" },
+                "generator_kind": match g { Generator::ColorMatte { .. } => "SolidColor", Generator::BlackVideo => "black", Generator::BarsAndTone => "SMPTEBars", _ => "JianyingCraftGenerator" },
                 "parameters": match g { Generator::ColorMatte { color } => json!({"color": color}), _ => json!({}) },
                 "available_range": avail,
                 "metadata": {"filmcraft": {"item": item.0, "generator": g, "info": m.info}},

@@ -385,7 +385,7 @@ pub struct ExportSettings {
     pub adaptive_bitrate: Option<f32>,
     /// Frames between keyframes (None = 2 seconds).
     pub keyframe_distance: Option<u32>,
-    /// Render at Maximum Depth. FilmCraft always composites in 32-bit float, so this changes
+    /// Render at Maximum Depth. JianyingCraft always composites in 32-bit float, so this changes
     /// nothing; it is kept so presets round-trip.
     pub render_at_max_depth: bool,
     /// Use Maximum Render Quality: render at full size and scale with an area filter.
@@ -634,7 +634,7 @@ impl ExportSettings {
             return Err(ExportError::Unsupported(format!("{codec} audio has no {} samples: choose 16, 24 or 32 bit", sample_format.label())));
         }
         if self.field_order != FieldOrder::Progressive && self.has_video() {
-            return Err(ExportError::Unsupported(format!("{} field order: FilmCraft's encoders write progressive frames", self.field_order.label())));
+            return Err(ExportError::Unsupported(format!("{} field order: JianyingCraft's encoders write progressive frames", self.field_order.label())));
         }
         if self.effects.image_overlay.enabled && self.effects.image_overlay.path.trim().is_empty() {
             return Err(ExportError::Unsupported("image overlay: no image file chosen".into()));

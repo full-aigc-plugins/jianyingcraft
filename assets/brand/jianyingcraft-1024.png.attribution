@@ -1,0 +1,8 @@
+asset:        jianyingcraft-1024.png
+title:        JianyingCraft app mark, 1024 px render
+author:       JianyingCraft contributors
+source:       original work (rendered by make-icon.py with Pillow)
+license:      MIT OR Apache-2.0
+license-file: LICENSE-MIT
+added:        2026-10-19 by JianyingCraft contributors
+notes:        Same geometry as jianyingcraft.svg; regenerate with `python assets/brand/make-icon.py`.
