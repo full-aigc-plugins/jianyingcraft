@@ -470,8 +470,17 @@
       `transcript.set → transcript.inspect → transcript.createCaptions → captions.list →
       captions.export` 五步全 ok；11 个词切出 2 条字幕（track 48），导出 155 字节 SRT，
       cue 数 2、时间码单调、中文不乱码。详见 `docs/derivation/10-skill-runbook-verification.md`
-- [ ] 技能实跑未覆盖：`transcript.generate`（本机无语音模型）、字幕面板样式预览、
-      `captions.setStyle` 的渲染效果
+- [x] `transcript.generate` 实跑（2026-10-20）：本机原无语音模型，本轮 `cargo build -p filmcraft-cli
+      --features whisper` 后 `transcript.downloadModel model=whisper-tiny` 落地
+      `%APPDATA%\JianyingCraft\models\whisper-tiny`（151,061,672 B safetensors + config/tokenizer），
+      `transcript.models` 报 `installed: true`、`transcript.generate` 由 `enabled:false` 变 `true`。
+      demo 工程里 `tts.create` + `transcript.generate model=whisper-tiny language=en` 返回
+      `{"items":[{"item":8,"language":"en","source":"whisper-tiny","speakers":1,"words":8}],"skipped":[]}`。
+      **注意**：内置 `basic-female` 是 formant 合成器（源码自述"intelligible-ish and clearly robotic,
+      the no-download fallback"），所以识别出来的词和输入文本对不上；用系统 SAPI 合成的同一句话
+      经 whisper.cpp 交叉校验可完整识别（"The Quick Brown Fox jumps over the lazy dog."），
+      证明 ASR 链路本身正确，问题在语音质量不在识别。
+- [ ] 技能实跑未覆盖：字幕面板样式预览、`captions.setStyle` 的渲染效果
       → 步骤见 docs/runbooks/skill-reruns.md
 - [x] **批量混剪核心链路实跑验证**（2026-10-18，headless CLI）：
       `clip.replaceFromBin`（clip 29 → item 6，联动音频 30 一起换）→ `file.saveCopy`（28,245 字节工作副本）
