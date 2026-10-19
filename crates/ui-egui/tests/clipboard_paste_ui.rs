@@ -175,7 +175,7 @@ fn ctrl_v_in_the_project_panel_imports() {
     assert!(d.app().session.project.items.values().any(|i| i.name == "Pasted Image 1.png"));
 }
 
-/// With nothing but clips copied in FilmCraft, Ctrl+V pastes the clips as before, also when the
+/// With nothing but clips copied in JianyingCraft, Ctrl+V pastes the clips as before, also when the
 /// system clipboard holds no text at all. A plain V press and release (the Selection tool) pastes
 /// nothing and doesn't read the clipboard.
 #[test]

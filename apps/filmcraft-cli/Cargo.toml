@@ -1,6 +1,6 @@
 [package]
 name = "filmcraft-cli"
-description = "FilmCraft headless CLI and MCP server"
+description = "JianyingCraft headless CLI and MCP server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

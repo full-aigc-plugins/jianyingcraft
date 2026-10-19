@@ -1,4 +1,4 @@
-//! The FilmCraft egui frontend.
+//! The JianyingCraft egui frontend.
 //!
 //! Thin by design: all project changes go through `filmcraft_engine::Session::execute`; this crate
 //! owns only presentation state ([`state::UiState`]), GPU textures, the playback clock and the
@@ -31,6 +31,7 @@ macro_rules! tlf {
 
 pub mod automation;
 pub mod brand;
+pub mod bridge;
 pub mod calc;
 mod cjk;
 pub mod control;
@@ -44,6 +45,7 @@ pub mod graphics_notice;
 pub mod header;
 pub mod i18n;
 pub mod icons;
+pub mod layout;
 pub mod links;
 pub mod menus;
 pub mod native_dialogs;
@@ -168,7 +170,7 @@ pub struct HostHooks {
     /// uses `egui::Context::system_theme`.
     pub system_theme: Option<SystemThemeFn>,
     /// Files or an image on the system clipboard, for Paste in the Timeline and the Project panel
-    /// (#611). Without it Paste only pastes clips copied in FilmCraft.
+    /// (#611). Without it Paste only pastes clips copied in JianyingCraft.
     pub clipboard_media: Option<Box<dyn FnMut() -> Option<ClipboardMedia>>>,
 }
 
@@ -268,12 +270,14 @@ pub(crate) const EXPORT_SAVE_DIALOGS: [(&str, &str, &str); 7] = [
     ("file.exportFcpxml", "FCPXML", "fcpxml"),
     ("file.exportOtio", "OpenTimelineIO", "otio"),
     ("file.exportAle", "Avid Log Exchange", "ale"),
-    ("file.exportSelectionProject", "FilmCraft Project", "fcproj"),
+    ("file.exportSelectionProject", "JianyingCraft Project", "fcproj"),
 ];
 
 pub struct FilmcraftApp {
     pub session: Session,
     pub ui: UiState,
+    /// 面板桥队列（MCP adapter ↔ 可见 App），见 [`bridge`]。
+    pub bridge: bridge::Bridge,
     pub tokens: Tokens,
     pub frames: Arc<FrameServer>,
     pub playback: Playback,
@@ -540,6 +544,7 @@ impl FilmcraftApp {
         Self {
             session,
             ui: UiState { language, ..UiState::default() },
+            bridge: bridge::Bridge::default(),
             tokens: Tokens::for_kind(ThemeKind::Dark),
             frames,
             playback: Playback { speed: 1.0, ..Default::default() },
@@ -1713,6 +1718,16 @@ impl FilmcraftApp {
         ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
     }
 
+    /// 执行面板桥排队的命令：每条都落到可见 App 上，结果写回回复队列。
+    ///
+    /// 每帧由 [`eframe::App::logic`] 调用；不重放、不吞错——命令失败也回一条 `ok:false`。
+    pub fn pump_bridge(&mut self, ctx: &egui::Context) {
+        while let Some(request) = self.bridge.take_request() {
+            let outcome = menus::invoke(self, ctx, &request.command, request.params.clone());
+            self.bridge.push_reply(&request.id, outcome);
+        }
+    }
+
     fn frame(&mut self, ui: &mut egui::Ui) {
         i18n::set_current(self.ui.language);
         if std::mem::take(&mut self.panic_next_frame) {
@@ -1777,9 +1792,13 @@ impl FilmcraftApp {
         let t = self.tokens;
         let full = ui.max_rect();
         ui.painter().rect_filled(full, 0.0, t.app_bg);
-        let header_h = if self.ui.show_header { 38.0 } else { 0.0 };
+        // Compact / Medium（编辑模式）下不画 Premiere 式全局菜单条：菜单收进 `shell_area` 的 ☰，
+        // 否则两条顶栏会互相压叠。Wide 与导入/导出模式仍保留全局菜单。
+        let class = crate::layout::LayoutClass::from_width(full.width());
+        let shell = class != crate::layout::LayoutClass::Wide && self.ui.mode == state::Mode::Edit;
+        let header_h = if self.ui.show_header && !shell { 38.0 } else { 0.0 };
         let header = egui::Rect::from_min_size(full.min, egui::vec2(full.width(), header_h));
-        if self.ui.show_header {
+        if self.ui.show_header && !shell {
             header::show(self, ui, header);
         }
         let status_h = if self.ui.show_status_bar { 20.0 } else { 0.0 };
@@ -1928,13 +1947,13 @@ impl FilmcraftApp {
 }
 
 impl FilmcraftApp {
-    /// The "FilmCraft hit an error" window after a caught UI panic. Automation ids:
+    /// The "JianyingCraft hit an error" window after a caught UI panic. Automation ids:
     /// `error.dismiss`, `error.save`.
     fn error_window(&mut self, ctx: &egui::Context) {
         let Some(msg) = self.ui_error.clone() else { return };
         let mut close = false;
-        egui::Window::new(tl!("FilmCraft hit an error"))
-            .id(egui::Id::new("FilmCraft hit an error"))
+        egui::Window::new(tl!("JianyingCraft hit an error"))
+            .id(egui::Id::new("JianyingCraft hit an error"))
             .collapsible(false)
             .resizable(false)
             .pivot(egui::Align2::CENTER_CENTER)
@@ -2039,6 +2058,8 @@ impl eframe::App for FilmcraftApp {
     }
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 面板桥：先执行 adapter 排队的命令（落在可见 App 上），结果进回复队列。
+        self.pump_bridge(ctx);
         // a native file dialog's answer first, so the panels draw what it chose (#260)
         self.poll_native_dialog(ctx);
         if !self.styled {

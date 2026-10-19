@@ -453,9 +453,86 @@ fn fixtures(only: &[String]) -> Result<(), String> {
     if failed.is_empty() { Ok(()) } else { Err(format!("fixture generation failed in {}", failed.join(", "))) }
 }
 
+/// `cargo fmt --check` 的跨平台版本：Windows 上一次传整个工作区会 `os error 206`
+/// （命令行超长，是 rustfmt 调用方式的工具限制，不是格式问题）。检测到这一点就退化成
+/// 逐包检查——检查内容完全相同，只是分批调用；其它失败仍然原样报错。
+fn fmt_check() -> Result<(), String> {
+    let cargo = env!("CARGO");
+    let out = Command::new(cargo).args(["fmt", "--check"]).output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let too_long = text.contains("os error 206") || text.to_ascii_lowercase().contains("argument list too long");
+    if !too_long {
+        return Err(format!("cargo fmt --check failed:\n{text}"));
+    }
+    let md = metadata()?;
+    let packages: Vec<String> =
+        md["packages"].as_array().into_iter().flatten().filter(|p| p["name"] != "xtask").filter_map(|p| p["name"].as_str().map(str::to_string)).collect();
+    eprintln!("cargo fmt --check: command line too long (os error 206); checking {} packages one by one", packages.len());
+    let mut failed = Vec::new();
+    for package in &packages {
+        if run(Command::new(cargo).args(["fmt", "-p", package, "--check"])).is_err() {
+            failed.push(package.clone());
+        }
+    }
+    if failed.is_empty() { Ok(()) } else { Err(format!("cargo fmt --check failed in: {}", failed.join(", "))) }
+}
+
+/// 品牌门禁：仓库里不应再出现上游名 `FilmCraft`。派生说明、许可文件、文档与插件仓
+/// （要讲清"派生自谁"）在白名单里；其余任何命中都视为品牌替换没做完。
+const BRAND_WHITELIST: &[&str] = &[
+    "NOTICE",
+    "ATTRIBUTION.md",
+    "LICENSE",
+    "README",
+    "CHANGELOG",
+    "docs/",
+    "openspec/",
+    "jianyingcraft-plugin/",
+    "crates/ui-egui/src/brand.rs",
+    "crates/ui-egui/src/layout.rs",
+    "crates/ui-egui/src/links.rs",
+    "crates/ui-egui/src/panels/dialogs.rs",
+    "crates/export/src/raster.rs",
+    "crates/ui-egui/src/i18n/",
+    "crates/format/tests/fixtures/",
+    "packaging/",
+    "xtask/src/parity.rs",
+    "xtask/src/main.rs",
+];
+
+fn brand() -> Result<(), String> {
+    let mut hits = Vec::new();
+    for file in repo_files()? {
+        if BRAND_WHITELIST.iter().any(|allowed| file == *allowed || file.starts_with(allowed)) {
+            continue;
+        }
+        // 文档、许可、归属文件要如实讲"派生自谁"，不进这条门禁；这里只看代码与配置。
+        let doc = file.ends_with(".md") || file.ends_with(".txt") || file.ends_with(".attribution");
+        if doc || file.starts_with("assets/") {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&file) else { continue };
+        let Ok(text) = std::str::from_utf8(&bytes) else { continue };
+        for (index, line) in text.lines().enumerate() {
+            if line.contains("FilmCraft") {
+                hits.push(format!("{file}:{}: {}", index + 1, line.trim()));
+            }
+        }
+    }
+    if hits.is_empty() {
+        println!("brand: ok (the upstream name appears only where the derivation must name it)");
+        return Ok(());
+    }
+    hits.truncate(40);
+    Err(format!("brand: the upstream name is still user-visible:\n{}", hits.join("\n")))
+}
+
 fn ci() -> Result<(), String> {
     let cargo = env!("CARGO");
-    run(Command::new(cargo).args(["fmt", "--check"]))?;
+    fmt_check()?;
     run(Command::new(cargo).args(["clippy", "--workspace", "--all-targets", "--release", "--", "-D", "warnings"]))?;
     run(Command::new(cargo).args(["test", "--workspace", "--release"]))?;
     layers()?;
@@ -486,8 +563,10 @@ fn root() -> std::path::PathBuf {
 fn main() -> ExitCode {
     let task = std::env::args().nth(1).unwrap_or_default();
     let r = match task.as_str() {
+        "fmt" => fmt_check(),
         "layers" => layers(),
         "wasm" => wasm(),
+        "brand" => brand(),
         "assets" => assets(),
         "fixtures" => fixtures(&std::env::args().skip(2).collect::<Vec<_>>()),
         "ci" => ci(),

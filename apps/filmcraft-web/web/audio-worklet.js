@@ -1,4 +1,4 @@
-// FilmCraft web audio output (AudioWorklet). The UI thread mixes audio ahead and posts
+// JianyingCraft web audio output (AudioWorklet). The UI thread mixes audio ahead and posts
 // interleaved stereo Float32Array blocks; this processor plays them in order and reports how many
 // frames it actually played (with its currentTime), which drives the playback clock.
 class FilmcraftOutput extends AudioWorkletProcessor {

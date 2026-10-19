@@ -1,0 +1,8 @@
+asset:        ai.jianyingcraft.png
+title:        JianyingCraft app mark, Linux hicolor theme 256 px
+author:       JianyingCraft contributors
+source:       original work (rendered by assets/brand/make-icon.py with Pillow; geometry in assets/brand/jianyingcraft.svg)
+license:      MIT OR Apache-2.0
+license-file: LICENSE-MIT
+added:        2026-10-19 by JianyingCraft contributors
+notes:        Replaces the upstream FilmCraft artwork; no third-party iconography is referenced.

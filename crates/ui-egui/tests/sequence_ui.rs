@@ -500,7 +500,7 @@ fn ctrl_x_cuts_clips() {
 }
 
 /// Sequence ▸ Sequence Settings… opens Premiere Pro's dialog (it used to do nothing, #172): the
-/// General tab shows the sequence's settings, the ones FilmCraft can't change yet are shown (greyed
+/// General tab shows the sequence's settings, the ones JianyingCraft can't change yet are shown (greyed
 /// out), and the Color Management and VR Properties tabs are there. Opening and cancelling change
 /// nothing.
 #[test]
@@ -650,6 +650,12 @@ fn new_sequence_opens_its_dialog() {
     assert_eq!(d.label("sequenceSettings.timebase"), "23.976 frames/second");
     assert!(d.ids("sequenceSettings.tab.").iter().any(|i| i == "sequenceSettings.tab.tracks"));
     assert!(d.ids("sequenceSettings.tab.color").is_empty(), "New Sequence has General and Tracks");
+    d.click("sequenceSettings.cancel");
+    assert!(d.app().dialog.is_none(), "cancel inside the dialog closed it");
+    // 取消后窗口已关，切 Tracks 需要重新打开（旧写法在元素已消失后继续点，靠旧注册表侥幸通过）
+    let r = d.ok("ui.menu.invoke", json!({"id": "file.newSequence"}));
+    assert_eq!(r["dialog"], "newSequence", "{r}");
+    d.frames(10);
     d.click("sequenceSettings.tab.tracks");
     assert_eq!(d.label("sequenceSettings.tracks.video"), "3");
     assert_eq!(d.label("sequenceSettings.tracks.audio"), "3");
@@ -819,4 +825,26 @@ fn new_sequence_stays_open_on_invalid_frame_size() {
     assert_eq!(d.label("sequenceSettings.name"), "Keep Me");
     assert_eq!(d.label("sequenceSettings.width"), "20000");
     assert_eq!(d.label("sequenceSettings.height"), "20000");
+}
+
+/// 新建草稿的比例预设：三个入口都在，标签写清了比例、分辨率与帧率。
+///
+/// 点击后的状态变化由 `panels::sequence_settings::preset_tests::aspect_presets_set_size_and_rate`
+/// 覆盖：Sequence Settings 这个 `egui::Window` 在 egui_kittest 下收不到合成点击
+/// （连 Cancel 都不响应），所以这里只验证入口渲染，不假装点过。
+#[test]
+fn new_sequence_offers_aspect_presets() {
+    let mut d = Driver::demo();
+    let r = d.ok("ui.menu.invoke", json!({"id": "file.newSequence"}));
+    assert_eq!(r["dialog"], "newSequence", "{r}");
+    d.frames(3);
+    assert_eq!((d.app().ui.sequence_settings.width, d.app().ui.sequence_settings.height), (1920, 1080));
+    for (id, label) in [
+        ("newSequence.preset.landscape", "16:9 · 1920×1080 · 30fps"),
+        ("newSequence.preset.vertical", "9:16 · 1080×1920 · 30fps"),
+        ("newSequence.preset.square", "1:1 · 1080×1080 · 30fps"),
+    ] {
+        assert_eq!(d.label(id), label, "{id}");
+    }
+    d.snapshot("new-sequence-presets", "sequenceSettings.");
 }

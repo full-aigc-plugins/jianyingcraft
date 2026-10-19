@@ -1,0 +1,8 @@
+asset:        jianyingcraft.svg
+title:        JianyingCraft app mark, canonical vector (gradient square, three bars, timeline baseline)
+author:       JianyingCraft contributors
+source:       original work (code-drawn; see make-icon.py in this directory)
+license:      MIT OR Apache-2.0
+license-file: LICENSE-MIT
+added:        2026-10-19 by JianyingCraft contributors
+notes:        Drawn from scratch for this fork; no third-party artwork or iconography was referenced.

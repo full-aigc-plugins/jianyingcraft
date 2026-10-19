@@ -4,8 +4,8 @@
 //! sequences of fillers, source clips and transitions, where a transition *overlaps* the end of
 //! the segment before it and the start of the segment after it (the sequence's length is the sum of
 //! its segment lengths minus its transition lengths). Source clips reference media through master
-//! mobs and file source mobs. [`from_project`] turns a FilmCraft sequence into that shape;
-//! [`to_project`] builds FilmCraft sequences and media from it. All times are ticks; the format
+//! mobs and file source mobs. [`from_project`] turns a JianyingCraft sequence into that shape;
+//! [`to_project`] builds JianyingCraft sequences and media from it. All times are ticks; the format
 //! serialisers convert to and from edit units.
 
 use std::collections::HashMap;
@@ -120,7 +120,7 @@ pub(crate) struct CTransition {
     pub len: Tick,
     /// Where the cut lies, from the transition start.
     pub cut: Tick,
-    /// FilmCraft effect id.
+    /// JianyingCraft effect id.
     pub effect: String,
 }
 
@@ -175,7 +175,7 @@ impl Source {
 }
 
 // ---------------------------------------------------------------------------------------------
-// FilmCraft → composition
+// JianyingCraft → composition
 // ---------------------------------------------------------------------------------------------
 
 /// How a transition sits on a clip.
@@ -664,7 +664,7 @@ fn marker_in(b: &mut Builder, m: &CMarker) -> Marker {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Composition → FilmCraft
+// Composition → JianyingCraft
 // ---------------------------------------------------------------------------------------------
 
 /// Media a document embeds, to be written next to it by the caller (the item's path).
@@ -837,7 +837,7 @@ fn build_track(b: &mut Builder, track: &mut Track, kind: TrackKind, t: &CTrack, 
     let mut clips: Vec<TrackItem> = Vec::new();
     for it in &t.items {
         if pos.0.abs() > 4 * MAX_TIME.0 {
-            report.warn("a track longer than FilmCraft supports was cut short");
+            report.warn("a track longer than JianyingCraft supports was cut short");
             break;
         }
         match it {

@@ -97,7 +97,11 @@ pub(crate) fn dpx(rgba: &[u8], w: u32, h: u32) -> Result<Vec<u8>> {
     put32(&mut hd, 24, 1664); // generic header length
     put32(&mut hd, 28, 384); // industry header length
     put32(&mut hd, 32, 0); // user data length
-    hd[160..169].copy_from_slice(b"FilmCraft");
+    // creator 字段是 100 字节（SMPTE ST 268）；品牌名写进去，其余保持 NUL。
+    // 这行曾把 13 字节的 "JianyingCraft" 复制进 9 字节切片（上游名字 "FilmCraft" 正好 9 字节），
+    // 直接 panic —— 品牌替换引入的崩溃，按目标字段长度写。
+    let creator = b"JianyingCraft";
+    hd[160..160 + creator.len()].copy_from_slice(creator);
     // image information header
     put16(&mut hd, 768, 0); // orientation: left to right, top to bottom
     put16(&mut hd, 770, 1); // one image element

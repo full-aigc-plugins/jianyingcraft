@@ -32,24 +32,24 @@ iconography, images or other Adobe assets; open licences only; every asset attri
 | `docs/images/filmcraft-scopes.png` | FilmCraft contributors | Original work: FilmCraft UI crop (scopes of a Charade (1963) frame, public domain) | MIT OR Apache-2.0 |
 | `docs/images/filmcraft-effects.png` | FilmCraft contributors | Original work: FilmCraft screenshot crop; NASA Earth Views (US Government work, public domain) | MIT OR Apache-2.0; footage public domain |
 | `docs/images/filmcraft-timeline.png` | FilmCraft contributors | Original work: FilmCraft UI crop; thumbnails from Night of the Living Dead (1968) and Carnival of Souls (1962), CC0 Chopin waveform | MIT OR Apache-2.0; film frames public domain |
-| `assets/app-icon/filmcraft.svg` | Brandon Thomas (FilmCraft owner) | Original work: FilmCraft app icon (owl with ear tufts), drawn by the owner in ArtCraft and vectorised; canonical vector | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) |
+| `assets/app-icon/jianyingcraft-1024.png` | JianyingCraft contributors | Original work: JianyingCraft app mark, 1024 px render by `assets/brand/make-icon.py` | MIT OR Apache-2.0 (`LICENSE-MIT`) |
+| `assets/app-icon/jianyingcraft-512.png` | JianyingCraft contributors | Original work: JianyingCraft app mark, 512 px render (macOS runtime icon) | MIT OR Apache-2.0 (`LICENSE-MIT`) |
+| `assets/app-icon/jianyingcraft.ico` | JianyingCraft contributors | Original work: JianyingCraft app mark packed as a 16-256 px Windows icon | MIT OR Apache-2.0 (`LICENSE-MIT`) |
+| `assets/app-icon/jianyingcraft.icns` | JianyingCraft contributors | Original work: JianyingCraft app mark as a macOS .icns | MIT OR Apache-2.0 (`LICENSE-MIT`) |
+| `assets/brand/jianyingcraft.svg` | JianyingCraft contributors | Original work: JianyingCraft app mark, canonical vector | MIT OR Apache-2.0 (`LICENSE-MIT`) |
+| `assets/brand/jianyingcraft-1024.png` | JianyingCraft contributors | Original work: JianyingCraft app mark, 1024 px render by `make-icon.py` | MIT OR Apache-2.0 (`LICENSE-MIT`) |
+| `assets/app-icon/hicolor/16x16/apps/ai.jianyingcraft.png` | JianyingCraft contributors | Original work: JianyingCraft app mark, Linux hicolor 16 px | MIT OR Apache-2.0 (`LICENSE-MIT`) |
+| `assets/app-icon/hicolor/24x24/apps/ai.jianyingcraft.png` | JianyingCraft contributors | Original work: JianyingCraft app mark, Linux hicolor 24 px | MIT OR Apache-2.0 (`LICENSE-MIT`) |
+| `assets/app-icon/hicolor/32x32/apps/ai.jianyingcraft.png` | JianyingCraft contributors | Original work: JianyingCraft app mark, Linux hicolor 32 px | MIT OR Apache-2.0 (`LICENSE-MIT`) |
+| `assets/app-icon/hicolor/48x48/apps/ai.jianyingcraft.png` | JianyingCraft contributors | Original work: JianyingCraft app mark, Linux hicolor 48 px | MIT OR Apache-2.0 (`LICENSE-MIT`) |
+| `assets/app-icon/hicolor/64x64/apps/ai.jianyingcraft.png` | JianyingCraft contributors | Original work: JianyingCraft app mark, Linux hicolor 64 px | MIT OR Apache-2.0 (`LICENSE-MIT`) |
+| `assets/app-icon/hicolor/128x128/apps/ai.jianyingcraft.png` | JianyingCraft contributors | Original work: JianyingCraft app mark, Linux hicolor 128 px | MIT OR Apache-2.0 (`LICENSE-MIT`) |
+| `assets/app-icon/hicolor/256x256/apps/ai.jianyingcraft.png` | JianyingCraft contributors | Original work: JianyingCraft app mark, Linux hicolor 256 px | MIT OR Apache-2.0 (`LICENSE-MIT`) |
+| `assets/app-icon/hicolor/512x512/apps/ai.jianyingcraft.png` | JianyingCraft contributors | Original work: JianyingCraft app mark, Linux hicolor 512 px | MIT OR Apache-2.0 (`LICENSE-MIT`) |
+| `assets/app-icon/hicolor/scalable/apps/ai.jianyingcraft.svg` | JianyingCraft contributors | Original work: JianyingCraft app mark, Linux hicolor scalable vector | MIT OR Apache-2.0 (`LICENSE-MIT`) |
 | `packaging/macos/dmg/background.svg` | @XusBadia | Original work: FilmCraft macOS DMG window background, derived from the FilmCraft app icon (`assets/app-icon/filmcraft.svg`); rendered to `background.tiff` by `packaging/macos/dmg/generate.py` | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) |
 | `packaging/macos/dmg/background.tiff` | @XusBadia | Rendered from `packaging/macos/dmg/background.svg` by `packaging/macos/dmg/generate.py` | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) |
-| `assets/app-icon/filmcraft-small.svg` | Brandon Thomas (FilmCraft owner) | Original work: FilmCraft app icon (owl with ear tufts), drawn by the owner in ArtCraft and vectorised; lighter vector | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) |
-| `assets/app-icon/filmcraft-1024.png` | Brandon Thomas (FilmCraft owner) | Original work: FilmCraft app icon (owl with ear tufts), drawn by the owner in ArtCraft and vectorised; 1024 px render | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) |
-| `assets/app-icon/filmcraft-macos-512.png` | Brandon Thomas (FilmCraft owner) | Original work: FilmCraft app icon (owl with ear tufts), drawn by the owner in ArtCraft and vectorised; macOS runtime Dock icon (512 px) | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) |
-| `assets/app-icon/filmcraft.icns` | Brandon Thomas (FilmCraft owner) | Original work: FilmCraft app icon (owl with ear tufts), drawn by the owner in ArtCraft and vectorised; macOS .icns | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) |
-| `assets/app-icon/filmcraft.ico` | Brandon Thomas (FilmCraft owner) | Original work: FilmCraft app icon (owl with ear tufts), drawn by the owner in ArtCraft and vectorised; Windows .ico (16-256 px) | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) |
-| `assets/app-icon/hicolor/16x16/apps/ai.storyteller.filmcraft.png` | Brandon Thomas (FilmCraft owner) | Original work: FilmCraft app icon (owl with ear tufts), drawn by the owner in ArtCraft and vectorised; Linux hicolor theme 16 px | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) |
-| `assets/app-icon/hicolor/24x24/apps/ai.storyteller.filmcraft.png` | Brandon Thomas (FilmCraft owner) | Original work: FilmCraft app icon (owl with ear tufts), drawn by the owner in ArtCraft and vectorised; Linux hicolor theme 24 px | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) |
-| `assets/app-icon/hicolor/32x32/apps/ai.storyteller.filmcraft.png` | Brandon Thomas (FilmCraft owner) | Original work: FilmCraft app icon (owl with ear tufts), drawn by the owner in ArtCraft and vectorised; Linux hicolor theme 32 px | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) |
-| `assets/app-icon/hicolor/48x48/apps/ai.storyteller.filmcraft.png` | Brandon Thomas (FilmCraft owner) | Original work: FilmCraft app icon (owl with ear tufts), drawn by the owner in ArtCraft and vectorised; Linux hicolor theme 48 px | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) |
-| `assets/app-icon/hicolor/64x64/apps/ai.storyteller.filmcraft.png` | Brandon Thomas (FilmCraft owner) | Original work: FilmCraft app icon (owl with ear tufts), drawn by the owner in ArtCraft and vectorised; Linux hicolor theme 64 px | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) |
-| `assets/app-icon/hicolor/128x128/apps/ai.storyteller.filmcraft.png` | Brandon Thomas (FilmCraft owner) | Original work: FilmCraft app icon (owl with ear tufts), drawn by the owner in ArtCraft and vectorised; Linux hicolor theme 128 px | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) |
-| `assets/app-icon/hicolor/256x256/apps/ai.storyteller.filmcraft.png` | Brandon Thomas (FilmCraft owner) | Original work: FilmCraft app icon (owl with ear tufts), drawn by the owner in ArtCraft and vectorised; Linux hicolor theme 256 px | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) |
-| `assets/app-icon/hicolor/512x512/apps/ai.storyteller.filmcraft.png` | Brandon Thomas (FilmCraft owner) | Original work: FilmCraft app icon (owl with ear tufts), drawn by the owner in ArtCraft and vectorised; Linux hicolor theme 512 px | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) |
-| `assets/app-icon/hicolor/scalable/apps/ai.storyteller.filmcraft.svg` | Brandon Thomas (FilmCraft owner) | Original work: FilmCraft app icon (owl with ear tufts), drawn by the owner in ArtCraft and vectorised; Linux hicolor theme scalable | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) |
-| `apps/filmcraft-web/web/favicon.png` | Brandon Thomas (FilmCraft owner) | Original work: FilmCraft app icon (owl with ear tufts), drawn by the owner in ArtCraft and vectorised; 128 px | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) |
+| `apps/filmcraft-web/web/favicon.png` | JianyingCraft contributors | Original work: JianyingCraft mark (gradient square, three bars, timeline baseline), 128 px, rendered by `assets/brand/make-icon.py` | MIT OR Apache-2.0 (`LICENSE-MIT`) |
 
 ## Golden test images
 
@@ -131,23 +131,13 @@ carry each font's licence as `OFL-<family>.txt`.
 | Shippori Mincho Regular (FONTDASU) | Japanese fallback for serif titles (native builds) | OFL-1.1 |
 | BIZ UDMincho Regular (Morisawa) | Japanese fallback for serif titles (native builds) | OFL-1.1 |
 
-## First-party brand marks
+## First-party brand marks (removed in this fork)
 
-The ArtCraft name, wordmark and logos are trademarks of the ArtCraft Team. They are not open source and
-are not covered by the project licence; they may be used only unmodified and only in the context of
-FilmCraft, under [`docs/brand/LICENSE-brand.txt`](docs/brand/LICENSE-brand.txt). Forks and modified versions must
-remove them (AGENTS.md §1.8).
-
-| File | Author | Source | Licence |
-|---|---|---|---|
-| `docs/brand/artcraft-logo-white.png` | ArtCraft Team | Original work: first-party ArtCraft brand mark (ArtCraft wordmark, light ink for dark backgrounds) | ArtCraft trademark, not open source; `docs/brand/LICENSE-brand.txt` (not MIT/Apache) |
-| `docs/brand/artcraft-logo-white.svg` | ArtCraft Team | Original work: first-party ArtCraft brand mark (ArtCraft wordmark, light ink for dark backgrounds) | ArtCraft trademark, not open source; `docs/brand/LICENSE-brand.txt` (not MIT/Apache) |
-| `docs/brand/artcraft-logo.png` | ArtCraft Team | Original work: first-party ArtCraft brand mark (ArtCraft wordmark (symbol + "ARTCRAFT"), dark ink for light backgrounds) | ArtCraft trademark, not open source; `docs/brand/LICENSE-brand.txt` (not MIT/Apache) |
-| `docs/brand/artcraft-logo.svg` | ArtCraft Team | Original work: first-party ArtCraft brand mark (ArtCraft wordmark (symbol + "ARTCRAFT"), dark ink for light backgrounds) | ArtCraft trademark, not open source; `docs/brand/LICENSE-brand.txt` (not MIT/Apache) |
-| `docs/brand/artcraft-mark-black.png` | ArtCraft Team | Original work: first-party ArtCraft brand mark (ArtCraft symbol ("A" mark), black) | ArtCraft trademark, not open source; `docs/brand/LICENSE-brand.txt` (not MIT/Apache) |
-| `docs/brand/artcraft-mark-black.svg` | ArtCraft Team | Original work: first-party ArtCraft brand mark (ArtCraft symbol ("A" mark), black) | ArtCraft trademark, not open source; `docs/brand/LICENSE-brand.txt` (not MIT/Apache) |
-| `docs/brand/artcraft-mark.png` | ArtCraft Team | Original work: first-party ArtCraft brand mark (ArtCraft symbol ("A" mark), blue) | ArtCraft trademark, not open source; `docs/brand/LICENSE-brand.txt` (not MIT/Apache) |
-| `docs/brand/artcraft-mark.svg` | ArtCraft Team | Original work: first-party ArtCraft brand mark (ArtCraft symbol ("A" mark), blue) | ArtCraft trademark, not open source; `docs/brand/LICENSE-brand.txt` (not MIT/Apache) |
+The upstream repository shipped the ArtCraft wordmark and mark under `docs/brand/` as trademarks of the
+ArtCraft Team, not covered by the project licence. As the upstream brand licence requires of any fork,
+those files have been **removed from this repository** together with their sidecars; no file here
+contains them, and nothing here grants a right to them. JianyingCraft draws its own name as text
+(`crates/ui-egui/src/brand.rs`); first-party artwork added later is listed like any other asset.
 
 ## Third-party source code
 

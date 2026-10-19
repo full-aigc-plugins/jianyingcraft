@@ -1,5 +1,5 @@
 // #194 regression: same-name/same-size imports must retain independent sources across OPFS recovery.
-// evaluate(expression) awaits a browser expression; navigate(url) waits for FilmCraft readiness. Generated PCM16 mono WAVs only; no binary fixtures.
+// evaluate(expression) awaits a browser expression; navigate(url) waits for JianyingCraft readiness. Generated PCM16 mono WAVs only; no binary fixtures.
 import { createHash } from "node:crypto";
 
 function tone(frequency, seconds) {

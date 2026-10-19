@@ -1,4 +1,4 @@
-//! The FilmCraft document model.
+//! The JianyingCraft document model.
 //!
 //! A [`Project`] owns a tree of bins and a flat map of [`ProjectItem`]s (media clips, sequences,
 //! synthetic items). A [`Sequence`] has video and audio [`Track`]s holding [`TrackItem`]s (clip
@@ -554,7 +554,7 @@ pub struct TrackItem {
     /// of animating through the hold.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hold_filters: bool,
-    /// Video Options ▸ Field Options… (stored; FilmCraft renders progressive frames).
+    /// Video Options ▸ Field Options… (stored; JianyingCraft renders progressive frames).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub field_options: Option<FieldOptions>,
     /// Audio clips: the source channels this clip plays (0-based; one = mono on both sides, two =
@@ -1147,7 +1147,7 @@ pub struct ProjectSettings {
     pub title_safe: (f64, f64),
     #[serde(default = "action_safe_default")]
     pub action_safe: (f64, f64),
-    /// Project Settings ▸ General ▸ Capture Format (`DV` or `HDV`; informational, FilmCraft has no
+    /// Project Settings ▸ General ▸ Capture Format (`DV` or `HDV`; informational, JianyingCraft has no
     /// tape capture). Schema v11.
     #[serde(default = "capture_format_default")]
     pub capture_format: String,
@@ -1210,7 +1210,7 @@ pub enum IngestAction {
 impl Default for ProjectSettings {
     fn default() -> Self {
         Self {
-            renderer: "FilmCraft GPU Acceleration (wgpu)".into(),
+            renderer: "JianyingCraft GPU Acceleration (wgpu)".into(),
             video_display: filmcraft_time::TimeDisplay::Timecode,
             audio_display_samples: true,
             default_still_duration: Tick(5 * TICKS_PER_SECOND),

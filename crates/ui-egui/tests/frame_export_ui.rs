@@ -31,7 +31,12 @@ fn harness() -> Harness<'static, FilmcraftApp> {
         None,
     );
     s.execute("source.open", json!({"item":item.0})).unwrap();
-    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 980.0)).build_eframe(move |_cc| FilmcraftApp::new(s));
+    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 980.0)).build_eframe(move |_cc| {
+        let mut app = FilmcraftApp::new(s);
+        // 剪映四区默认不含 Source 监视器；本用例要同时验证 Source 与 Program 的导出按钮。
+        app.set_workspace("Assembly");
+        app
+    });
     for _ in 0..3 {
         step(&mut h);
     }

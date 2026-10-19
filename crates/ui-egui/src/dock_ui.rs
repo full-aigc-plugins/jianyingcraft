@@ -1,10 +1,11 @@
-//! FilmCraft's panel chrome and document tabs over the shared docking transactions.
+//! JianyingCraft's panel chrome and document tabs over the shared docking transactions.
 
 use craft_ui::docking::{Action, DropTarget, Placement, Zone, resolve_drop};
 use egui::{Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use serde_json::{Value, json};
 
 use crate::dock::{self, DockAction, DockNode, Group, PanelKind};
+use crate::theme::Tokens;
 use crate::{FilmcraftApp, panels};
 
 /// Single source for rendering and hit testing: saved offscreen positions remain
@@ -85,6 +86,45 @@ pub(crate) fn default_float_rect(screen: Rect) -> [f32; 4] {
     [center.x - 210.0, center.y - 160.0, 420.0, 320.0]
 }
 
+/// Compact/Medium 顶栏的 13 个剪映式 Tab：(标签, slug, 自动化 id, 目标面板)。
+/// `None` 表示本仓库没有对应模块（灰显、点了不打开任何面板）。
+pub(crate) const SHELL_TABS: [(&str, &str, &str, Option<PanelKind>); 13] = [
+    ("素材", "cut", "jy.tab.cut", Some(PanelKind::Project)),
+    ("文本", "captions", "jy.tab.captions", Some(PanelKind::Text)),
+    ("音频", "audio", "jy.tab.audio", Some(PanelKind::AudioTrackMixer)),
+    ("贴纸", "sticker", "jy.tab.sticker", Some(PanelKind::EssentialGraphics)),
+    ("特效", "effects", "jy.tab.effects", Some(PanelKind::Effects)),
+    ("转场", "transitions", "jy.tab.transitions", Some(PanelKind::Effects)),
+    ("字幕", "subtitle", "jy.tab.subtitle", Some(PanelKind::Text)),
+    ("智能包装", "smart", "jy.tab.smart", None),
+    ("滤镜", "filters", "jy.tab.filters", Some(PanelKind::LumetriColor)),
+    ("调节", "adjust", "jy.tab.adjust", Some(PanelKind::LumetriColor)),
+    ("模板", "templates", "jy.tab.templates", None),
+    ("数字人", "avatar", "jy.tab.avatar", None),
+    ("插件", "plugins", "jy.tab.plugins", None),
+];
+
+/// 顶栏 Tab 的 slug → 面板；`None` 表示未实现（调用方应保持原状）。
+pub fn shell_panel(slug: &str) -> Option<PanelKind> {
+    SHELL_TABS.iter().find(|tab| tab.1 == slug).and_then(|tab| tab.3)
+}
+
+/// 顶栏 Tab 的左右循环：跳过未实现的 Tab，首尾相接。`step` 是 +1 / -1。
+pub fn shell_tab_step(current: Option<&str>, step: i32) -> Option<(&'static str, PanelKind)> {
+    let enabled: Vec<&(&str, &str, &str, Option<PanelKind>)> = SHELL_TABS.iter().filter(|tab| tab.3.is_some()).collect();
+    if enabled.is_empty() {
+        return None;
+    }
+    let index = current.and_then(|slug| enabled.iter().position(|tab| tab.1 == slug));
+    let next = match (index, step.signum()) {
+        (Some(index), step) => (index as i32 + step).rem_euclid(enabled.len() as i32) as usize,
+        (None, step) if step < 0 => enabled.len() - 1,
+        (None, _) => 0,
+    };
+    let tab = enabled[next];
+    Some((tab.1, tab.3?))
+}
+
 impl FilmcraftApp {
     fn dock_command(&mut self, ctx: &egui::Context, action: Action<PanelKind>) -> Result<(), String> {
         let value = serde_json::to_value(action).map_err(|error| error.to_string())?;
@@ -131,10 +171,19 @@ impl FilmcraftApp {
     }
 
     fn panel_body(&mut self, ui: &mut egui::Ui, panel: PanelKind, content: Rect) {
-        self.auto.add(&format!("panel.{}", panel.id()), content, panel.title());
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(content).id_salt(("panel", panel.id())));
-        child.set_clip_rect(content.intersect(ui.clip_rect()));
-        panels::show(self, &mut child, panel, content);
+        let t = self.tokens;
+        let mut body = content;
+        // 剪映专业版里工具条贴在时间轴上方；这里只在 `Jianying` 工作区给 Timeline 让出 38 px。
+        if panel == PanelKind::Timeline && self.ui.workspace == "Jianying" && content.height() > 240.0 {
+            let toolbar_height = 38.0_f32.min(content.height() * 0.12);
+            let toolbar = Rect::from_min_size(content.min, egui::vec2(content.width(), toolbar_height));
+            self.timeline_toolbar(ui, toolbar, &t);
+            body = Rect::from_min_max(egui::pos2(content.min.x, toolbar.max.y), content.max);
+        }
+        self.auto.add(&format!("panel.{}", panel.id()), body, panel.title());
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body).id_salt(("panel", panel.id())));
+        child.set_clip_rect(body.intersect(ui.clip_rect()));
+        panels::show(self, &mut child, panel, body);
     }
 
     /// OS drag positions come from the host cursor hook, so egui pointer capture alone
@@ -176,8 +225,523 @@ impl FilmcraftApp {
         order
     }
 
-    pub(crate) fn dock_area(&mut self, ui: &mut egui::Ui, body: Rect) {
+    /// 剪映式单页布局（Compact / Medium）：顶部条 + 预览 +（可选）抽屉 + 底部时间轴。
+    ///
+    /// 宽屏（Wide）仍走 dock 树；本函数是 Compact/Medium 下唯一的主区绘制入口。
+    /// 时间轴下限 220 px（Medium 240 px），上限为可用高度的 55%；抽屉只压缩预览区。
+    fn shell_area(&mut self, ui: &mut egui::Ui, body: Rect, class: crate::layout::LayoutClass) {
         let t = self.tokens;
+        let medium = class == crate::layout::LayoutClass::Medium;
+        let header_height = 44.0_f32.min(body.height());
+        let header = Rect::from_min_size(body.min, egui::vec2(body.width(), header_height));
+        let available = (body.height() - header_height).max(0.0);
+        let min_timeline = if medium { 240.0 } else { 220.0 };
+        let timeline_height = (available * 0.38).max(min_timeline).min(available * 0.55);
+        let timeline = Rect::from_min_max(egui::pos2(body.min.x, body.max.y - timeline_height), body.max);
+        // 剪映式底部工具条：撤销/重做/分割/删除/播放。只占 Compact，Medium 用侧栏不挤竖向空间。
+        // 剪映平板/手机都在时间轴上方放工具条；Medium 的侧栏占横向，竖向仍留得下 36 px。
+        let toolbar_height = if medium { 36.0_f32.min(available * 0.1) } else { 40.0_f32.min(available * 0.1) };
+        let toolbar = (toolbar_height > 24.0)
+            .then(|| Rect::from_min_max(egui::pos2(body.min.x, timeline.min.y - toolbar_height), egui::pos2(body.max.x, timeline.min.y)));
+        let content_bottom = toolbar.map_or(timeline.min.y, |rect| rect.min.y);
+        let content = Rect::from_min_max(egui::pos2(header.min.x, header.max.y), egui::pos2(body.max.x, content_bottom));
+        // 顶部条：一级 Tab（剪辑/字幕/音频）在左，属性开关在右。
+        ui.painter().rect_filled(header, 0.0, t.tl_header_bg);
+        self.auto.add("jy.topbar", header, crate::brand::PRODUCT_NAME);
+        // ☰：全局菜单的唯一入口（Compact/Medium 不再画第二条顶栏）。
+        let menu_rect = Rect::from_min_size(egui::pos2(header.min.x + 8.0, header.center().y - 14.0), egui::vec2(30.0, 28.0));
+        let menu_response = ui.interact(menu_rect, egui::Id::new("jy.menu"), Sense::click());
+        ui.painter().rect_filled(menu_rect, 6.0, if self.ui.jy_menu_open || menu_response.hovered() { t.accent_hover } else { t.hover });
+        for line in 0..3 {
+            let y = menu_rect.center().y - 5.0 + line as f32 * 5.0;
+            ui.painter().line_segment([egui::pos2(menu_rect.min.x + 9.0, y), egui::pos2(menu_rect.max.x - 9.0, y)], egui::Stroke::new(1.5, t.text));
+        }
+        self.auto.add("jy.menu", menu_rect, "Menu");
+        if menu_response.clicked() {
+            self.ui.jy_menu_open = !self.ui.jy_menu_open;
+            if self.ui.jy_menu_open {
+                // 每次打开都从菜单根开始，不继承上次展开的分组。
+                self.ui.jy_menu_group = None;
+            }
+        }
+        // 剪映手机端的顶栏就是一条可横向滑动的一级 Tab；这里复用 Wide 的 13 个入口，
+        // 前三个保持旧 id（jy.tab.cut/captions/audio）以维持既有状态与测试契约。
+        // 右侧要同时容纳「属性」和「导出」，Tab 条必须让开两者（96 + 52 + 间距）。
+        let inspector_width = 160.0_f32;
+        let strip_rect = Rect::from_min_max(
+            egui::pos2(menu_rect.max.x + 6.0, header.min.y),
+            egui::pos2((header.max.x - 8.0 - inspector_width - 6.0).max(menu_rect.max.x + 40.0), header.max.y),
+        );
+        let entries = SHELL_TABS;
+        let mut chosen: Option<(String, Option<PanelKind>, bool)> = None;
+        // 控制通道要求"滚到某个 Tab"时，本帧把它滚进可视区（390 px 下靠后的 Tab 否则点不到）。
+        let pending_scroll = self.ui.jy_tab_scroll.clone();
+        // Alt+←/→ 切一级 Tab（与剪映桌面一致）；跳过未实现的 Tab，并把目标滚进可视区。
+        let step = ui.input(|input| {
+            if !input.modifiers.alt {
+                return 0;
+            }
+            if input.key_pressed(egui::Key::ArrowRight) {
+                1
+            } else if input.key_pressed(egui::Key::ArrowLeft) {
+                -1
+            } else {
+                0
+            }
+        });
+        if step != 0
+            && let Some((slug, panel)) = shell_tab_step(self.ui.jy_shell_slug.as_deref(), step)
+        {
+            self.ui.jy_shell_panel = Some(panel);
+            self.ui.jy_shell_slug = Some(slug.to_string());
+            self.ui.jy_drawer = Some(crate::layout::Drawer::Media);
+            self.ui.jy_tab_scroll = Some(slug.to_string());
+            self.ui.jy_media_filter = (slug == "audio").then(|| "audio".to_string());
+        }
+        let mut strip = ui.new_child(egui::UiBuilder::new().max_rect(strip_rect).id_salt("jy-compact-tabs"));
+        strip.set_clip_rect(strip_rect);
+        egui::ScrollArea::horizontal().id_salt("jy-compact-tabs-scroll").auto_shrink([false, true]).show(&mut strip, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                for (label, slug, id, panel) in entries {
+                    let enabled = panel.is_some();
+                    let active = self.ui.jy_shell_panel == panel && panel.is_some() && self.ui.jy_drawer.is_some();
+                    let color = if active {
+                        Color32::WHITE
+                    } else if enabled {
+                        t.text
+                    } else {
+                        t.text_dim
+                    };
+                    let galley = ui.painter().layout_no_wrap(label.to_string(), Tokens::ui(12.0), color);
+                    let width = galley.size().x + 18.0;
+                    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 28.0), if enabled { Sense::click() } else { Sense::hover() });
+                    if pending_scroll.as_deref() == Some(slug) {
+                        ui.scroll_to_rect(rect, Some(egui::Align::Center));
+                    }
+                    if active {
+                        ui.painter().rect_filled(rect, 6.0, t.accent);
+                    } else if enabled && response.hovered() {
+                        ui.painter().rect_filled(rect, 6.0, t.accent_hover);
+                    } else if enabled {
+                        ui.painter().rect_filled(rect, 6.0, t.hover);
+                    }
+                    ui.painter().galley(egui::pos2(rect.center().x - galley.size().x / 2.0, rect.center().y - galley.size().y / 2.0), galley, color);
+                    self.auto.add(id, rect, label);
+                    if enabled && response.clicked() {
+                        chosen = Some((slug.to_string(), panel, active));
+                    }
+                }
+            });
+        });
+        if let Some((slug, panel, active)) = chosen {
+            // 前三个沿用旧的 jy_tab 取值，其余只记 shell panel。
+            self.ui.jy_tab = match slug.as_str() {
+                "cut" => crate::layout::Tab::Cut,
+                "captions" => crate::layout::Tab::Captions,
+                "audio" => crate::layout::Tab::Audio,
+                _ => self.ui.jy_tab,
+            };
+            self.ui.jy_shell_panel = panel;
+            self.ui.jy_shell_slug = Some(slug.clone());
+            // 剪映的"音频"Tab 只列音频素材，"素材"Tab 恢复全部。
+            self.ui.jy_media_filter = (slug == "audio").then(|| "audio".to_string());
+            self.ui.jy_drawer = if active { None } else { Some(crate::layout::Drawer::Media) };
+        }
+        if pending_scroll.is_some() {
+            self.ui.jy_tab_scroll = None;
+        }
+        // 手机端右上角的「导出」，和剪映一样永远在顶栏最右。
+        let export_width = 52.0_f32;
+        let export_rect = Rect::from_min_size(egui::pos2(header.max.x - 8.0 - export_width, header.center().y - 14.0), egui::vec2(export_width, 28.0));
+        let export_response = ui.interact(export_rect, egui::Id::new("jy.export"), Sense::click());
+        ui.painter().rect_filled(export_rect, 6.0, if export_response.hovered() { t.accent_hover } else { t.accent });
+        let export_galley = ui.painter().layout_no_wrap("导出".to_string(), Tokens::semibold(12.0), Color32::WHITE);
+        ui.painter().galley(
+            egui::pos2(export_rect.center().x - export_galley.size().x / 2.0, export_rect.center().y - export_galley.size().y / 2.0),
+            export_galley,
+            Color32::WHITE,
+        );
+        self.auto.add("jy.export", export_rect, "导出");
+        if export_response.clicked() {
+            let ctx = ui.ctx().clone();
+            let _ = crate::menus::invoke(self, &ctx, "file.exportMedia", json!({}));
+        }
+        // 属性开关：固定在「导出」左侧，与当前 Tab 无关。
+        {
+            let label = crate::i18n::t("Properties");
+            let galley = ui.painter().layout_no_wrap(label.to_string(), Tokens::ui(12.0), t.text);
+            let width = (galley.size().x + 20.0).min(104.0);
+            let rect = Rect::from_min_size(egui::pos2(export_rect.min.x - 6.0 - width, header.center().y - 14.0), egui::vec2(width, 28.0));
+            let response = ui.interact(rect, egui::Id::new("jy.tab.inspector"), Sense::click());
+            let active = self.ui.jy_drawer == Some(crate::layout::Drawer::Inspector);
+            ui.painter().rect_filled(
+                rect,
+                6.0,
+                if active {
+                    t.accent
+                } else if response.hovered() {
+                    t.accent_hover
+                } else {
+                    t.hover
+                },
+            );
+            ui.painter().galley(egui::pos2(rect.min.x + 10.0, rect.center().y - galley.size().y / 2.0), galley, if active { Color32::WHITE } else { t.text });
+            self.auto.add("jy.tab.inspector", rect, label);
+            if response.clicked() {
+                self.ui.jy_drawer = if active { None } else { Some(crate::layout::Drawer::Inspector) };
+            }
+        }
+        // 抽屉：Compact 从底部切（压缩预览），Medium 从右侧切（240 px 侧栏）；时间轴不受影响。
+        let drawer_width = 240.0_f32;
+        let (preview, drawer) = match self.ui.jy_drawer {
+            Some(drawer) if medium && content.width() >= 560.0 => {
+                let split = content.max.x - drawer_width;
+                (
+                    Rect::from_min_max(content.min, egui::pos2(split, content.max.y)),
+                    Some((drawer, Rect::from_min_max(egui::pos2(split, content.min.y), content.max))),
+                )
+            }
+            Some(drawer) if content.height() >= 320.0 => {
+                let drawer_height = (content.height() * 0.45).max(160.0).min((content.height() - 140.0).max(0.0));
+                let split = content.max.y - drawer_height;
+                (
+                    Rect::from_min_max(content.min, egui::pos2(content.max.x, split)),
+                    Some((drawer, Rect::from_min_max(egui::pos2(content.min.x, split), content.max))),
+                )
+            }
+            _ => (content, None),
+        };
+        // 预览与时间轴之间的分隔线。
+        ui.painter().line_segment(
+            [egui::pos2(body.min.x, timeline.min.y), egui::pos2(body.max.x, timeline.min.y)],
+            egui::Stroke::new(1.0, t.text_dim.gamma_multiply(0.35)),
+        );
+        if let Some(toolbar) = toolbar {
+            self.timeline_toolbar(ui, toolbar, &t);
+        }
+        self.auto.add("jy.preview", preview, PanelKind::Program.title());
+        self.panel_body(ui, PanelKind::Program, preview);
+        if let Some((drawer, rect)) = drawer {
+            // 顶栏选的 Tab 决定抽屉画哪个面板；属性开关始终是 Properties；没选过就退回旧映射。
+            let panel = if drawer == crate::layout::Drawer::Inspector {
+                PanelKind::Properties
+            } else {
+                self.ui.jy_shell_panel.unwrap_or(match drawer {
+                    crate::layout::Drawer::Media => PanelKind::Project,
+                    crate::layout::Drawer::Captions => PanelKind::Text,
+                    crate::layout::Drawer::Audio => PanelKind::AudioTrackMixer,
+                    crate::layout::Drawer::Inspector => PanelKind::Properties,
+                })
+            };
+            self.auto.add("jy.drawer", rect, panel.title());
+            self.panel_body(ui, panel, rect);
+        }
+        self.auto.add("jy.timeline", timeline, PanelKind::Timeline.title());
+        self.panel_body(ui, PanelKind::Timeline, timeline);
+        // 菜单最后画，保证盖在面板之上。
+        if self.ui.jy_menu_open {
+            self.shell_menu(ui, header, body, &t);
+        }
+    }
+
+    /// Compact / Medium 的 ☰ 菜单：把全局菜单收进一个可滚动列表。
+    fn shell_menu(&mut self, ui: &mut egui::Ui, header: Rect, body: Rect, t: &Tokens) {
+        let items = crate::menus::menu_items(self);
+        let height = (body.height() - header.height() - 16.0).clamp(160.0, 460.0);
+        let width = (body.width() - 16.0).min(320.0);
+        let popup = Rect::from_min_size(egui::pos2(header.min.x + 8.0, header.max.y + 6.0), egui::vec2(width, height));
+        ui.painter().rect_filled(popup, 8.0, t.header_bg);
+        ui.painter().rect_stroke(popup, 8.0, egui::Stroke::new(1.0, t.text_dim.gamma_multiply(0.4)), StrokeKind::Inside);
+        self.auto.add("jy.menu.panel", popup, "Menu");
+        let inner = popup.shrink(8.0);
+        let search_rect = Rect::from_min_size(inner.min, egui::vec2(inner.width(), 26.0));
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).id_salt("jy-menu-list"));
+        child.set_clip_rect(popup);
+        // 顶部过滤框：150+ 条命令靠滚动找太慢，先支持子串过滤。
+        {
+            let mut search_ui = child.new_child(egui::UiBuilder::new().max_rect(search_rect).id_salt("jy-menu-search"));
+            let response = search_ui.add(
+                egui::TextEdit::singleline(&mut self.ui.jy_menu_filter).hint_text("Filter…").desired_width(search_rect.width()).margin(egui::vec2(6.0, 3.0)),
+            );
+            self.auto.add("jy.menu.filter", response.rect, "Filter");
+        }
+        let needle = self.ui.jy_menu_filter.trim().to_lowercase();
+        let list_rect = Rect::from_min_max(egui::pos2(inner.min.x, search_rect.max.y + 4.0), inner.max);
+        let mut list = child.new_child(egui::UiBuilder::new().max_rect(list_rect).id_salt("jy-menu-rows"));
+        list.set_clip_rect(popup);
+        // 两级菜单：无过滤词时先列菜单根（File / Edit / …），点进去再看该菜单的命令；
+        // 有过滤词时退回扁平结果——搜索时不该再要求用户先选分组。
+        let group = self.ui.jy_menu_group.clone().filter(|_| needle.is_empty());
+        enum Row {
+            Group(String),
+            Back,
+            Command(String),
+        }
+        let mut rows: Vec<(String, String, bool, Row)> = Vec::new();
+        if !needle.is_empty() {
+            for item in items.iter().filter(|item| !item.path.is_empty()) {
+                let label = format!("{} / {}", item.path.join(" / "), item.label);
+                if label.to_lowercase().contains(&needle) {
+                    rows.push((format!("jy.menu.{}", item.id), label, item.enabled, Row::Command(item.id.clone())));
+                }
+            }
+        } else if let Some(group) = &group {
+            rows.push(("jy.menu.back".to_string(), format!("< {group}"), true, Row::Back));
+            for item in items.iter().filter(|item| item.path.first().is_some_and(|first| first == group)) {
+                let rest: Vec<&str> = item.path.iter().skip(1).map(String::as_str).collect();
+                let label = if rest.is_empty() { item.label.clone() } else { format!("{} / {}", rest.join(" / "), item.label) };
+                rows.push((format!("jy.menu.{}", item.id), label, item.enabled, Row::Command(item.id.clone())));
+            }
+        } else {
+            let mut roots: Vec<(String, usize)> = Vec::new();
+            for item in items.iter().filter(|item| !item.path.is_empty()) {
+                let root = item.path[0].clone();
+                match roots.iter_mut().find(|(name, _)| *name == root) {
+                    Some((_, count)) => *count += 1,
+                    None => roots.push((root, 1)),
+                }
+            }
+            for (root, count) in roots {
+                rows.push((format!("jy.menu.group.{root}"), format!("{root} ({count})"), true, Row::Group(root)));
+            }
+        }
+        let mut next_group: Option<Option<String>> = None;
+        let mut chosen: Option<String> = None;
+        egui::ScrollArea::vertical().id_salt("jy-menu-scroll").auto_shrink([false, false]).show(&mut list, |ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            for (id, label, enabled, row) in &rows {
+                let color = if *enabled { t.text } else { t.text_dim };
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 22.0), Sense::hover());
+                let response = ui.interact(rect, egui::Id::new(("jy-menu", id.as_str())), Sense::click());
+                if response.hovered() && *enabled {
+                    ui.painter().rect_filled(rect, 4.0, t.hover);
+                }
+                let galley = ui.painter().layout_no_wrap(label.clone(), Tokens::ui(12.5), color);
+                ui.painter().galley(egui::pos2(rect.min.x + 10.0, rect.center().y - galley.size().y / 2.0), galley, color);
+                self.auto.add(id, rect, label);
+                if response.clicked() && *enabled {
+                    match row {
+                        Row::Group(name) => next_group = Some(Some(name.clone())),
+                        Row::Back => next_group = Some(None),
+                        Row::Command(command) => chosen = Some(command.clone()),
+                    }
+                }
+            }
+        });
+        if let Some(group) = next_group {
+            self.ui.jy_menu_group = group;
+        }
+        if let Some(id) = chosen {
+            self.ui.jy_menu_open = false;
+            let ctx = ui.ctx().clone();
+            let _ = crate::menus::invoke(self, &ctx, &id, json!({}));
+        }
+    }
+
+    /// 时间轴工具条：剪映式高频动作（撤销 / 重做 / 分割 / 删除 / 播放 / 定格 / 倒放）。
+    /// Compact 挂在时间轴上方，`Jianying` 工作区的 Wide 档挂在 Timeline 面板顶部；只做转发。
+    fn timeline_toolbar(&mut self, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
+        ui.painter().rect_filled(rect, 0.0, t.tl_header_bg);
+        // 第四列表示"需要选中片段"：删除/定格/倒放在没有选区时必须是灰的。
+        let entries: [(&str, &str, &str, serde_json::Value, bool); 7] = [
+            ("jy.tool.undo", "撤销", "edit.undo", json!({}), false),
+            ("jy.tool.redo", "重做", "edit.redo", json!({}), false),
+            ("jy.tool.split", "分割", "sequence.addEdit", json!({}), false),
+            ("jy.tool.delete", "删除", "edit.clear", json!({}), true),
+            ("jy.tool.play", "播放", "playback.toggle", json!({}), false),
+            ("jy.tool.freeze", "定格", "clip.frameHold", json!({}), true),
+            ("jy.tool.reverse", "倒放", "clip.speedDuration", json!({"reverse": true}), true),
+        ];
+        let cell_width = rect.width() / entries.len() as f32;
+        let mut chosen: Option<(&str, serde_json::Value)> = None;
+        let has_selection = !self.session.state.selection.is_empty();
+        for (index, (id, label, command, params, needs_selection)) in entries.iter().enumerate() {
+            // 按钮跟着命令的启用条件走，并且选区为空时删除/定格/倒放一律灰掉。
+            let enabled =
+                (!needs_selection || has_selection) && filmcraft_engine::find_command(command).is_none_or(|spec| (spec.enabled)(&self.session).is_ok());
+            let cell = Rect::from_min_size(egui::pos2(rect.min.x + index as f32 * cell_width, rect.min.y), egui::vec2(cell_width, rect.height()));
+            let response = ui.interact(cell, egui::Id::new(*id), if enabled { Sense::click() } else { Sense::hover() });
+            if enabled && response.hovered() {
+                ui.painter().rect_filled(cell, 0.0, t.hover);
+            }
+            let color = if enabled { t.text } else { t.text_dim.gamma_multiply(0.6) };
+            // 播放中显示"暂停"，这是剪映工具条的即时反馈。
+            let text = if *label == "播放" && self.playback.playing { "暂停" } else { *label };
+            let galley = ui.painter().layout_no_wrap(text.to_string(), Tokens::ui(12.5), color);
+            ui.painter().galley(egui::pos2(cell.center().x - galley.size().x / 2.0, cell.center().y - galley.size().y / 2.0), galley, color);
+            self.auto.add(id, cell, text);
+            if enabled && response.clicked() {
+                chosen = Some((command, params.clone()));
+            }
+        }
+        if let Some((command, params)) = chosen {
+            let ctx = ui.ctx().clone();
+            let _ = crate::menus::invoke(self, &ctx, command, params);
+        }
+    }
+
+    /// 剪映专业版的一级 Tab 条（Wide + `Jianying` 工作区）：素材 / 音频 / 文本 / 贴纸 / 特效 /
+    /// 转场 / 字幕 / 智能包装 / 滤镜 / 调节 / 模板 / 数字人 / 插件。
+    ///
+    /// 只做**导航**：有对应面板的 Tab 调 `show_panel`；模板/数字人/智能包装/插件在本仓库没有实现，
+    /// 画成灰色且不可点——不摆假入口。
+    fn jianying_tabstrip(&mut self, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
+        ui.painter().rect_filled(rect, 0.0, t.tl_header_bg);
+        ui.painter()
+            .line_segment([egui::pos2(rect.min.x, rect.max.y), egui::pos2(rect.max.x, rect.max.y)], egui::Stroke::new(1.0, t.text_dim.gamma_multiply(0.35)));
+        let tabs: [(&str, &str, Option<PanelKind>); 13] = [
+            ("素材", "media", Some(PanelKind::Project)),
+            ("音频", "audio", Some(PanelKind::Project)),
+            ("文本", "text", Some(PanelKind::Text)),
+            ("贴纸", "sticker", Some(PanelKind::EssentialGraphics)),
+            ("特效", "effects", Some(PanelKind::Effects)),
+            ("转场", "transitions", Some(PanelKind::Effects)),
+            ("字幕", "captions", Some(PanelKind::Text)),
+            ("智能包装", "smart", None),
+            ("滤镜", "filters", Some(PanelKind::LumetriColor)),
+            ("调节", "adjust", Some(PanelKind::LumetriColor)),
+            ("模板", "templates", None),
+            ("数字人", "avatar", None),
+            ("插件", "plugins", None),
+        ];
+        // 剪映专业版右上角那颗显眼的「导出」。
+        let export_rect = Rect::from_min_size(egui::pos2(rect.max.x - 8.0 - 72.0, rect.center().y - 14.0), egui::vec2(72.0, 28.0));
+        let export_response = ui.interact(export_rect, egui::Id::new("jy.export"), Sense::click());
+        ui.painter().rect_filled(export_rect, 6.0, if export_response.hovered() { t.accent_hover } else { t.accent });
+        let export_galley = ui.painter().layout_no_wrap("导出".to_string(), Tokens::semibold(12.5), Color32::WHITE);
+        ui.painter().galley(
+            egui::pos2(export_rect.center().x - export_galley.size().x / 2.0, export_rect.center().y - export_galley.size().y / 2.0),
+            export_galley,
+            Color32::WHITE,
+        );
+        self.auto.add("jy.export", export_rect, "导出");
+        if export_response.clicked() {
+            let ctx = ui.ctx().clone();
+            let _ = crate::menus::invoke(self, &ctx, "file.exportMedia", json!({}));
+        }
+
+        let mut chosen: Option<(String, PanelKind)> = None;
+        let mut x = rect.min.x + 8.0;
+        for (label, slug, target) in tabs {
+            let color = if target.is_some() { t.text } else { t.text_dim };
+            let galley = ui.painter().layout_no_wrap(label.to_string(), Tokens::ui(12.0), color);
+            let width = galley.size().x + 18.0;
+            let cell = Rect::from_min_size(egui::pos2(x, rect.center().y - 14.0), egui::vec2(width, 28.0));
+            if cell.max.x > export_rect.min.x - 8.0 {
+                break;
+            }
+            let response = ui.interact(cell, egui::Id::new(("jy-tabstrip", slug)), Sense::click());
+            let active = self.ui.jianying_tab.as_deref() == Some(slug);
+            if active {
+                ui.painter().rect_filled(cell, 6.0, t.accent);
+            } else if response.hovered() && target.is_some() {
+                ui.painter().rect_filled(cell, 6.0, t.hover);
+            }
+            let text = if active { Color32::WHITE } else { color };
+            ui.painter().galley(egui::pos2(cell.min.x + 9.0, cell.center().y - galley.size().y / 2.0), galley, text);
+            self.auto.add(&format!("jy.tabstrip.{slug}"), cell, label);
+            if response.clicked()
+                && let Some(panel) = target
+            {
+                chosen = Some((slug.to_string(), panel));
+            }
+            x = cell.max.x + 4.0;
+        }
+        if let Some((slug, panel)) = chosen {
+            self.ui.jianying_tab = Some(slug.clone());
+            // 剪映的"音频"Tab 只列音频素材，"素材"Tab 恢复全部。
+            self.ui.jy_media_filter = (slug == "audio").then(|| "audio".to_string());
+            self.show_panel(panel);
+        }
+    }
+
+    /// 剪映专业版左栏竖向 rail。有对应功能的（导入 / 素材）可点，其余（子草稿 / 我的 / AI /
+    /// 云素材 / 官方素材 / 即梦）在本仓库没有实现，画灰不可点。
+    fn jianying_rail(&mut self, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
+        ui.painter().rect_filled(rect, 0.0, t.header_bg);
+        ui.painter()
+            .line_segment([egui::pos2(rect.max.x, rect.min.y), egui::pos2(rect.max.x, rect.max.y)], egui::Stroke::new(1.0, t.text_dim.gamma_multiply(0.35)));
+        let entries: [(&str, &str, Option<PanelKind>, Option<&str>); 8] = [
+            ("jy.rail.import", "导入", None, Some("file.import")),
+            ("jy.rail.media", "素材", Some(PanelKind::Project), None),
+            ("jy.rail.subdraft", "子草稿", None, None),
+            ("jy.rail.mine", "我的", None, None),
+            ("jy.rail.ai", "AI", None, None),
+            ("jy.rail.cloud", "云素材", None, None),
+            ("jy.rail.official", "官方", None, None),
+            ("jy.rail.dreamina", "即梦", None, None),
+        ];
+        let cell_height = 44.0_f32;
+        let mut y = rect.min.y + 8.0;
+        let mut clicked: Option<(&str, Option<PanelKind>, Option<&str>)> = None;
+        for (id, label, panel, command) in entries {
+            if y + cell_height > rect.max.y {
+                break;
+            }
+            let enabled = panel.is_some() || command.is_some();
+            let cell = Rect::from_min_size(egui::pos2(rect.min.x + 4.0, y), egui::vec2(rect.width() - 8.0, cell_height));
+            let response = ui.interact(cell, egui::Id::new(id), if enabled { Sense::click() } else { Sense::hover() });
+            let active = self.ui.jianying_rail.as_deref() == Some(label);
+            if active {
+                ui.painter().rect_filled(cell, 6.0, t.accent);
+            } else if enabled && response.hovered() {
+                ui.painter().rect_filled(cell, 6.0, t.hover);
+            }
+            let color = if active {
+                Color32::WHITE
+            } else if enabled {
+                t.text
+            } else {
+                t.text_dim
+            };
+            let galley = ui.painter().layout_no_wrap(label.to_string(), Tokens::ui(11.5), color);
+            ui.painter().galley(egui::pos2(cell.center().x - galley.size().x / 2.0, cell.center().y - galley.size().y / 2.0), galley, color);
+            self.auto.add(id, cell, label);
+            if enabled && response.clicked() {
+                clicked = Some((label, panel, command));
+            }
+            y += cell_height + 2.0;
+        }
+        if let Some((label, panel, command)) = clicked {
+            self.ui.jianying_rail = Some(label.to_string());
+            if let Some(panel) = panel {
+                self.show_panel(panel);
+            } else if let Some(command) = command {
+                let ctx = ui.ctx().clone();
+                let _ = crate::menus::invoke(self, &ctx, command, json!({}));
+            }
+        }
+    }
+
+    pub(crate) fn dock_area(&mut self, ui: &mut egui::Ui, body: Rect) {
+        let class = crate::layout::LayoutClass::from_width(body.width());
+        // 有浮动面板时退回 dock 树：单页壳目前不绘制浮动窗口（见 tasks.md 已知限制），
+        // 用户显式打开的浮动监视器不能因为窗口变窄就消失。
+        let floating = !self.ui.floating.is_empty();
+        if class != crate::layout::LayoutClass::Wide && !floating && self.ui.keys.maximized.is_none() {
+            self.shell_area(ui, body, class);
+            return;
+        }
+        let t = self.tokens;
+        // 剪映专业版工作区：顶部一级 Tab 条占用 42 px，其下仍是四区 dock 树。
+        let body = if class == crate::layout::LayoutClass::Wide && self.ui.workspace == "Jianying" && body.height() > 200.0 {
+            let strip_height = 42.0_f32.min(body.height() * 0.12);
+            let strip = Rect::from_min_size(body.min, egui::vec2(body.width(), strip_height));
+            self.jianying_tabstrip(ui, strip, &t);
+            Rect::from_min_max(egui::pos2(body.min.x, strip.max.y), body.max)
+        } else {
+            body
+        };
+        // 左栏竖向 rail：导入 / 素材 / 子草稿 / 我的 / AI / 云 / 官方 / 即梦。
+        let body = if class == crate::layout::LayoutClass::Wide && self.ui.workspace == "Jianying" && body.width() > 520.0 {
+            let rail_width = 56.0_f32.min(body.width() * 0.08);
+            let rail = Rect::from_min_size(body.min, egui::vec2(rail_width, body.height()));
+            self.jianying_rail(ui, rail, &t);
+            Rect::from_min_max(egui::pos2(body.min.x + rail_width, body.min.y), body.max)
+        } else {
+            body
+        };
         let ctx = ui.ctx().clone();
         if let Some(panel) = self.pending_panel_raise.take()
             && let Some(owner) = self.ui.floating.iter().find(|group| group.panels.contains(&panel)).and_then(|group| group.panels.first())

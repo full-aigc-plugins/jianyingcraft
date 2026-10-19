@@ -314,6 +314,39 @@ pub fn handle(app: &mut FilmcraftApp, ctx: &egui::Context, req: &ControlRequest)
             }
             ok(Value::Null)
         }
+        // 进入某个文件夹（Project 面板导航）。没有它，"空文件夹提示"这类状态只能靠双击，
+        // 而双击在自动化里既慢又不稳。
+        // 顶栏 Tab 的可编程入口：手机端 390 px 下靠后的 Tab 被裁掉，点不到，
+        // 这里直接把面板切过去并把该 Tab 滚进可视区。
+        "ui.shell.tab" => {
+            let Some(slug) = s("tab") else { return err("need `tab`") };
+            let Some(panel) = crate::dock_ui::shell_panel(slug) else { return err("unknown or unimplemented `tab`") };
+            app.ui.jy_shell_panel = Some(panel);
+            app.ui.jy_shell_slug = Some(slug.to_string());
+            app.ui.jy_drawer = Some(crate::layout::Drawer::Media);
+            app.ui.jy_tab_scroll = Some(slug.to_string());
+            app.ui.jy_media_filter = (slug == "audio").then(|| "audio".to_string());
+            ok(Value::Null)
+        }
+        // 顶栏 Tab 的左右循环（剪映里用左右键切换一级 Tab）。
+        "ui.shell.tab.step" => {
+            let step = p.get("step").and_then(Value::as_i64).unwrap_or(1) as i32;
+            let Some((slug, panel)) = crate::dock_ui::shell_tab_step(app.ui.jy_shell_slug.as_deref(), step) else {
+                return err("no implemented tab to move to");
+            };
+            app.ui.jy_shell_panel = Some(panel);
+            app.ui.jy_shell_slug = Some(slug.to_string());
+            app.ui.jy_drawer = Some(crate::layout::Drawer::Media);
+            app.ui.jy_tab_scroll = Some(slug.to_string());
+            app.ui.jy_media_filter = (slug == "audio").then(|| "audio".to_string());
+            ok(json!({"tab": slug}))
+        }
+        "ui.project.bin" => {
+            let Some(bin) = p.get("bin").and_then(Value::as_u64) else { return err("need `bin`") };
+            let inst = crate::panels::project::shown_inst(app);
+            crate::panels::project::navigate(app, inst, Some(bin));
+            ok(Value::Null)
+        }
         "ui.click" | "ui.move" => {
             let pos = match point(app, p) {
                 Ok(p) => p,
@@ -500,6 +533,7 @@ pub fn inspect(app: &FilmcraftApp, ctx: &egui::Context) -> Value {
     });
     json!({
         "window": [size.x, size.y],
+        "layoutClass": crate::layout::LayoutClass::from_width(size.x).as_str(),
         "pixelsPerPoint": ctx.pixels_per_point(),
         "fps": app.fps,
         "keyboardFocus": keyboard_focus,

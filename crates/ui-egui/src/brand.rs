@@ -1,33 +1,22 @@
-//! The ArtCraft wordmark (first-party trademark, used with permission; see `docs/brand/` and
-//! AGENTS.md §1.8), decoded once and kept as a texture.
+//! 产品字标与名称。
+//!
+//! 派生说明：上游 FilmCraft 使用 ArtCraft 商标字标（曾位于 `docs/brand/`，第三方商标、按许可仅限上游使用）。
+//! JianyingCraft 作为派生品**不沿用该商标**，且已按上游 `LICENSE-brand.txt` 的要求删除
+//! `docs/brand/`；此处改为用文字绘制产品名。正式 logo 资产属后续任务（见 docs/derivation/）。
 
-const LOGO_LIGHT_INK: &[u8] = include_bytes!("../../../docs/brand/artcraft-logo-white.png");
-const LOGO_DARK_INK: &[u8] = include_bytes!("../../../docs/brand/artcraft-logo.png");
+/// 产品显示名。UI 中出现产品名时统一引用此常量。
+pub const PRODUCT_NAME: &str = "JianyingCraft";
 
-/// The wordmark for a dark (`dark = true`) or light UI: light ink on dark themes. Its aspect
-/// ratio is width / height of the returned texture.
-pub fn wordmark(ctx: &egui::Context, dark: bool) -> Option<egui::TextureHandle> {
-    let id = egui::Id::new(("artcraft-wordmark", dark));
-    if let Some(t) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
-        return Some(t);
-    }
-    let bytes = if dark { LOGO_LIGHT_INK } else { LOGO_DARK_INK };
-    let img = image::load_from_memory_with_format(bytes, image::ImageFormat::Png).ok()?;
-    // Large enough to stay sharp at 2x for the sizes we draw (≤ 320 pt wide).
-    let img = img.resize(1024, 1024, image::imageops::FilterType::Lanczos3).to_rgba8();
-    let color = egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], img.as_raw());
-    let tex = ctx.load_texture("artcraft-wordmark", color, egui::TextureOptions::LINEAR);
-    ctx.data_mut(|d| d.insert_temp(id, tex.clone()));
-    Some(tex)
-}
-
-/// Draw the wordmark `height` points tall with its left edge at `left_center` (vertically centred).
-/// Returns the drawn rect.
+/// 以文字绘制产品字标，返回绘制区域。
+///
+/// `height` 是字标高度（点）；`dark` 表示深色 UI（用亮色文字）。
+/// 签名与上游 `paint_wordmark` 一致，调用点无需改动。
 pub fn paint_wordmark(ui: &egui::Ui, left_center: egui::Pos2, height: f32, dark: bool) -> Option<egui::Rect> {
-    let tex = wordmark(ui.ctx(), dark)?;
-    let [w, h] = tex.size();
-    let width = height * w as f32 / h.max(1) as f32;
-    let r = egui::Rect::from_min_size(egui::pos2(left_center.x, left_center.y - height / 2.0), egui::vec2(width, height));
-    ui.painter().image(tex.id(), r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
-    Some(r)
+    let color = if dark { egui::Color32::from_rgb(0xf2, 0xf4, 0xf8) } else { egui::Color32::from_rgb(0x18, 0x1c, 0x24) };
+    let job = egui::text::LayoutJob::simple_singleline(PRODUCT_NAME.to_owned(), egui::FontId::proportional(height), color);
+    let galley = ui.painter().layout_job(job);
+    let size = galley.size();
+    let rect = egui::Rect::from_min_size(egui::pos2(left_center.x, left_center.y - size.y / 2.0), size);
+    ui.painter().galley(rect.min, galley, color);
+    Some(rect)
 }

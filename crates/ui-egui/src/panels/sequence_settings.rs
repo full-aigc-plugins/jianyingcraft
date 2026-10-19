@@ -10,12 +10,12 @@
 //! non-drop-frame timecode for the NTSC rates, audio Channel Format and Sample Rate, Maximum Render
 //! Quality, and the Color Management tab (working colour space, wide gamut, auto tone map).
 //!
-//! Premiere settings FilmCraft has no equivalent for yet are shown greyed out with their current
+//! Premiere settings JianyingCraft has no equivalent for yet are shown greyed out with their current
 //! value and a "not supported yet" hint, rather than editable and silently ignored: Editing Mode,
 //! Pixel Aspect Ratio (rendered, and set by New Sequence From Clip, but not editable here yet), Fields, the Frames and Feet + Frames display
 //! formats, Number of Channels, audio Display Format, the Video Previews format, codec and size,
 //! Maximum Bit Depth, and the VR Properties tab. Composite in Linear Color is shown on and greyed:
-//! FilmCraft always composites in linear light.
+//! JianyingCraft always composites in linear light.
 //!
 //! Automation ids (`sequenceSettings.` + …): `tab.general`, `tab.color`, `tab.vr`; General:
 //! `name`, `editingMode`, `timebase` (+ `timebase.option.<num>/<den>` while open), `width`, `height`,
@@ -35,8 +35,8 @@ use crate::FilmcraftApp;
 use crate::i18n::t;
 use crate::state::SequenceSettingsDraft;
 
-const NOT_YET: &str = "Not supported in FilmCraft yet";
-const LINEAR: &str = "FilmCraft always composites in linear light";
+const NOT_YET: &str = "Not supported in JianyingCraft yet";
+const LINEAR: &str = "JianyingCraft always composites in linear light";
 
 /// The Timebase list (frames per second as num/den), Premiere's common rates.
 const TIMEBASES: [(i64, i64); 15] = [
@@ -155,6 +155,15 @@ fn tracks(ui: &mut egui::Ui, d: &mut SequenceSettingsDraft, elems: &mut Elems) {
             ui.label(tl!("tracks"));
         });
     }
+}
+
+/// 应用一个比例预设：宽、高与帧率一起改，drop-frame 跟着帧率走。
+pub fn apply_aspect_preset(d: &mut SequenceSettingsDraft, width: u32, height: u32, num: i64, den: i64) {
+    d.width = width;
+    d.height = height;
+    d.fps_num = num;
+    d.fps_den = den;
+    d.drop_frame = FrameRate { num, den }.supports_drop_frame();
 }
 
 fn rate(d: &SequenceSettingsDraft) -> FrameRate {
@@ -330,6 +339,21 @@ fn general(ui: &mut egui::Ui, d: &mut SequenceSettingsDraft, cur: &SequenceSetti
         elems.push(("sequenceSettings.timebase".into(), resp.response.rect, shown));
     });
     section(ui, "Video", |ui| {
+        // 剪映式比例预设：新建草稿时先挑"横屏/竖屏/方形"，比手填宽高快得多。
+        row(ui, label_w, "Presets:", true, |ui| {
+            for (id, label, w, h, num, den) in [
+                ("newSequence.preset.landscape", "16:9 · 1920×1080 · 30fps", 1920u32, 1080u32, 30i64, 1i64),
+                ("newSequence.preset.vertical", "9:16 · 1080×1920 · 30fps", 1080u32, 1920u32, 30i64, 1i64),
+                ("newSequence.preset.square", "1:1 · 1080×1080 · 30fps", 1080u32, 1080u32, 30i64, 1i64),
+            ] {
+                let on = (d.width, d.height) == (w, h) && (d.fps_num, d.fps_den) == (num, den);
+                let r = ui.add(egui::Button::new(label).selected(on));
+                elems.push((id.into(), r.rect, label.to_string()));
+                if r.clicked() {
+                    apply_aspect_preset(d, w, h, num, den);
+                }
+            }
+        });
         row(ui, label_w, "Frame Size:", true, |ui| {
             let w = ui.add(crate::widgets::number_drag(&mut d.width).range(1..=filmcraft_project::MAX_FRAME_SIDE).speed(1.0));
             elems.push(("sequenceSettings.width".into(), w.rect, d.width.to_string()));
@@ -645,5 +669,22 @@ mod tests {
         assert!(changes(&d, &cur, "Rough Cut").is_empty());
         let d = SequenceSettingsDraft { name: "   ".into(), ..Default::default() };
         assert!(changes(&d, &cur, "Sequence 01").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod preset_tests {
+    use super::*;
+
+    /// 比例预设把宽高和帧率一起改，且 29.97 这类 NTSC 帧率不会误开 drop-frame。
+    #[test]
+    fn aspect_presets_set_size_and_rate() {
+        let mut d = SequenceSettingsDraft { width: 1920, height: 1080, fps_num: 24000, fps_den: 1001, drop_frame: true, ..Default::default() };
+        apply_aspect_preset(&mut d, 1080, 1920, 30, 1);
+        assert_eq!((d.width, d.height, d.fps_num, d.fps_den), (1080, 1920, 30, 1));
+        assert!(!d.drop_frame, "30 fps has no drop-frame timecode");
+        apply_aspect_preset(&mut d, 1080, 1080, 30000, 1001);
+        assert_eq!((d.width, d.height), (1080, 1080));
+        assert!(d.drop_frame, "29.97 supports drop-frame");
     }
 }

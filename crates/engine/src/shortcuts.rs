@@ -16,7 +16,7 @@
 //! are converted on import: their `Ctrl` is the primary modifier (`Cmd`) and `Win`/`Meta` maps to
 //! the macOS Control key.
 //!
-//! Built-in presets: **FilmCraft Default** (each command's default plus the Premiere-default audit,
+//! Built-in presets: **JianyingCraft Default** (each command's default plus the Premiere-default audit,
 //! see [`Shortcuts::audit`]), **Premiere Pro Compatible**, **Final Cut Pro Compatible** and
 //! **Avid Media Composer Compatible** ([`crate::shortcut_presets`]). Custom presets are JSON files in
 //! `<data dir>/Keyboard Shortcuts/`; the active set persists in `active.json` there.
@@ -56,7 +56,7 @@ pub const PANELS: &[&str] = &[
     "Lumetri Color",
 ];
 
-pub const DEFAULT_PRESET: &str = "FilmCraft Default";
+pub const DEFAULT_PRESET: &str = "JianyingCraft Default";
 pub const PREMIERE_PRESET: &str = "Premiere Pro Compatible";
 pub const FCP_PRESET: &str = "Final Cut Pro Compatible";
 pub const AVID_PRESET: &str = "Avid Media Composer Compatible";
@@ -471,7 +471,7 @@ pub struct PresetFile {
     pub format: String,
     pub version: u32,
     pub name: String,
-    /// The OS the key names were written for; None = canonical (FilmCraft) notation.
+    /// The OS the key names were written for; None = canonical (JianyingCraft) notation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub platform: Option<Platform>,
     /// `active.json` only: the active set differs from the preset it started from.
@@ -564,7 +564,7 @@ impl Shortcuts {
 
     // ---------------------------------------------------------------- presets
 
-    /// Default bindings of every known command, plus FilmCraft's panel shortcuts.
+    /// Default bindings of every known command, plus JianyingCraft's panel shortcuts.
     fn base_defaults(&self) -> Vec<Binding> {
         let mut out = Vec::new();
         for c in self.commands() {
@@ -580,7 +580,7 @@ impl Shortcuts {
         out
     }
 
-    /// Premiere-default entries FilmCraft Default adopts: commands with no shortcut of their own
+    /// Premiere-default entries JianyingCraft Default adopts: commands with no shortcut of their own
     /// whose Premiere key is free in that context on this platform.
     pub fn audit(&self) -> Vec<Binding> {
         self.audit_for(Platform::current())
@@ -1075,7 +1075,7 @@ fn read_file(path: &Path) -> std::result::Result<PresetFile, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let f: PresetFile = serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
     if f.format != FILE_FORMAT {
-        return Err(format!("{}: not a FilmCraft keyboard shortcuts file", path.display()));
+        return Err(format!("{}: not a JianyingCraft keyboard shortcuts file", path.display()));
     }
     Ok(f)
 }

@@ -1,6 +1,6 @@
 [package]
 name = "filmcraft"
-description = "FilmCraft desktop app"
+description = "JianyingCraft desktop app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
