@@ -240,7 +240,8 @@
       Premiere 式浮动面板互相遮挡、菜单文字被截断。这些截图就是 P2 的"改造前"基线。*
 - [x] 剪映功能/界面参考：`docs/derivation/09-jianying-reference.md`
       （本机 11.6.0.14552；PO 文案 18,093 条、Resources 60+ 模块、与 701 条命令面逐项对照）
-- [ ] 参考得出的缺口：**变声（pitch）无对应命令**、本地模板未做、代理 UI 未暴露
+- [x] 代理 UI：已具备（`project_views` 的 proxy/offline 徽标、`View ▸ Toggle Proxies`、`Clip ▸ Proxy` 的创建/附加/分离/重连命令与预设、`ProxyDraft` 对话框）——此前的"未暴露"结论已过期
+- [ ] 仍缺：**变声（pitch）无对应命令**（需要音频 DSP 命令，属于扩命令面）；本地模板库未做
       （数字人/云素材/AI 生成/支付明确不做）
 - [ ] 自有品牌资产（logo/图标）替换 favicon 与关于页
 - [ ] 自有帮助页与 GitHub 链接（替换 "(upstream)" 标注）

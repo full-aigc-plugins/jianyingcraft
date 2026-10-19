@@ -152,3 +152,8 @@ target\debug\filmcraft-cli.exe --demo run <remix-export.jsonl>
 - ① 派生/品牌/许可、② 剪映式 IA、③ 面板桥协议与测试、④ 场景技能、⑤ 门禁：**均达成并有实跑证据**
 - 浏览器面板真实执行命令：**已完成**（Playwright + 真实 wasm，ready=true、命令返回 7 个片段）；未完成项只剩代理/变声 UI、ZCode 实机验收
 - **最大风险仍是工作树未提交**（165+ 修改 / 新增目录未入库）；提交需要维护者授权
+### 已提交（2026-10-19）
+
+`jianyingcraft` @ `feature/jianyingcraft-derivation`：
+`c553b5bf` 品牌 → `b31bd9cc` UI 外壳 → `cb5b1b11` 桥与测试 → `9b61989a` 文档；
+`jianyingcraft-plugin`：`2f79769` 插件与技能（初始提交）。两个工作树均干净，**未推送**。
