@@ -56,7 +56,8 @@ fn primary_magnet(app: &FilmcraftApp) -> bool {
 }
 
 /// 主轨磁吸的竖直分量：拖动起点在视频轨时，指针落在主轨（V1）行的上下 `SNAP_PX` 内，
-/// 落点就磁吸到 V1。返回落点相对起始轨的位移（`0 - 起始轨行号`），不在范围内时为 `None`。
+/// 落点就磁吸到 V1。返回落点相对起始轨的位移，不在范围内、或落点轨道与起始轨道相同时
+/// （例如本来就在 V1 上拖动）返回 `None`——「磁吸」必须真的改变落点轨道。
 /// 只改拖动预览与落点，不改任何序列数据。
 fn primary_track_magnet(app: &FilmcraftApp, seq: &Sequence, layout: &Layout, y: f32, start: Option<&Row>) -> Option<i32> {
     if !primary_magnet(app) {
@@ -73,7 +74,9 @@ fn primary_track_magnet(app: &FilmcraftApp, seq: &Sequence, layout: &Layout, y: 
     } else {
         0.0
     };
-    (gap <= SNAP_PX).then(|| -(start.index as i32))
+    // 落点轨道没有变（起始行就是 V1）时不算磁吸；否则返回相对起始行的位移。
+    let delta = row.index as i32 - start.index as i32;
+    (gap <= SNAP_PX && delta != 0).then_some(delta)
 }
 
 /// Waveform peaks are kept per audio stream: (item, index into the media's `audio_streams`).
@@ -2677,7 +2680,9 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
                     (start_hit.tick - first, start_hit.primary)
                 } else {
                     let end_hit = snap_move(app, seq, layout, last + raw, &clips);
-                    (end_hit.tick - last, end_hit.primary)
+                    let end_offset = end_hit.tick - last;
+                    // 「时间边缘真的吸到 V1」= 落点确实被拉到了 V1 边缘；本就停在边缘上不算磁吸。
+                    (end_offset, end_hit.primary && end_offset != raw)
                 };
                 let offset = offset.max(-first);
                 let cur_row = layout.row_at(p.y);

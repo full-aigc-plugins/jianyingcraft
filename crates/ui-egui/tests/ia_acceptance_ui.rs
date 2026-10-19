@@ -14,6 +14,8 @@
 //!   内容区左右各内缩 1 px 不再把 768 px 算成 766 px 的 Compact；768 px 与 900 px 同为
 //!   Medium，属性抽屉是贴预览右缘的 240 px 侧栏，收起后预览恢复原宽。
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Sender, channel};
 
 use egui_kittest::Harness;
@@ -202,6 +204,10 @@ fn ia1_compact_actions_keep_the_window_and_the_dock() {
 ///
 /// IA-1 原文要求在 390×884 下点 rail 导入，但 Compact 单列壳按设计没有 rail（docs §2），
 /// 因此把这条动作放到 rail 真实存在的 1280×1024 上验证，移动端的导入入口由上一个用例覆盖。
+///
+/// 只断言「页面指纹没变」在 handler 被删空时也照样绿。这里给测试 harness 装一个 `pick_files`
+/// 替身（真实桌面壳由 rfd 提供）：点击后它必须被调用一次，返回的 WAV 必须真的加进项目，
+/// rail 的选中态也变成「导入」——导入命令确实执行了，副作用可观察。
 #[test]
 fn ia1_wide_rail_import_does_not_leave_the_workspace() {
     let mut d = Driver::new(1280.0, 1024.0);
@@ -209,11 +215,31 @@ fn ia1_wide_rail_import_does_not_leave_the_workspace() {
     d.frames(4);
     let rail = d.elements("jy.rail.");
     require_rect(&rail, "jy.rail.import");
-    let before = frame_fingerprint(&d.ok("ui.inspect", json!({})));
 
+    // 可导入的测试素材：0.1 s 静音立体声 WAV（测试内允许 unwrap）。
+    let dir = std::env::temp_dir().join(format!("fc-ia-rail-import-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let wav = dir.join("rail-import.wav");
+    std::fs::write(&wav, filmcraft_media::wav::write_wav16(&[0.0; 9600], 2, 48_000)).unwrap();
+    let picked = Arc::new(AtomicUsize::new(0));
+    let picks = Arc::clone(&picked);
+    let path = wav.to_string_lossy().into_owned();
+    d.harness.state_mut().hooks.pick_files = Some(Box::new(move |_| {
+        picks.fetch_add(1, Ordering::SeqCst);
+        vec![path.clone()]
+    }));
+
+    let before = frame_fingerprint(&d.ok("ui.inspect", json!({})));
+    let items_before = d.harness.state_mut().session.project.items.len();
     d.ok("ui.click", json!({"id": "jy.rail.import"}));
     d.frames(4);
+
+    assert_eq!(picked.load(Ordering::SeqCst), 1, "the rail Import must open the file picker exactly once");
+    assert_eq!(d.harness.state_mut().session.project.items.len(), items_before + 1, "the picked file must really be imported, not just selected");
+    let info = d.ok("ui.inspect", json!({}));
+    assert_eq!(info["ui"]["jianying_rail"], json!("导入"), "the rail keeps the Import entry selected: {info}");
     assert_frame_kept(&mut d, &before, "点击导入 rail");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// IA-1 的导出动作：导出按钮**按设计**进入 Export 模式（剪映参考行为），但工作区与 dock 不变。

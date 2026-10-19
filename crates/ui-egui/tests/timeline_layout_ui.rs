@@ -227,6 +227,40 @@ fn dragging_a_clip_snaps_to_the_primary_track_edge() {
     assert_eq!(d.ok("ui.inspect", json!({}))["timeline"]["primaryTrackSnapped"], json!(true), "ui.inspect reports the primary-track magnet");
 }
 
+/// #235 主轨磁吸的语义收紧：在 V1 行内原地拖动（轨道没变、时间边缘也没真的被拉到 V1 边缘）
+/// 不算主轨磁吸，`primaryTrackSnapped` 必须为 false；从 V2 拖到 V1 的用例仍是 true。
+#[test]
+fn dragging_in_place_on_the_primary_track_is_not_a_magnet() {
+    let mut d = Driver::demo();
+    d.exec("sequence.snap", json!({"on": true}));
+    d.frames(3);
+    let seq = d.exec("sequence.inspect", json!({}));
+    let items = seq["video"][0]["items"].as_array().expect("V1 items").clone();
+    assert!(items.len() >= 2, "demo V1 has at least two clips");
+    let target = items[1].clone();
+    let clip = target["clip"].as_u64().expect("clip");
+    let start = target["start"].as_i64().expect("start");
+    let r = d.rect(&format!("timeline.clip.{clip}"));
+
+    // 只竖直移动 8 px，指针仍在 V1 行内；水平不动，时间边缘没有真的换位。
+    let x = r[0] + r[2] / 2.0;
+    let y = r[1] + r[3] / 2.0;
+    d.ok("ui.drag", json!({"from": {"x": x, "y": y}, "to": {"x": x, "y": y + 8.0}, "steps": 10}));
+    d.frames(4);
+
+    let after = d.exec("sequence.inspect", json!({}));
+    let moved = after["video"][0]["items"]
+        .as_array()
+        .expect("V1 items")
+        .iter()
+        .find(|i| i["clip"].as_u64() == Some(clip))
+        .cloned()
+        .expect("an in-place drag keeps the clip on V1");
+    assert_eq!(moved["start"].as_i64(), Some(start), "an in-place drag must not move the clip in time");
+    let info = d.ok("ui.inspect", json!({}));
+    assert_eq!(info["timeline"]["primaryTrackSnapped"], json!(false), "staying on V1 is not a primary-track magnet: {info}");
+}
+
 /// #235 主轨磁吸（轨道）：把片段拖到主轨 V1 附近（指针还在 V2 行的下缘）时，落点磁吸到 V1。
 /// 落点按 `sequence.inspect` 的轨道归属断言，不看像素。
 #[test]

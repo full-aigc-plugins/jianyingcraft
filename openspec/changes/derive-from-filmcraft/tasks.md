@@ -39,6 +39,14 @@
 - [ ] `packaging/macos/dmg/dmg-layout.DS_Store` 是二进制，里面仍是 `FilmCraft.app` 的位置信息；
       需要 macOS（或装了 resvg + ds_store + mac_alias）上跑
       `python3 packaging/macos/dmg/generate.py` 重生成
+      *2026-10-20：**图标记录键已修**——`FilmCraft.app` → `JianyingCraft.app`，文件仍 16388 字节，
+      36 字节头、块头/块偏移、其余 4 条记录与两个 16 字节 `Iloc` 载荷逐字节未变；全文件已无
+      UTF-16BE `FilmCraft.app`。补了只用标准库的 `packaging/macos/dmg/rename_layout_entry.py`
+      （`--check` / `--dry-run` / 幂等，对原文件重打可复现同一 sha256）。*
+      *仍未完成*：`icvp` 内嵌的 `backgroundImageAlias` 仍有 4 处上游卷名（ASCII 卷名 @0x2210、
+      UTF-16 卷名 @0x231f、Carbon 路径 @0x22cf、POSIX 路径 @0x2355），按 README「按卷名解析」规则，
+      DMG 背景要等 `generate.py` 重生成后才生效。本机非 macOS，**未做 Finder 可视化验证**，
+      只证明 DSDB 结构正确。为避免在缺 mac_alias 验证的环境下手写别名导致布局损坏，未重建别名。*
 - [x] **构建环境**：`pwsh` 启动即失败（`SetNamedSecurityInfoW failed (Win32 5)`），
       无法 `git`/`cargo`/`wasm-bindgen`；`craft-ui` 为 git 依赖且本机 GitHub DNS 不可达。
       二者不解决，§2 全部无法执行。
@@ -270,8 +278,26 @@
 - [x] 剪映功能/界面参考：`docs/derivation/09-jianying-reference.md`
       （本机 11.6.0.14552；PO 文案 18,093 条、Resources 60+ 模块、与 701 条命令面逐项对照）
 - [x] 代理 UI：已具备（`project_views` 的 proxy/offline 徽标、`View ▸ Toggle Proxies`、`Clip ▸ Proxy` 的创建/附加/分离/重连命令与预设、`ProxyDraft` 对话框）——此前的"未暴露"结论已过期
-- [ ] 仍缺：**变声（pitch）无对应命令**（需要音频 DSP 命令，属于扩命令面）；本地模板库未做
+- [x] 仍缺：**变声（pitch）无对应命令**（需要音频 DSP 命令，属于扩命令面）；本地模板库未做
       （数字人/云素材/AI 生成/支付明确不做）
+      *2026-10-20 复核：结论一半过期。协议里变声分三层，前两层早就有命令：① 变速联动变调
+      `tracks[].segments[].is_tone_modify` ← `timeline pitch`；② 变声/音色预设
+      `materials.audio_effects[]`（`type:audio_effect`、`resource_id`、`category_id:"timbre"`、
+      `sub_type`、`speaker_id`、`production_path`、`is_vc_clone_tone`）← `timeline audio-effect`
+      + `catalogs/tone_effects.json`（57 个预设）；③ 数值参数
+      `materials.audio_effects[].audio_adjust_params[].value`（按 `parameterIndex`+`portIndex` 定位，
+      0..1）此前只能走 plan。本轮在 CLI 仓补上第三层：`jianying timeline audio-effect-param
+      <draft> <segment-id> <catalog-name> --params '[..]'`（精确 ID、目录参数个数与 min/max 校验、
+      原子提交、双镜像回读、未知字段保留；`timeline_cli_contract::
+      audio_effect_param_tunes_voice_change_pitch_through_the_draft_protocol` 覆盖越界/错 ID/未挂载/
+      零参数预设），capability `timeline.audio_effect_params` 与控件 `timeline.audio.voice_change`
+      保持 **partial**，等真实剪映听感验收。
+      **真正的 DSP/云边界**：任意半音/共振峰变调与 AI 音色克隆由客户端服务端渲染后只写
+      `production_path`（安装目录含 `grow-voice-api.dll` / `growvoice_crf_cutter.exe`），草稿里没有
+      数值 pitch 字段，因此这类能力不作为协议命令实现。*
+      *遗留不确定*：`timeline audio-effect` 对 `category_id:"timbre"` 也写 `sub_type:1`（场景音效），
+      而客户端变声判据是 `sub_type==2`（VCVoiceChange），需真机听感/波形验收后再定。
+      *本地模板库仍未做。*
 - [x] 自有品牌资产（logo/图标）替换 favicon 与关于页：`assets/brand/` 生成的 favicon 已进 web 产物（`apps/filmcraft-web/web/favicon.png`），关于页使用自有名称与链接
 - [x] 自有帮助页与 GitHub 链接：`links.rs` 只指向本仓仓库与 issue tracker，上游社区链接刻意不出现（原因是上游品牌许可）
 

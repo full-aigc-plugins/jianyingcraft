@@ -116,15 +116,18 @@ fn unc_drive_relative_and_nul_paths_are_rejected() {
 /// for a junction (a reparse point `realpath` resolves just like a symlink), so the test does not
 /// silently disappear there; if neither can be created, it says so instead of passing quietly.
 #[test]
+#[ignore = "needs a directory symlink or junction; run with `cargo test -p filmcraft-web --test host_policy -- --ignored`"]
 fn a_link_pointing_outside_the_workspace_is_rejected() {
     let workspace_dir = TempDir::new("ws-link");
     let outside = TempDir::new("outside-link");
     fs::write(outside.path().join("secret.txt"), b"secret").expect("write the outside file");
     let link = workspace_dir.path().join("escape");
-    if !link_to(outside.path(), &link) {
-        eprintln!("skipped: this platform cannot create a directory symlink or junction without extra privileges");
-        return;
-    }
+    // 用 `#[ignore]` 显式声明依赖，而不是创建失败就静默 return：后者在 CI 上会把"没跑"
+    // 记成"通过"。真跑的时候建不出链接就是环境不满足，应当失败并说明原因。
+    assert!(
+        link_to(outside.path(), &link),
+        "this test needs a directory symlink or junction; run it where they are allowed"
+    );
     let ws = Workspace::open(workspace_dir.path()).expect("open the workspace");
     let escaped = "escape/secret.txt";
 

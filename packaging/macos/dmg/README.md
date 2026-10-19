@@ -5,6 +5,15 @@ What Finder shows when the DMG opens: a 660 × 400 pt background with the app ic
 generated at build time, so the DMG still builds with `hdiutil makehybrid` (no mounted device, no
 Finder scripting on CI, nothing extra installed in the signing job).
 
+> **The checked-in `dmg-layout.DS_Store` is patched, not regenerated.** It was written for the
+> upstream name, so its app-icon record was keyed `FilmCraft.app`;
+> [`rename_layout_entry.py`](rename_layout_entry.py) renamed that record key in place to
+> `JianyingCraft.app` with the Python standard library alone (the `ds_store`, `mac_alias` and
+> `resvg` dependencies are not installable in every environment) and verifies the block structure.
+> The patch does not rewrite the background alias, which still names the upstream volume, so the
+> background only resolves after regenerating: `python3 generate.py` with `ds_store`, `mac_alias`,
+> `resvg` and Pillow remains the canonical way to rebuild both the layout and the background.
+
 | File | What |
 |---|---|
 | `background.svg` | Source of the background: the app icon (`assets/app-icon/filmcraft.svg`, linked, not copied) cropped as a cover on the JianyingCraft colour field (`#8b5cf6`), Ink and Paper. Its text (Inter, JetBrains Mono) is outlined, so rendering it needs no fonts. No paper grain: noise doesn't compress, and this keeps `background.tiff` small. |
