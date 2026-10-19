@@ -491,7 +491,7 @@
       （clip 60，2.98 s）→ `captions.import`（2 条）→ `captions.list`（1 轨 2 条）→
       `durationFrames=450` → 导出 **909,010 字节 mp4**，`offlineMedia: []`。
       详见 `docs/derivation/10-skill-runbook-verification.md` §11-13
-- [ ] 图文成片未覆盖：外部素材 `file.import`、中文配音（`tts.voices` 只有 `en-US`）、
+- [x] 图文成片的外部素材导入：`skill-smoke.mjs::text-to-video-external-import` 用 `file.import {path}` 导入一张外部 PNG（item 48），再 `timeline.place` 上 V1，`sequence.inspect` 断言该 item 在轨（7 clips，70 bytes）。**仍缺**：中文配音（`tts.voices` 只有 `en-US`），属环境限制
       配音/画面时长自动对齐、成片抽帧校验
       → 步骤见 docs/runbooks/skill-reruns.md
 - [x] **三个场景技能固化为可重复校验**（2026-10-19，`ui/skill-smoke.mjs`）：
