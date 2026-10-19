@@ -87,13 +87,22 @@ Wide 档的内置工作区 **`Jianying`** 已按剪映专业版补齐四件外�
 
 ## 5. 三档验收
 
-| 编号 | 验收 | 证据 |
+共 5 条（IA-1..IA-5）。每条都由 `crates/ui-egui/tests/` 下的集成测试锁定：`egui_kittest` Harness
+驱动真实窗口，经控制通道断言可观察的矩形、`ui.inspect` 状态与 `sequence.inspect` JSON，
+截图只作补充，不作为唯一证据。
+
+| 编号 | 验收 | 证据（测试文件 → 测试名） |
 |---|---|---|
-| IA-1 | 390×884 无横向溢出；导入/分割/字幕/导出 4 个动作 **0 次页面切换**——定义为「留在同一个单窗口工作区：不新开 OS 窗口、不换工作区、不改 dock 树」；「导出」按剪映参考行为进入**窗口内**的 Export 屏幕（`ui.inspect.ui.mode` 由 `Edit` 变 `Export`，属于该屏幕内的模式切换，不算页面切换） | 截图 + `ui.elements` 矩形断言 |
-| IA-2 | 768×1024 侧栏可收起且不遮挡预览 | 截图 |
-| IA-3 | 1280×1024 四区常驻，时间轴高度可拖拽 | 截图 |
-| IA-4 | 重排前后 `sequence.inspect` 的 clips/effects 完全一致 | 两次 JSON diff |
-| IA-5 | Tab 切换期间播放不中断、选区不丢 | `ui.inspect` 前后对比 |
+| IA-1 | 390×884 无横向溢出；导入/分割/字幕/导出 4 个动作 **0 次页面切换**——定义为「留在同一个单窗口工作区：不新开 OS 窗口、不换工作区、不改 dock 树」；「导出」按剪映参考行为进入**窗口内**的 Export 屏幕（`ui.inspect.ui.mode` 由 `Edit` 变 `Export`，属于该屏幕内的模式切换，不算页面切换） | `tests/ia_acceptance_ui.rs` → `ia1_compact_has_no_page_overflow`、`ia1_compact_actions_keep_the_window_and_the_dock`、`ia1_wide_rail_import_does_not_leave_the_workspace`、`ia1_export_enters_export_mode_without_leaving_the_workspace`；`tests/layout_ui.rs` → `layout_class_matches_the_three_target_viewports`、`compact_top_bar_has_the_export_button`；`tests/project_media_grid_ui.rs` → `a_file_dropped_on_the_window_is_imported`、`search_filters_the_media_grid`、`type_chips_filter_the_media_grid` |
+| IA-2 | 768×1024 侧栏可收起且不遮挡预览 | `tests/ia_acceptance_ui.rs` → `ia2_tablet_768_inspector_sits_right_of_the_preview`、`ia2_medium_inspector_sits_right_of_the_preview`；`tests/layout_ui.rs` → `medium_layout_uses_a_right_sidebar`；`tests/properties_groups_ui.rs` → `properties_panel_has_the_five_jianying_groups_and_they_collapse` |
+| IA-3 | 1280×1024 四区常驻，时间轴高度可拖拽 | `tests/ia_acceptance_ui.rs` → `ia3_wide_keeps_four_regions_and_a_draggable_timeline`；`tests/layout_ui.rs` → `wide_default_workspace_is_the_four_regions`；`tests/timeline_layout_ui.rs` → `jianying_track_headers_are_at_most_96_px_wide`、`caption_track_header_matches_the_video_track_header_width`、`caption_tracks_sit_above_the_video_tracks`、`dragging_a_clip_snaps_to_the_neighbour_edge`、`dragging_a_clip_snaps_to_the_primary_track_edge`、`dragging_a_clip_near_the_primary_track_lands_on_it` |
+| IA-4 | 重排前后 `sequence.inspect` 的 clips/effects 完全一致 | `tests/ia_acceptance_ui.rs` → `ia4_inspector_round_trip_leaves_the_sequence_untouched`（按 `video` / `audio` 轨道整段做 JSON 相等比较，同时覆盖片段与 `effects[]`） |
+| IA-5 | Tab 切换期间播放不中断、选区不丢 | `tests/ia_acceptance_ui.rs` → `ia5_playback_and_selection_survive_tab_switches`；`tests/tab_switch_ui.rs` → `wide_tabstrip_switches_keep_playback_and_selection`、`compact_shell_tab_switches_keep_playback_and_selection` |
+
+**复跑（2026-10-20，`--test-threads=1`）**：`cargo test -p filmcraft-ui-egui --test ia_acceptance_ui`
+→ **9 passed / 0 failed**；`--test layout_ui` → 29、`--test tab_switch_ui` → 2、
+`--test project_media_grid_ui` → 3、`--test timeline_layout_ui` → 6、`--test properties_groups_ui` → 2，
+均 0 failed。逐条命令与结果另见 `docs/derivation/11-acceptance-report.md` §11。
 
 > **2026-10-20 澄清 IA-1 的「0 次页面切换」**：原表述没有区分「换页面」与「进入导出屏幕」，
 > 而剪映的参考行为是导出进入窗口内的专属屏幕——它不新开 OS 窗口、不换工作区、不改 dock 树，

@@ -104,6 +104,18 @@ fn bytes_of(value: &JsValue) -> Option<Vec<u8>> {
     None
 }
 
+/// The host buffer's length *without copying it*: callers check the quota first, so an oversized
+/// reply is rejected before the page pays for a full copy (AGENTS.md §0.4: cap allocations by input).
+fn bytes_len_of(value: &JsValue) -> Option<usize> {
+    if let Some(bytes) = value.dyn_ref::<Uint8Array>() {
+        return Some(bytes.length() as usize);
+    }
+    if value.is_instance_of::<ArrayBuffer>() {
+        return Some(Uint8Array::new(value).length() as usize);
+    }
+    None
+}
+
 /// Read a workspace file through the host (§3). A path that escapes the workspace throws
 /// `path_outside_workspace`; it never falls back to another location.
 #[wasm_bindgen]
@@ -112,12 +124,12 @@ pub fn craft_read(path: &str) -> Result<Vec<u8>, JsValue> {
     let read = host_global("__craftRead")
         .ok_or_else(|| throw(&HostError::Io { operation: "__craftRead", path: path.to_string(), detail: "the host does not provide __craftRead".into() }))?;
     let reply = read.call1(&JsValue::NULL, &JsValue::from_str(path)).map_err(|e| throw(&host_error(&e)))?;
-    let bytes = bytes_of(&reply)
+    let len = bytes_len_of(&reply)
         .ok_or_else(|| throw(&HostError::Io { operation: "__craftRead", path: path.to_string(), detail: "the host did not return bytes".into() }))?;
-    if bytes.len() as u64 > MAX_IMPORT_BYTES {
-        return Err(throw(&HostError::Quota { quota: Quota::ImportBytes, requested: bytes.len() as u64 }));
+    if len as u64 > MAX_IMPORT_BYTES {
+        return Err(throw(&HostError::Quota { quota: Quota::ImportBytes, requested: len as u64 }));
     }
-    Ok(bytes)
+    bytes_of(&reply).ok_or_else(|| throw(&HostError::Io { operation: "__craftRead", path: path.to_string(), detail: "the host did not return bytes".into() }))
 }
 
 /// Write a workspace file through the host (§3/§4.3). Returns a result object instead of throwing.
@@ -155,26 +167,46 @@ fn parse_write(path: &str, len: u64, reply: &JsValue) -> Result<WriteOutcome, Ho
             detail: "the host returned no result; refusing to assume the write happened".into(),
         });
     }
-    if field_bool(reply, "ok") == Some(false) {
+    // 只有明确的 `ok: true` 才算写成功：缺字段、非布尔、未知形状一律失败关闭。
+    if field_bool(reply, "ok") != Some(true) {
         let error = Reflect::get(reply, &JsValue::from_str("error")).unwrap_or(JsValue::NULL);
+        if error.is_null() || error.is_undefined() {
+            return Err(HostError::Io { operation: "__craftWrite", path: path.to_string(), detail: "the host did not confirm the write with ok:true".into() });
+        }
         return Err(host_error(&error));
     }
-    let reported = field_string(reply, "path").unwrap_or_else(|| path.to_string());
-    let bytes = Reflect::get(reply, &JsValue::from_str("bytes"))
-        .ok()
-        .and_then(|v| v.as_f64())
-        .filter(|n| n.is_finite() && *n >= 0.0)
-        .map_or(len, |n| (n as u64).min(len));
-    Ok(WriteOutcome { path: reported, bytes, overwritten: field_string(reply, "overwritten") })
+    // 回报的路径必须存在、语法合法，且与请求一致；否则产物可能落到了别处。
+    let reported = field_string(reply, "path").ok_or_else(|| HostError::Io {
+        operation: "__craftWrite",
+        path: path.to_string(),
+        detail: "the host confirmed a write without naming the path".into(),
+    })?;
+    check_syntax(&reported)?;
+    if reported != path {
+        return Err(HostError::Io { operation: "__craftWrite", path: path.to_string(), detail: format!("the host wrote {reported} instead of {path}") });
+    }
+    // 字节数必须等于请求；少写或多写都不是成功。
+    let bytes = match Reflect::get(reply, &JsValue::from_str("bytes")).ok().and_then(|v| v.as_f64()) {
+        Some(n) if n.is_finite() && n >= 0.0 && (n as u64) == len => len,
+        Some(n) => {
+            return Err(HostError::Io { operation: "__craftWrite", path: path.to_string(), detail: format!("the host wrote {n} of {len} bytes") });
+        }
+        None => {
+            return Err(HostError::Io { operation: "__craftWrite", path: path.to_string(), detail: "the host did not report how many bytes it wrote".into() });
+        }
+    };
+    let overwritten = field_string(reply, "overwritten");
+    if let Some(previous) = &overwritten {
+        check_syntax(previous)?;
+    }
+    Ok(WriteOutcome { path: reported, bytes, overwritten })
 }
 
 /// Screenshot the panel/window through the host (§3). `undefined` when the host has no screenshot
 /// support (or returned `null`): the caller degrades to `render_frame`, which is not an error.
 #[wasm_bindgen]
 pub fn craft_screenshot(panel: Option<String>) -> Option<Vec<u8>> {
-    let Some(screenshot) = host_global("__craftScreenshot") else {
-        return None;
-    };
+    let screenshot = host_global("__craftScreenshot")?;
     let reply = match panel {
         Some(panel) => screenshot.call1(&JsValue::NULL, &JsValue::from_str(&panel)),
         None => screenshot.call0(&JsValue::NULL),
@@ -186,6 +218,14 @@ pub fn craft_screenshot(panel: Option<String>) -> Option<Vec<u8>> {
             return None;
         }
     };
+    let Some(len) = bytes_len_of(&reply) else {
+        log::warn!("__craftScreenshot returned no bytes; falling back to {SCREENSHOT_FALLBACK}");
+        return None;
+    };
+    if len as u64 > MAX_IMPORT_BYTES {
+        log::warn!("__craftScreenshot returned {len} bytes (over the {MAX_IMPORT_BYTES} limit); falling back to {SCREENSHOT_FALLBACK}");
+        return None;
+    }
     match Screenshot::from_png(bytes_of(&reply)) {
         Screenshot::Png(png) => Some(png),
         Screenshot::Unsupported => None,

@@ -1104,7 +1104,9 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                         .max_rect(Rect::from_min_max(pos2(r.min.x + 150.0, r.min.y + 4.0), pos2(r.max.x - PROPS_VALUE_R, r.max.y - 4.0)))
                         .layout(egui::Layout::left_to_right(egui::Align::Center)),
                 );
-                let v = val("lumetri", p).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                // 饱和度中性值是 100（0 是灰片），其余参数中性值是 0。
+                let neutral = if p == "saturation" { 100.0 } else { 0.0 };
+                let v = val("lumetri", p).and_then(|v| v.as_f64()).unwrap_or(neutral);
                 let (_, nv) = crate::widgets::hot_number(&mut vui, egui::Id::new(("pp-color", p, clip.0)), v, 0.5, (lo, hi), 1, "", &t);
                 if let Some(nv) = nv {
                     if lum.is_none() {

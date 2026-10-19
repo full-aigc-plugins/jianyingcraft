@@ -406,7 +406,9 @@ fn copy_for_ingest(s: &mut Session, item: ItemId, path: &str, dir: &Path) -> Res
         }
     };
     let copied = std::io::copy(&mut input, &mut output).and_then(|_| output.set_permissions(input.metadata()?.permissions()));
-    drop(output);
+    // 关闭文件叶子以便后续 relink 能重新打开目标；File 本身不实现 Drop，
+    // 所以匿名绑定到 ‘_’ 即是关闭的正确写法。
+    let _ = output;
     let out_s = out.to_string_lossy().into_owned();
     let linked = copied.map_err(|e| EngineError::Other(format!("copying {path}: {e}"))).and_then(|_| {
         let a = crate::relink::identity_of(&*s.services, path).map_err(|e| EngineError::Other(e.to_string()))?;

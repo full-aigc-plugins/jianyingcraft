@@ -324,7 +324,6 @@ pub fn handle(app: &mut FilmcraftApp, ctx: &egui::Context, req: &ControlRequest)
                 return err(error);
             }
             app.ui.jy_tab_scroll = Some(slug.to_string());
-            app.ui.jy_tab_more = !crate::dock_ui::shell_tab_is_primary(slug);
             ok(Value::Null)
         }
         // 顶栏 Tab 的左右循环（剪映里用左右键切换一级 Tab）。

@@ -182,6 +182,9 @@ impl FilmcraftApp {
         };
         self.ui.jy_shell_panel = Some(panel);
         self.ui.jy_shell_slug = Some(slug.to_string());
+        // 三个入口（`ui.shell.tab` / `ui.shell.tab.step` / Alt+←→）共用一个状态出口：
+        // 切到溢出里的 Tab 时自动展开「更多」，否则选中的入口在屏幕上点不到。
+        self.ui.jy_tab_more = !shell_tab_is_primary(slug);
         self.ui.jy_drawer = Some(crate::layout::Drawer::Media);
         // 剪映的"音频"Tab 只列音频素材，"素材"Tab 恢复全部。
         self.ui.jy_media_filter = (slug == "audio").then(|| "audio".to_string());
@@ -515,9 +518,9 @@ impl FilmcraftApp {
             self.timeline_toolbar(ui, toolbar, &t);
         }
         self.auto.add("jy.preview", preview, PanelKind::Program.title());
-        // Program 被用户浮动出去时，单页壳的预览区不再画第二台监视器：否则同一个面板会画两遍、
-        // 自动化 id 也会重复；那台监视器就是壳之上的浮动窗口。
-        if self.ui.dock.contains(PanelKind::Program) {
+        // 浮动出去的面板只由 `draw_floating_panels` 画一次：否则同一帧同一面板画两遍、
+        // 自动化 id 重复（egui 还会叠出红色告警）。Program / 抽屉面板 / 时间轴都适用。
+        if !self.is_floating(PanelKind::Program) {
             self.panel_body(ui, PanelKind::Program, preview, class);
         }
         if let Some((drawer, rect)) = drawer {
@@ -533,10 +536,14 @@ impl FilmcraftApp {
                 })
             };
             self.auto.add("jy.drawer", rect, panel.title());
-            self.panel_body(ui, panel, rect, class);
+            if !self.is_floating(panel) {
+                self.panel_body(ui, panel, rect, class);
+            }
         }
         self.auto.add("jy.timeline", timeline, PanelKind::Timeline.title());
-        self.panel_body(ui, PanelKind::Timeline, timeline, class);
+        if !self.is_floating(PanelKind::Timeline) {
+            self.panel_body(ui, PanelKind::Timeline, timeline, class);
+        }
         // 菜单最后画，保证盖在面板之上。
         if self.ui.jy_menu_open {
             self.shell_menu(ui, header, body, &t);
@@ -1110,7 +1117,9 @@ impl FilmcraftApp {
         }
     }
 
-    /// 单页壳之上的浮动层：壳照常画，浮动窗口用 egui Area 叠加（窄窗口里也不会消失）。
+    fn is_floating(&self, panel: PanelKind) -> bool {
+        self.ui.floating.iter().any(|f| f.panels.contains(&panel))
+    }
     fn draw_floating_panels(&mut self, ctx: &egui::Context, body: Rect, class: LayoutClass) {
         if self.ui.floating.is_empty() {
             return;

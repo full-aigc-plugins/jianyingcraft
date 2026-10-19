@@ -182,3 +182,32 @@ cargo xtask snapshots --skip-run   # 只校验已有目录（CI 检查）
 - **相对路径不再跟随 CWD**：`filmcraft_ui_egui::test_support::snapshot_dir()` 统一读环境变量；相对值按
   工作区根目录解析，所以在 `crates/ui-egui` 里直接 `cargo test` 也不会再生成
   `crates/ui-egui/crates/ui-egui/target/ui-snapshots/` 这种嵌套目录。
+
+## 11. 2026-10-20 IA 验收复核（本轮实跑）
+
+基线 `3557d652`（`main`，工作树干净）。测试全部串行执行（`--test-threads=1`）：每个用例自建
+wgpu harness，Windows 上并发创建会在启动阶段崩掉，原因见 §10。下表「结果」除宿主三导入一行
+注明引用来源外，均取自本轮终端输出的 `test result:` 行。
+
+| 验收项 | 测试名 | 命令 | 结果 |
+|---|---|---|---|
+| IA-1 390×884 无溢出、导入/分割/字幕/导出不换页 | `ia_acceptance_ui::ia1_compact_has_no_page_overflow`、`ia1_compact_actions_keep_the_window_and_the_dock`、`ia1_wide_rail_import_does_not_leave_the_workspace`、`ia1_export_enters_export_mode_without_leaving_the_workspace` | `cargo test -p filmcraft-ui-egui --test ia_acceptance_ui -- --test-threads=1` | **9 passed; 0 failed**（同一二进制含 IA-2..IA-5 共 9 条） |
+| IA-2 768×1024 侧栏可收起、不遮挡预览 | `ia_acceptance_ui::ia2_tablet_768_inspector_sits_right_of_the_preview`、`ia2_medium_inspector_sits_right_of_the_preview` | 同上 | 2 条通过（总计 9 passed; 0 failed） |
+| IA-3 1280×1024 四区常驻、时间轴可拖拽 | `ia_acceptance_ui::ia3_wide_keeps_four_regions_and_a_draggable_timeline` | 同上 | 1 条通过（总计 9 passed; 0 failed） |
+| IA-4 抽屉开合前后 `sequence.inspect` 不变 | `ia_acceptance_ui::ia4_inspector_round_trip_leaves_the_sequence_untouched` | 同上 | 1 条通过（总计 9 passed; 0 failed） |
+| IA-5 Tab 切换不掉播放、不丢选区 | `ia_acceptance_ui::ia5_playback_and_selection_survive_tab_switches`；`tab_switch_ui::wide_tabstrip_switches_keep_playback_and_selection`、`compact_shell_tab_switches_keep_playback_and_selection` | 同上；`cargo test -p filmcraft-ui-egui --test tab_switch_ui -- --test-threads=1` | IA 侧 1 条通过；`tab_switch_ui` **2 passed; 0 failed** |
+| 3 Tab 顶栏（剪辑/字幕/音频 + 更多） | `layout_ui::top_bar_shows_three_primary_tabs_plus_more`、`compact_tab_bar_disables_unimplemented_modules`、`shell_tabs_cycle_with_left_right` | `cargo test -p filmcraft-ui-egui --test layout_ui -- --test-threads=1` | **29 passed; 0 failed** |
+| 右栏五分组（基础/变速/动画/音频/调色）可折叠 | `properties_groups_ui::properties_panel_has_the_five_jianying_groups_and_they_collapse`、`color_group_edits_the_lumetri_effect` | `cargo test -p filmcraft-ui-egui --test properties_groups_ui -- --test-threads=1` | **2 passed; 0 failed** |
+| 轨道头 ≤96 px / 主轨磁吸 / 字幕轨置顶 | `timeline_layout_ui::jianying_track_headers_are_at_most_96_px_wide`、`caption_track_header_matches_the_video_track_header_width`、`caption_tracks_sit_above_the_video_tracks`、`dragging_a_clip_snaps_to_the_neighbour_edge`、`dragging_a_clip_snaps_to_the_primary_track_edge`、`dragging_a_clip_near_the_primary_track_lands_on_it` | `cargo test -p filmcraft-ui-egui --test timeline_layout_ui -- --test-threads=1` | **6 passed; 0 failed** |
+| 素材宫格：搜索 / 类型筛选 / 拖入导入 | `project_media_grid_ui::search_filters_the_media_grid`、`type_chips_filter_the_media_grid`、`a_file_dropped_on_the_window_is_imported` | `cargo test -p filmcraft-ui-egui --test project_media_grid_ui -- --test-threads=1` | **3 passed; 0 failed** |
+| 宿主三导入 `__craftRead` / `__craftWrite` / `__craftScreenshot` | `host_policy::parent_dir_escape_is_rejected_for_reads_and_writes`、`absolute_path_outside_the_root_is_rejected`、`absolute_path_inside_the_root_is_allowed`、`unc_drive_relative_and_nul_paths_are_rejected`、`a_link_pointing_outside_the_workspace_is_rejected`、`a_resolved_path_that_leaves_the_root_is_rejected`、`a_write_over_the_artifact_quota_leaves_the_previous_file_untouched`、`an_overwrite_reports_the_path_it_replaced`、`reads_and_writes_report_workspace_relative_paths_and_are_accounted_for`、`an_import_admits_at_most_256_files_and_128_mib`、`an_unsupported_screenshot_is_none_not_an_error` | `cargo test -p filmcraft-web --test host_policy` | **11 passed; 0 failed**（记录于 `c89cba9a` 的验证行；本轮按门禁只复跑 `filmcraft-ui-egui` 目标，`apps/filmcraft-web/src/host_policy.rs`、`host.rs`、`tests/host_policy.rs` 自该提交未改动） |
+
+**口径说明**：
+
+- IA 五条共用 `ia_acceptance_ui` 一个测试二进制，因此"结果"列先给该二进制总计（9 passed），
+  再标出本条对应的用例数；单条过滤可用 `cargo test -p filmcraft-ui-egui --test ia_acceptance_ui ia1_`。
+- IA-1 的「0 次页面切换」按 `02-ia-mapping.md` §5 的单窗口定义判定：工作区、dock 树、窗口尺寸不变；
+  `mode` 进入 `Export` 属于同一窗口内的屏幕切换，明确不计为页面切换。
+- 宿主三导入的浏览器侧 JS 调用仍只做 wasm32 类型检查（没有注入三个全局的宿主页），
+  真实文件操作（路径越界、配额、原子写、截图降级）由上面的 11 条宿主测试覆盖；边界见
+  `03-panel-bridge.md` §4.1「执行到哪一步」。
