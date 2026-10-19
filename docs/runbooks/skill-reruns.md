@@ -63,6 +63,10 @@ mkdir -p "$WS"
 
 > `JIANYING_CLI_PROCESS_LIST` 只在 `--help` / 只读检查时指向空文件；真实写草稿前不要设置，
 > 否则会绕过"剪映正在运行就拒绝写入"的保护。
+>
+> PowerShell 5.1 会把**无 BOM 的 UTF-8 `.ps1`** 按系统 ANSI 解码；含中文参数的块请直接
+> 粘到控制台，或把脚本保存为 **UTF-8 with BOM**（`[IO.File]::WriteAllText` 默认无 BOM，
+> 所以本文把长中文文案放进 `ttv.txt` 用 `--text-file` 传入，避免源代码里的中文被误解码）。
 
 ### 2.1 中文音色检查
 
@@ -512,8 +516,11 @@ filmcraft-cli: tts.create: invalid parameters for `tts.create`: the script has n
 1. 建一个只放配音的草稿，合成中文 WAV：
 
 ```powershell
+$TextPath = "$WS\ttv.txt"
+# 先用编辑器把中文文案写进 $TextPath（UTF-8，无 BOM）；不要把长中文直接写进 .ps1
+if (-not (Test-Path $TextPath)) { throw "write your Chinese copy to $TextPath first" }
 & $JY project init --out "$WS\voice-draft" "Voice Draft" --json
-$tts = & $JY media tts "$WS\voice-draft" 0s --text "你好，世界。这是中文配音验收。" `
+$tts = & $JY media tts "$WS\voice-draft" 0s --text-file $TextPath `
   --provider system-windows --voice "Microsoft Huihui Desktop" --json | ConvertFrom-Json
 $DUR   = [double]$tts.data.duration_us / 1000000.0
 $VOICE = $tts.data.path
@@ -575,14 +582,14 @@ ffmpeg -v error -y -f lavfi -i "color=c=0x101820:s=1080x1920:r=30:d=$DUR" \
 ```powershell
 @'
 import sys
-dur = float(sys.argv[2]) if len(sys.argv) > 2 else 3.0
+text = open(sys.argv[1], encoding="utf-8").read().strip()
+dur = float(sys.argv[2])
 h = int(dur // 3600); m = int(dur % 3600 // 60); s = dur % 60
 stamp = f"{h:02d}:{m:02d}:{s:06.3f}".replace(".", ",")
-text = sys.argv[1]
 open(sys.argv[3], "w", encoding="utf-8", newline="\n").write(
     f"1\n00:00:00,000 --> {stamp}\n{text}\n")
 print(stamp)
-'@ | python - "你好，世界。这是中文配音验收。" $DUR "$WS\ttv.srt"
+'@ | python - $TextPath $DUR "$WS\ttv.srt"
 ```
 
 ```sh
