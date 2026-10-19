@@ -277,3 +277,26 @@ node --test tests/editor-wasm.test.mjs
 | 矮轨道头 | 22 px 行高隐藏第二行控件；`timeline_layout_ui` 7 passed |
 
 全量 `cargo test -p filmcraft-ui-egui`：**88 目标 / 0 失败**。
+
+## 13. 2026-10-20 三仓全量复验（收口）
+
+多轮并行修改后做一次完整门禁，避免"局部绿、整体红"：
+
+| 仓 | 命令 | 结果 |
+|---|---|---|
+| jianyingcraft | `cargo test -p filmcraft-ui-egui`（89 个 target） | **738 passed / 0 failed** |
+| jianyingcraft | `cargo test -p filmcraft-engine -p filmcraft-web -p xtask` | **673 passed / 0 failed**（8 个 target） |
+| jianyingcraft | `cargo check --workspace --all-targets` | exit 0，0 error |
+| jianyingcraft | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0，0 error / 0 warning |
+| jianyingcraft-plugin | `node --test tests/*.test.mjs`（`CHROME_PATH` 指向本机 Chrome） | **46 tests / 45 pass / 0 fail / 1 skip** |
+| jianying-cli | `cargo test -p jianying-cli --no-fail-fast` | **281 passed / 0 failed** |
+
+两点环境事实，值得写下来免得下次误判成代码回归：
+
+1. **磁盘会被 `target/` 吃满**：一次 `cargo test --workspace` 把 E: 写到只剩 0.01 GB，
+   随后出现 `os error 112`、`link.exe exit 1180/1318`、`could not parse/generate dep info`，
+   甚至 `the compiler unexpectedly panicked`。删掉 `target/debug/incremental` 后回收 55 GB，
+   同一批测试立刻全绿——这些都是空间不足的连带现象，不是代码问题。
+2. **`provenance_guard` 需要真实 Python**：Windows 的 Microsoft Store `python3.exe` 是可启动但
+   立刻失败的占位别名，会让 3 个门禁误报。测试现在会识别占位别名并提示设置 `PYTHON`；
+   README 也补了这条与 `JIANYING_CLI_PROCESS_LIST` 的用法。
