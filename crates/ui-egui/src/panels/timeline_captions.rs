@@ -64,7 +64,9 @@ pub fn paint(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, area: Re
     if seq.caption_tracks.is_empty() {
         return;
     }
-    let hw = app.ui.timeline.header_w;
+    // 与视频/音频轨头同一个收敛后的宽度：剪映工作区 ≤96 px，否则字幕头会伸出轨道列、
+    // 压到字幕块上（#235）。
+    let hw = super::timeline::header_width(app);
     let content = layout.content;
     let painter = ui.painter().with_clip_rect(area);
     let sel = app.session.state.caption_selection.clone();
@@ -77,6 +79,8 @@ pub fn paint(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, area: Re
         // header
         let label = format!("C{}", i + 1);
         let hrect = Rect::from_min_max(row.min, pos2(row.min.x + hw, row.max.y));
+        // 与 `timeline.track.V1.header` 同名的自动化 id，便于断言字幕头与视频轨头等宽。
+        app.auto.add(&format!("timeline.captionTrack.{label}.header"), hrect, &tr.name);
         painter.rect_filled(hrect, 0.0, t.tl_header_bg);
         painter.line_segment([pos2(hrect.min.x, hrect.max.y - 0.5), pos2(hrect.max.x, hrect.max.y - 0.5)], Stroke::new(1.0, t.separator));
         let badge = Rect::from_min_size(pos2(hrect.min.x + 13.0, row.min.y + 3.0), vec2(24.0, ROW_H - 6.0));
@@ -128,14 +132,18 @@ pub fn paint(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, area: Re
         if eresp.clicked() {
             actions.push(("captions.setTrack".into(), json!({"track": tr.id.0, "enabled": !tr.enabled})));
         }
-        let name = format!("{} · {}", tr.name, crate::i18n::t(tr.format.label()));
-        painter.with_clip_rect(Rect::from_min_max(pos2(hrect.min.x + 86.0, row.min.y), pos2(hrect.max.x - 4.0, row.max.y))).text(
-            pos2(hrect.min.x + 90.0, row.center().y),
-            Align2::LEFT_CENTER,
-            name,
-            Tokens::ui(11.0),
-            t.text_dim,
-        );
+        // 96 px 的紧凑头已被 badge/锁/眼睛占满，名字放不下就只留 badge（名称仍见 Text 面板的
+        // Captions 页）；宽头照旧在右侧列出“名称 · 格式”。
+        if hw > super::timeline::COMPACT_HEADER_W {
+            let name = format!("{} · {}", tr.name, crate::i18n::t(tr.format.label()));
+            painter.with_clip_rect(Rect::from_min_max(pos2(hrect.min.x + 86.0, row.min.y), pos2(hrect.max.x - 4.0, row.max.y))).text(
+                pos2(hrect.min.x + 90.0, row.center().y),
+                Align2::LEFT_CENTER,
+                name,
+                Tokens::ui(11.0),
+                t.text_dim,
+            );
+        }
         // caption blocks
         let p = painter.with_clip_rect(lane);
         let (v0, v1) = (layout.tick_at(content.min.x - 2.0), layout.tick_at(content.max.x + 2.0));

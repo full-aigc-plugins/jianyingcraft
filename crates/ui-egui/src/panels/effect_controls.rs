@@ -904,11 +904,13 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         ui.painter().text(pos2(r.min.x + 18.0, r.center().y), Align2::LEFT_CENTER, label, Tokens::ui(12.0), t.text_dim);
         r
     };
+    // 剪映式分组（基础 / 变速 / 动画 / 音频 / 调色）：标题可折叠，自动化 id 是 `props:<Group>`。
     let section = |ui: &mut egui::Ui, app: &mut FilmcraftApp, name: &str, reset: Option<(usize, u64)>, actions: &mut Vec<(String, Value)>| -> bool {
         ui.add_space(4.0);
         let key = format!("props:{name}");
         let open = !app.ui.collapsed_fx.contains(&key);
         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
+        app.auto.add(&key, r, name);
         ui.painter().line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, t.separator));
         icons::paint(
             ui.painter(),
@@ -934,13 +936,14 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         open
     };
     // the sections scroll: a short panel would otherwise cut Audio and the speed button off (#1322)
+    let mut open_speed_dialog = false;
     egui::ScrollArea::vertical().id_salt("props-scroll").auto_shrink([false, false]).show(&mut bui, |bui| {
         // keep the rows (and their keyframe arrows) clear of the scrollbar at the panel edge
         bui.set_max_width((bui.available_width() - 14.0).max(1.0));
         let eff_idx = |id: &str| it.effects.iter().position(|e| e.effect == id);
         let val = |eid: &str, p: &str| it.effect(eid).and_then(|e| e.param(p)).map(|p| p.value_at(mt));
         if kind == TrackKind::Video {
-            if section(bui, app, "Transform", eff_idx("motion").map(|i| (i, clip.0)), &mut actions) {
+            if section(bui, app, "Basic", eff_idx("motion").map(|i| (i, clip.0)), &mut actions) {
                 for (label, p, unit, speed, range) in [
                     (tl!("Position"), "position", "", 1.0, (-100_000.0, 100_000.0)),
                     (tl!("Anchor point"), "anchor", "", 1.0, (-100_000.0, 100_000.0)),
@@ -997,9 +1000,8 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                     }
                 }
                 properties_nav(app, bui, r, clip, &it, mt, "opacity", "opacity", &mut actions);
-            }
-            let crop = eff_idx("crop");
-            if section(bui, app, "Crop", crop.map(|i| (i, clip.0)), &mut actions) {
+                // 剪映的「基础」分组里还有裁剪：Crop 未应用时，第一次改数值先应用它再设参数。
+                let crop = eff_idx("crop");
                 for (label, p) in [(tl!("Left"), "left"), (tl!("Top"), "top"), (tl!("Right"), "right"), (tl!("Bottom"), "bottom")] {
                     let r = row(bui, label);
                     let mut vui = bui.new_child(
@@ -1018,7 +1020,25 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                     properties_nav(app, bui, r, clip, &it, mt, "crop", p, &mut actions);
                 }
             }
+            // 变速：复用现有的「速度 / 持续时间」命令（clip.speedDuration），不新增命令面。
+            if section(bui, app, "Speed", None, &mut actions) {
+                let (br, bresp) = bui.allocate_exact_size(vec2(118.0, 26.0), Sense::click());
+                bui.painter().rect_filled(br, 4.0, if bresp.hovered() { t.hover } else { t.panel_bg });
+                bui.painter().rect_stroke(br, 4.0, Stroke::new(1.0, t.separator), egui::StrokeKind::Inside);
+                bui.painter().text(
+                    br.center(),
+                    Align2::CENTER_CENTER,
+                    tlf!("Speed {n}%", n = format!("{:.0}", it.speed.abs() * 100.0)),
+                    Tokens::ui(12.0),
+                    t.text,
+                );
+                app.auto.add("properties.speed", br, "Speed");
+                if bresp.clicked() {
+                    open_speed_dialog = true;
+                }
+            }
         }
+        // 音频：视频片段连同链接音频被选中时，也能在右栏直接调音量 / 声像。
         if let Some((clip, it, _)) = clips.iter().find(|c| c.2 == TrackKind::Audio)
             && section(bui, app, "Audio", it.effects.iter().position(|e| e.effect == "volume").map(|i| (i, clip.0)), &mut actions)
         {
@@ -1049,14 +1069,59 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 actions.push(("effects.setParam".into(), json!({"clip": clip.0, "effect": "panner", "param": "balance", "value": nv})));
             }
         }
-        // speed footer
-        bui.add_space(12.0);
-        let (br, bresp) = bui.allocate_exact_size(vec2(118.0, 26.0), Sense::click());
-        bui.painter().rect_filled(br, 4.0, if bresp.hovered() { t.hover } else { t.panel_bg });
-        bui.painter().rect_stroke(br, 4.0, Stroke::new(1.0, t.separator), egui::StrokeKind::Inside);
-        bui.painter().text(br.center(), Align2::CENTER_CENTER, tlf!("Speed {n}%", n = format!("{:.0}", it.speed * 100.0)), Tokens::ui(12.0), t.text);
-        app.auto.add("properties.speed", br, "Speed");
+        // 动画：用现有的关键帧命令（effects.toggleAnimation）给基础参数开 / 关动画。
+        if kind == TrackKind::Video && section(bui, app, "Animation", None, &mut actions) {
+            for (label, eid, param) in [
+                (tl!("Position"), "motion", "position"),
+                (tl!("Scale"), "motion", "scale"),
+                (tl!("Rotation"), "motion", "rotation"),
+                (tl!("Opacity"), "opacity", "opacity"),
+            ] {
+                let Some(idx) = eff_idx(eid) else { continue };
+                let animated = it.effect(eid).and_then(|e| e.param(param)).is_some_and(|p| p.is_animated());
+                let r = row(bui, label);
+                let sw = Rect::from_center_size(pos2(r.min.x + 168.0, r.center().y), vec2(16.0, 16.0));
+                let resp = crate::widgets::icon_toggle(bui, sw, Icon::Stopwatch, animated, &t, egui::Id::new(("pp-anim", clip.0, eid, param)), Some(t.accent));
+                app.auto.add(&format!("properties.animation.{param}"), sw, label);
+                if resp.clicked() {
+                    actions.push(("effects.toggleAnimation".into(), json!({"clip": clip.0, "effect": idx, "param": param})));
+                }
+            }
+        }
+        // 调色：复用 Lumetri 的固有参数（未应用时先应用），与「调色」面板同源。
+        if kind == TrackKind::Video && section(bui, app, "Color", eff_idx("lumetri").map(|i| (i, clip.0)), &mut actions) {
+            let lum = eff_idx("lumetri");
+            for (label, p, lo, hi) in [
+                (tl!("Temperature"), "temperature", -100.0, 100.0),
+                (tl!("Tint"), "tint", -100.0, 100.0),
+                (tl!("Exposure"), "exposure", -5.0, 5.0),
+                (tl!("Contrast"), "contrast", -100.0, 100.0),
+                (tl!("Saturation"), "saturation", 0.0, 200.0),
+            ] {
+                let r = row(bui, label);
+                let mut vui = bui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(Rect::from_min_max(pos2(r.min.x + 150.0, r.min.y + 4.0), pos2(r.max.x - PROPS_VALUE_R, r.max.y - 4.0)))
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                );
+                let v = val("lumetri", p).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let (_, nv) = crate::widgets::hot_number(&mut vui, egui::Id::new(("pp-color", p, clip.0)), v, 0.5, (lo, hi), 1, "", &t);
+                if let Some(nv) = nv {
+                    if lum.is_none() {
+                        actions.push(("effects.apply".into(), json!({"clips": [clip.0], "effect": "lumetri"})));
+                    }
+                    actions.push(("effects.setParam".into(), json!({"clip": clip.0, "effect": "lumetri", "param": p, "value": nv})));
+                }
+                properties_nav(app, bui, r, clip, &it, mt, "lumetri", p, &mut actions);
+            }
+        }
     });
+    if open_speed_dialog {
+        let ctx = ui.ctx().clone();
+        if let Err(e) = crate::menus::invoke(app, &ctx, "clip.speedDuration", json!({})) {
+            app.ui.status = e;
+        }
+    }
     run(app, ui.ctx(), actions);
 }
 

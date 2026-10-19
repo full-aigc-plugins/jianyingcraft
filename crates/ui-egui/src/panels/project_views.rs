@@ -85,6 +85,7 @@ fn matches_filter(app: &FilmcraftApp, id: ItemId, filter: &str) -> bool {
         let keep = match kind {
             "audio" => matches!(item_icon(&item.kind), Icon::Audio),
             "image" => matches!(item_icon(&item.kind), Icon::Image),
+            "video" => matches!(item_icon(&item.kind), Icon::Film),
             _ => true,
         };
         if !keep {

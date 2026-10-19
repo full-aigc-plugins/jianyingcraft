@@ -5,6 +5,7 @@ use egui::{Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use serde_json::{Value, json};
 
 use crate::dock::{self, DockAction, DockNode, Group, PanelKind};
+use crate::layout::LayoutClass;
 use crate::theme::Tokens;
 use crate::{FilmcraftApp, panels};
 
@@ -170,13 +171,14 @@ impl FilmcraftApp {
         Ok(())
     }
 
-    fn panel_body(&mut self, ui: &mut egui::Ui, panel: PanelKind, content: Rect) {
+    fn panel_body(&mut self, ui: &mut egui::Ui, panel: PanelKind, content: Rect, class: LayoutClass) {
         let t = self.tokens;
         let mut body = content;
         // 剪映专业版里工具条贴在时间轴上方；这里只在 `Jianying` 工作区给 Timeline 让出 38 px。
         // Compact/Medium 的工具条由 `shell_area` 画在时间轴上方；这里只负责 Wide，
         // 否则同一帧会画两次（重复的 egui id 还会让界面叠出红色告警）。
-        let wide = crate::layout::LayoutClass::from_width(ui.ctx().content_rect().width()) == crate::layout::LayoutClass::Wide;
+        // 档位用本帧统一算出的 `class`，不再按面板内容区宽度重算（body 比窗口窄 2 px）。
+        let wide = class == LayoutClass::Wide;
         if wide && panel == PanelKind::Timeline && self.ui.workspace == "Jianying" && content.height() > 240.0 {
             let toolbar_height = 38.0_f32.min(content.height() * 0.12);
             let toolbar = Rect::from_min_size(content.min, egui::vec2(content.width(), toolbar_height));
@@ -232,9 +234,9 @@ impl FilmcraftApp {
     ///
     /// 宽屏（Wide）仍走 dock 树；本函数是 Compact/Medium 下唯一的主区绘制入口。
     /// 时间轴下限 220 px（Medium 240 px），上限为可用高度的 55%；抽屉只压缩预览区。
-    fn shell_area(&mut self, ui: &mut egui::Ui, body: Rect, class: crate::layout::LayoutClass) {
+    fn shell_area(&mut self, ui: &mut egui::Ui, body: Rect, class: LayoutClass) {
         let t = self.tokens;
-        let medium = class == crate::layout::LayoutClass::Medium;
+        let medium = class == LayoutClass::Medium;
         let header_height = 44.0_f32.min(body.height());
         let header = Rect::from_min_size(body.min, egui::vec2(body.width(), header_height));
         let available = (body.height() - header_height).max(0.0);
@@ -424,7 +426,7 @@ impl FilmcraftApp {
             self.timeline_toolbar(ui, toolbar, &t);
         }
         self.auto.add("jy.preview", preview, PanelKind::Program.title());
-        self.panel_body(ui, PanelKind::Program, preview);
+        self.panel_body(ui, PanelKind::Program, preview, class);
         if let Some((drawer, rect)) = drawer {
             // 顶栏选的 Tab 决定抽屉画哪个面板；属性开关始终是 Properties；没选过就退回旧映射。
             let panel = if drawer == crate::layout::Drawer::Inspector {
@@ -438,10 +440,10 @@ impl FilmcraftApp {
                 })
             };
             self.auto.add("jy.drawer", rect, panel.title());
-            self.panel_body(ui, panel, rect);
+            self.panel_body(ui, panel, rect, class);
         }
         self.auto.add("jy.timeline", timeline, PanelKind::Timeline.title());
-        self.panel_body(ui, PanelKind::Timeline, timeline);
+        self.panel_body(ui, PanelKind::Timeline, timeline, class);
         // 菜单最后画，保证盖在面板之上。
         if self.ui.jy_menu_open {
             self.shell_menu(ui, header, body, &t);
@@ -717,18 +719,18 @@ impl FilmcraftApp {
         }
     }
 
-    pub(crate) fn dock_area(&mut self, ui: &mut egui::Ui, body: Rect) {
-        let class = crate::layout::LayoutClass::from_width(body.width());
+    /// 绘制编辑模式的 dock 区。`class` 由 `frame` 按窗口宽度每帧算一次，全区共用。
+    pub(crate) fn dock_area(&mut self, ui: &mut egui::Ui, body: Rect, class: LayoutClass) {
         // 有浮动面板时退回 dock 树：单页壳目前不绘制浮动窗口（见 tasks.md 已知限制），
         // 用户显式打开的浮动监视器不能因为窗口变窄就消失。
         let floating = !self.ui.floating.is_empty();
-        if class != crate::layout::LayoutClass::Wide && !floating && self.ui.keys.maximized.is_none() {
+        if class != LayoutClass::Wide && !floating && self.ui.keys.maximized.is_none() {
             self.shell_area(ui, body, class);
             return;
         }
         let t = self.tokens;
         // 剪映专业版工作区：顶部一级 Tab 条占用 42 px，其下仍是四区 dock 树。
-        let body = if class == crate::layout::LayoutClass::Wide && self.ui.workspace == "Jianying" && body.height() > 200.0 {
+        let body = if class == LayoutClass::Wide && self.ui.workspace == "Jianying" && body.height() > 200.0 {
             let strip_height = 42.0_f32.min(body.height() * 0.12);
             let strip = Rect::from_min_size(body.min, egui::vec2(body.width(), strip_height));
             self.jianying_tabstrip(ui, strip, &t);
@@ -737,7 +739,7 @@ impl FilmcraftApp {
             body
         };
         // 左栏竖向 rail：导入 / 素材 / 子草稿 / 我的 / AI / 云 / 官方 / 即梦。
-        let body = if class == crate::layout::LayoutClass::Wide && self.ui.workspace == "Jianying" && body.width() > 520.0 {
+        let body = if class == LayoutClass::Wide && self.ui.workspace == "Jianying" && body.width() > 520.0 {
             let rail_width = 56.0_f32.min(body.width() * 0.08);
             let rail = Rect::from_min_size(body.min, egui::vec2(rail_width, body.height()));
             self.jianying_rail(ui, rail, &t);
@@ -790,7 +792,7 @@ impl FilmcraftApp {
         }
         for group in &groups {
             if let Some(panel) = group.panels.get(group.active).copied() {
-                self.panel_body(ui, panel, group.content);
+                self.panel_body(ui, panel, group.content, class);
             }
         }
         for group in &groups {
@@ -798,7 +800,7 @@ impl FilmcraftApp {
         }
         let floating_order = self.floating_order(&ctx);
         for index in floating_order.into_iter().filter(|_| maximized.is_none()) {
-            if let Some(target) = self.floating_group(&ctx, index, &seqs, &mut actions) {
+            if let Some(target) = self.floating_group(&ctx, index, &seqs, &mut actions, class) {
                 targets.push(target);
             }
         }
@@ -849,7 +851,14 @@ impl FilmcraftApp {
         self.cancel_value_drag(ui.ctx());
     }
 
-    fn floating_group(&mut self, ctx: &egui::Context, index: usize, seqs: &dock::SeqTabs, actions: &mut Vec<DockAction>) -> Option<DropTarget<PanelKind>> {
+    fn floating_group(
+        &mut self,
+        ctx: &egui::Context,
+        index: usize,
+        seqs: &dock::SeqTabs,
+        actions: &mut Vec<DockAction>,
+        class: LayoutClass,
+    ) -> Option<DropTarget<PanelKind>> {
         let floating = self.ui.floating.get(index)?.clone();
         let panel = *floating.panels.first()?;
         let rect = floating_rect(&floating, ctx.content_rect());
@@ -874,7 +883,7 @@ impl FilmcraftApp {
             let chrome = dock::draw_group_chrome_details(ui, &group, seqs, &t, &mut self.auto);
             actions.extend(chrome.actions);
             if let Some(active) = group.panels.get(group.active).copied() {
-                self.panel_body(ui, active, group.content);
+                self.panel_body(ui, active, group.content, class);
             }
             ui.painter().rect_stroke(rect, t.radius, Stroke::new(1.0, t.focus), StrokeKind::Outside);
             let grip = Rect::from_min_max(rect.max - vec2(14.0, 14.0), rect.max);

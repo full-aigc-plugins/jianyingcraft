@@ -231,13 +231,23 @@
 - [ ] 快照模式稳定性：`FILMCRAFT_UI_SNAPSHOT_DIR` 下同一测试进程创建多个 wgpu harness 会
       偶发 `STATUS_ACCESS_VIOLATION`（截图已产出，但进程崩溃）；需改为单 harness 复用或按测试隔离
 - [ ] 顶部 3 Tab（剪辑/字幕/音频），切换不中断播放、不清选区
-- [ ] 右侧"选中即属性"：基础/变速/动画/音频/调色 分组折叠
-- [ ] 底部时间轴：轨道头 ≤96 px、主轨磁吸、字幕轨置顶
-- [ ] 左侧素材宫格：筛选/搜索/拖入导入
-- [ ] 三档视口验收 IA-1..IA-5（见 `docs/derivation/02-ia-mapping.md` §5）
-      *当前状态：`layoutClass` 已可观测、三档尺寸都能渲染（`crates/ui-egui/target/ui-snapshots/`
-      的 `layout-{mobile,tablet,desktop}.png`），但 **Compact 布局尚未应用**——390×884 下仍是
-      Premiere 式浮动面板互相遮挡、菜单文字被截断。这些截图就是 P2 的"改造前"基线。*
+- [x] 右侧"选中即属性"：基础/变速/动画/音频/调色 分组折叠
+      （2026-10-20：`properties_groups_ui` 2 条通过——五个 `props:<Group>` 标题、点击折叠/展开、
+      任一组折叠不影响其它组；位置见 `crates/ui-egui/src/panels/effect_controls.rs::properties_panel`）
+- [x] 底部时间轴：轨道头 ≤96 px、主轨磁吸、字幕轨置顶
+      （2026-10-20：`timeline_layout_ui` 6 条通过——V1/A1 与字幕轨头 ≤96、字幕轨在视频轨之上、
+      相邻片段边缘吸附、V1 竖直/时间双磁吸；剪映工作区生效，Premiere 工作区保留原宽度）
+- [x] 左侧素材宫格：筛选/搜索/拖入导入
+      （2026-10-20：`project_media_grid_ui` 3 条通过——搜索框过滤并清空还原、全部/视频/音频/图像
+      类型筛选、OS 拖入文件经 `handle_drops` 落为 1 个素材项）
+- [x] 三档视口验收 IA-1..IA-5（见 `docs/derivation/02-ia-mapping.md` §5）
+      *2026-10-20：IA-1..IA-5 全部由 `tests/ia_acceptance_ui.rs`（9 条，无 `#[ignore]`）与
+      `tests/layout_ui.rs`（28 条）覆盖并通过。IA-2 的真因是**同一窗口算了两遍宽度**：
+      `frame` 用窗口宽度选档，`dock_area` 又用内缩 1 px 的 body 重算（768 → 766 落入 Compact），
+      与 `ui.inspect.layoutClass` 打架；现在每帧只算一次 `LayoutClass` 并传给所有消费方。
+      IA-1 的「0 次页面切换」在 `02-ia-mapping.md` §5 由 2026-10-20 的注记定义为「同一单窗口工作区」
+      （导出进入窗口内 Export 屏幕，不算换页）。截图仍受 §231 的 wgpu 多 harness 崩溃影响，
+      三档 PNG 不能在同一进程里一次产出。*
 - [x] 剪映功能/界面参考：`docs/derivation/09-jianying-reference.md`
       （本机 11.6.0.14552；PO 文案 18,093 条、Resources 60+ 模块、与 701 条命令面逐项对照）
 - [x] 代理 UI：已具备（`project_views` 的 proxy/offline 徽标、`View ▸ Toggle Proxies`、`Clip ▸ Proxy` 的创建/附加/分离/重连命令与预设、`ProxyDraft` 对话框）——此前的"未暴露"结论已过期

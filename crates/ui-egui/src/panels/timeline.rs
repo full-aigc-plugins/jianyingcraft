@@ -33,6 +33,48 @@ const MASTER_H: f32 = 34.0;
 /// The selected gap between two clips (#648, #668).
 const GAP_FILL: Color32 = Color32::from_gray(224);
 const SNAP_PX: f32 = 9.0;
+/// 剪映工作区的轨道头宽度：≤96 px（Premiere 式工作区仍用用户设置的宽度）。
+pub(super) const COMPACT_HEADER_W: f32 = 96.0;
+
+/// The Timeline's track-header width. `Jianying` uses the narrow, two-row header (≤96 px);
+/// every other workspace keeps `TimelineView::header_w` (Premiere's wide header).
+pub(super) fn header_width(app: &FilmcraftApp) -> f32 {
+    if app.ui.workspace == "Jianying" { app.ui.timeline.header_w.min(COMPACT_HEADER_W) } else { app.ui.timeline.header_w }
+}
+
+/// 剪映式主轨（#235）：第一条视频轨，即轨道头标着 V1、贴在视频区底部的那条。
+/// 这是**视图约定**而不是新的数据字段：只影响拖动的落点，`timeline.place` 的帧栅格语义不变
+/// （见 `docs/derivation/02-ia-mapping.md` §4 契约 3）。
+pub fn primary_track_id(seq: &Sequence) -> Option<TrackId> {
+    seq.video_tracks.first().map(|t| t.id)
+}
+
+/// 主轨磁吸是否生效：剪映工作区的视图约定，并与时间轴既有的吸附开关共用
+/// `session.state.snapping`（关掉吸附就没有磁吸）。
+fn primary_magnet(app: &FilmcraftApp) -> bool {
+    app.ui.workspace == "Jianying" && app.session.state.snapping
+}
+
+/// 主轨磁吸的竖直分量：拖动起点在视频轨时，指针落在主轨（V1）行的上下 `SNAP_PX` 内，
+/// 落点就磁吸到 V1。返回落点相对起始轨的位移（`0 - 起始轨行号`），不在范围内时为 `None`。
+/// 只改拖动预览与落点，不改任何序列数据。
+fn primary_track_magnet(app: &FilmcraftApp, seq: &Sequence, layout: &Layout, y: f32, start: Option<&Row>) -> Option<i32> {
+    if !primary_magnet(app) {
+        return None;
+    }
+    let start = start.filter(|r| r.kind == TrackKind::Video)?;
+    let primary = primary_track_id(seq)?;
+    let row = layout.rows.iter().find(|r| r.track == primary)?;
+    // 指针到 V1 行的竖直距离：行内为 0，行外取最近边缘的距离。
+    let gap = if y < row.rect.min.y {
+        row.rect.min.y - y
+    } else if y > row.rect.max.y {
+        y - row.rect.max.y
+    } else {
+        0.0
+    };
+    (gap <= SNAP_PX).then(|| -(start.index as i32))
+}
 
 /// Waveform peaks are kept per audio stream: (item, index into the media's `audio_streams`).
 pub type PeakKey = (ItemId, usize);
@@ -49,6 +91,10 @@ pub struct TlState {
     pub layout: Option<Layout>,
     /// Snap indicator x (screen) this frame.
     snap_x: Option<f32>,
+    /// #235 主轨磁吸：上一次片段拖动是否吸到了主轨（时间边缘吸到 V1，或落点竖直到 V1）。
+    /// 松开后保留给 `ui.inspect` 的 `timeline.primaryTrackSnapped` 读取，下一次拖动开始时清零。
+    /// 瞬态的视图状态，不进入项目、不持久化。
+    pub primary_track_snapped: bool,
     pub peaks: Arc<Mutex<HashMap<PeakKey, Arc<Vec<(f32, f32)>>>>>,
     peaks_pending: Arc<Mutex<Vec<PeakKey>>>,
     /// Nested sequences have waveforms too, of their mix. Unlike media a sequence changes: this is
@@ -315,7 +361,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     };
     let rate = seq.settings.frame_rate;
     let dt = ctx.input(|i| i.stable_dt).min(0.05) as f64;
-    let header_w = app.ui.timeline.header_w;
+    let header_w = header_width(app);
     let content = Rect::from_min_max(pos2(rect.min.x + header_w, rect.min.y + TOP_H), pos2(rect.max.x - SCROLLBAR_H, rect.max.y - SCROLLBAR_H));
     let ruler = Rect::from_min_max(pos2(content.min.x, rect.min.y + TOP_H - RULER_H), pos2(content.max.x, rect.min.y + TOP_H));
     app.last_timeline_width = content.width();
@@ -1244,7 +1290,7 @@ fn patch_button(ui: &mut egui::Ui, r: Rect, clip: Rect, label: &str, on: bool, s
 
 #[allow(clippy::too_many_arguments)]
 fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows: &[Row], rect: Rect, vclip: Rect, aclip: Rect, t: &Tokens) {
-    let hw = app.ui.timeline.header_w;
+    let hw = header_width(app);
     let tg = app.session.targeting();
     let mut actions: Vec<(String, Value)> = Vec::new();
     let mut vo_action = None;
@@ -1263,18 +1309,29 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
             p.line_segment([pos2(hrect.min.x, hrect.min.y + 0.5), pos2(hrect.max.x, hrect.min.y + 0.5)], Stroke::new(1.0, t.separator));
         }
         let label = format!("{}{}", if r.kind == TrackKind::Video { "V" } else { "A" }, r.index + 1);
-        let btn_rect = |x0: f32| Rect::from_min_max(pos2(hrect.min.x + x0, hrect.min.y + 1.0), pos2(hrect.min.x + x0 + 24.0, hrect.max.y - 2.0));
+        // 剪映工作区用 96 px 的两行紧凑轨道头；其余工作区保持 Premiere 式宽轨道头。
+        let compact = hw <= COMPACT_HEADER_W;
+        let btn_rect = |x0: f32| {
+            if compact {
+                Rect::from_min_size(pos2(hrect.min.x + x0, hrect.min.y + 3.0), vec2(20.0, 16.0))
+            } else {
+                Rect::from_min_max(pos2(hrect.min.x + x0, hrect.min.y + 1.0), pos2(hrect.min.x + x0 + 24.0, hrect.max.y - 2.0))
+            }
+        };
+        app.auto.add(&format!("timeline.track.{label}.header"), hrect, &tr.name);
         // 1. source patch (absent when unpatched)
         let patched = if r.kind == TrackKind::Video { tg.video_dest == Some(r.track) } else { tg.audio_dest == Some(r.track) };
-        let pr = btn_rect(13.0);
+        let pr = btn_rect(if compact { 2.0 } else { 13.0 });
         app.auto.add(&format!("timeline.track.{label}.sourcePatch"), pr, "Source patch");
         if patch_button(ui, pr, visible, &label, patched, false, egui::Id::new(("patch", r.track.0)), t).clicked() {
             actions.push(("timeline.setTargeting".into(), json!({"track": r.track.0, "sourcePatch": !patched})));
         }
         // 2. track lock
-        let small = |x: f32, y: f32| Rect::from_center_size(pos2(hrect.min.x + x, y), vec2(18.0, 18.0));
-        let upper_y = hrect.min.y + (16.0f32).min(hrect.height() / 2.0);
-        let lock_r = small(49.0, hrect.center().y);
+        let small =
+            |x: f32, y: f32| Rect::from_center_size(pos2(hrect.min.x + x, y), vec2(if compact { 16.0 } else { 18.0 }, if compact { 16.0 } else { 18.0 }));
+        let upper_y = if compact { hrect.min.y + 11.0 } else { hrect.min.y + (16.0f32).min(hrect.height() / 2.0) };
+        let lower_y = if compact { hrect.min.y + 32.0 } else { upper_y };
+        let lock_r = small(if compact { 32.0 } else { 49.0 }, upper_y);
         let lresp = crate::widgets::icon_toggle(
             ui,
             lock_r.intersect(visible),
@@ -1294,13 +1351,13 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
         }
         // 3. target
         let targeted = tg.targeted.contains(&r.track);
-        let trr = btn_rect(61.0);
+        let trr = btn_rect(if compact { 44.0 } else { 61.0 });
         app.auto.add(&format!("timeline.track.{label}.target"), trr, "Toggle track targeting");
         if patch_button(ui, trr, visible, &label, targeted, true, egui::Id::new(("target", r.track.0)), t).clicked() {
             actions.push(("timeline.setTargeting".into(), json!({"track": r.track.0, "targeted": !targeted})));
         }
-        // 4. upper line icons
-        let mut x = 102.0;
+        // 4. second line: sync lock, then the output / mute+solo controls
+        let mut x = if compact { 74.0 } else { 102.0 };
         let sr = small(x, upper_y);
         let sresp =
             crate::widgets::icon_toggle(ui, sr.intersect(visible), Icon::SyncLock, tr.sync_lock, t, egui::Id::new(("syncLock", r.track.0)), Some(t.text_dim));
@@ -1310,7 +1367,7 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
         }
         x += 24.0;
         if r.kind == TrackKind::Video {
-            let er = small(x, upper_y);
+            let er = small(if compact { 14.0 } else { x }, lower_y);
             let eresp = crate::widgets::icon_toggle(
                 ui,
                 er.intersect(visible),
@@ -1325,7 +1382,8 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
                 actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "enabled": !tr.enabled})));
             }
         } else {
-            let mr = Rect::from_center_size(pos2(hrect.min.x + x, upper_y), vec2(14.0, 14.0));
+            let mx = if compact { 12.0 } else { x };
+            let mr = Rect::from_center_size(pos2(hrect.min.x + mx, lower_y), vec2(14.0, 14.0));
             let mresp = crate::widgets::letter_toggle(
                 ui,
                 mr.intersect(visible),
@@ -1339,7 +1397,7 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
             if mresp.clicked() {
                 actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "muted": !tr.muted})));
             }
-            let s2 = Rect::from_center_size(pos2(hrect.min.x + x + 20.0, upper_y), vec2(14.0, 14.0));
+            let s2 = Rect::from_center_size(pos2(hrect.min.x + mx + if compact { 22.0 } else { 20.0 }, lower_y), vec2(14.0, 14.0));
             let so = crate::widgets::letter_toggle(
                 ui,
                 s2.intersect(visible),
@@ -1353,15 +1411,17 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
             if so.clicked() {
                 actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "solo": !tr.solo})));
             }
-            let vr = small(x + 42.0, upper_y);
+            let vr = small(if compact { 56.0 } else { x + 42.0 }, lower_y);
             if let Some(a) = super::voiceover::header_button(app, ui, r.track, vr, visible, &label, t) {
                 vo_action = Some(a);
             }
-            let kr = small(x + 64.0, upper_y);
+            let kr = small(if compact { 78.0 } else { x + 64.0 }, lower_y);
             super::timeline_automation::header_button(app, ui, seq, r, kr, visible, &label, t);
         }
-        // 5. name on the lower line (or inline when short)
-        if hrect.height() >= 40.0 {
+        // 5. name on the lower line (or inline when short); the 96 px header has room beside the eye
+        if compact && r.kind == TrackKind::Video && hrect.height() >= 44.0 {
+            p.text(pos2(hrect.min.x + 28.0, lower_y), Align2::LEFT_CENTER, &tr.name, Tokens::ui(10.5), t.text_dim);
+        } else if !compact && hrect.height() >= 40.0 {
             p.text(pos2(hrect.min.x + 94.0, hrect.min.y + 34.0), Align2::LEFT_CENTER, &tr.name, Tokens::ui(11.0), t.text_dim);
         }
         // resize track height by dragging the header's bottom edge, or the outer edge of the top video
@@ -1427,7 +1487,7 @@ pub fn ruler_steps(frame_px: f64, base: i64) -> (i64, i64) {
 fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequence, layout: &Layout, t: &Tokens, seq_id: ItemId) {
     let p = ui.painter().clone();
     let rate = seq.settings.frame_rate;
-    let hw = app.ui.timeline.header_w;
+    let hw = header_width(app);
     let ruler = layout.ruler;
     // background of the whole top block
     p.rect_filled(Rect::from_min_max(rect.min, pos2(rect.max.x, ruler.max.y)), 0.0, t.panel_bg);
@@ -1737,49 +1797,75 @@ fn vertical_scrollbar(ui: &mut egui::Ui, bar: Rect, value: &mut f32, max: f32, i
 
 /// Snap `t` to nearby candidates (edits, playhead, markers, in/out). Returns snapped tick.
 fn snap(app: &mut FilmcraftApp, seq: &Sequence, layout: &Layout, t: Tick, exclude: &[ClipId]) -> Tick {
-    snap_to(app, seq, layout, t, exclude, true)
+    snap_to(app, seq, layout, t, exclude, true, false).tick
 }
 
 /// Where a dragged playhead lands: [`snap`], but not onto itself, or it would stick where it is
 /// and only move in jumps of `SNAP_PX` (#164).
 fn snap_playhead(app: &mut FilmcraftApp, seq: &Sequence, layout: &Layout, t: Tick) -> Tick {
-    snap_to(app, seq, layout, t, &[], false)
+    snap_to(app, seq, layout, t, &[], false, false).tick
 }
 
-fn snap_to(app: &mut FilmcraftApp, seq: &Sequence, layout: &Layout, t: Tick, exclude: &[ClipId], to_playhead: bool) -> Tick {
+/// A clip move's snap: [`snap`], with the primary track's edges (V1) winning over any other
+/// track's within the same `SNAP_PX` — 剪映的「主轨磁吸」（#235）。
+fn snap_move(app: &mut FilmcraftApp, seq: &Sequence, layout: &Layout, t: Tick, exclude: &[ClipId]) -> SnapHit {
+    snap_to(app, seq, layout, t, exclude, true, true)
+}
+
+/// One snap decision: the tick the target lands on (`t` when nothing is near) and whether it
+/// landed on a primary-track (V1) clip edge.
+#[derive(Clone, Copy, Debug)]
+struct SnapHit {
+    tick: Tick,
+    primary: bool,
+}
+
+fn snap_to(app: &mut FilmcraftApp, seq: &Sequence, layout: &Layout, t: Tick, exclude: &[ClipId], to_playhead: bool, prefer_primary: bool) -> SnapHit {
     if !app.session.state.snapping {
-        return t;
+        return SnapHit { tick: t, primary: false };
     }
-    let mut cands: Vec<Tick> = Vec::with_capacity(64);
+    let prefer_primary = prefer_primary && primary_magnet(app);
+    let primary = primary_track_id(seq);
+    let x = layout.x_of(t);
+    // 主轨的边缘单独收集：它在 SNAP_PX 内优先于其它轨的边缘，即使别的边缘像素上更近。
+    let mut best_primary: Option<(f32, Tick)> = None;
+    let mut best_other: Option<(f32, Tick)> = None;
+    let consider = |slot: &mut Option<(f32, Tick)>, c: Tick| {
+        let d = (layout.x_of(c) - x).abs();
+        if d < SNAP_PX && slot.is_none_or(|b| d < b.0) {
+            *slot = Some((d, c));
+        }
+    };
     for tr in seq.all_tracks() {
+        let is_primary = prefer_primary && Some(tr.id) == primary;
         for it in &tr.items {
             if exclude.contains(&it.id) {
                 continue;
             }
-            cands.push(it.start);
-            cands.push(it.end());
+            let slot = if is_primary { &mut best_primary } else { &mut best_other };
+            consider(slot, it.start);
+            consider(slot, it.end());
         }
+    }
+    for m in &seq.markers {
+        consider(&mut best_other, m.start);
+    }
+    for c in [seq.mark_in, seq.mark_out].into_iter().flatten() {
+        consider(&mut best_other, c);
     }
     if to_playhead {
-        cands.push(app.session.playhead());
+        consider(&mut best_other, app.session.playhead());
     }
-    cands.extend(seq.markers.iter().map(|m| m.start));
-    cands.extend(seq.mark_in);
-    cands.extend(seq.mark_out);
-    let x = layout.x_of(t);
-    let mut best: Option<(f32, Tick)> = None;
-    for c in cands {
-        let d = (layout.x_of(c) - x).abs();
-        if d < SNAP_PX && best.is_none_or(|b| d < b.0) {
-            best = Some((d, c));
-        }
-    }
+    let (best, primary) = match best_primary {
+        Some(b) if prefer_primary => (Some(b), true),
+        _ => (best_other, false),
+    };
     match best {
         Some((_, c)) => {
             app.tl.snap_x = Some(layout.x_of(c));
-            c
+            SnapHit { tick: c, primary }
         }
-        None => t,
+        None => SnapHit { tick: t, primary: false },
     }
 }
 
@@ -2511,6 +2597,10 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
                 scrub_playhead(app, seq, layout, p, mods.shift);
             }
             if resp.drag_started() {
+                // 新的一次片段拖动重新判定主轨磁吸（#235）。
+                if matches!(&d, Drag::Move { .. }) {
+                    app.tl.primary_track_snapped = false;
+                }
                 app.tl.drag = Some(d);
             }
         }
@@ -2575,26 +2665,42 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
                 // snap the moved block's start or end
                 let first = clips.iter().filter_map(|c| seq.find_item(*c).map(|(_, i)| i.start)).min().unwrap_or_default();
                 let last = clips.iter().filter_map(|c| seq.find_item(*c).map(|(_, i)| i.end())).max().unwrap_or_default();
-                let s1 = snap(app, seq, layout, first + raw, &clips) - first;
-                let offset = if s1 != raw { s1 } else { snap(app, seq, layout, last + raw, &clips) - last };
+                let start_hit = snap_move(app, seq, layout, first + raw, &clips);
+                let (offset, snapped_primary) = if start_hit.tick - first != raw {
+                    (start_hit.tick - first, start_hit.primary)
+                } else {
+                    let end_hit = snap_move(app, seq, layout, last + raw, &clips);
+                    (end_hit.tick - last, end_hit.primary)
+                };
                 let offset = offset.max(-first);
                 let cur_row = layout.row_at(p.y);
                 let start_row = layout.rows.iter().find(|r| r.track == start_track);
-                let track_delta = match (cur_row, start_row) {
+                let mut track_delta = match (cur_row, start_row) {
                     (Some(c), Some(s)) if c.kind == s.kind => c.index as i32 - s.index as i32,
                     _ => 0,
                 };
+                // 主轨磁吸（#235）：指针在主轨附近时，落点竖直到 V1（视图约定，不改数据）。
+                let magnet = primary_track_magnet(app, seq, layout, p.y, start_row);
+                if let Some(delta) = magnet {
+                    track_delta = delta;
+                }
+                app.tl.primary_track_snapped = magnet.is_some() || snapped_primary;
                 if move_is_locked(seq, &clips, track_delta) {
                     ctx.set_cursor_icon(CursorIcon::NotAllowed);
                     Some(Drag::Move { clips, grab_tick, start_track, offset: Tick::ZERO, track_delta: 0, new_track: None, copy: mods.alt })
                 } else {
                     // A linked or multitrack selection gets one destination per source track.
-                    let new_track = start_row
-                        .filter(|_| clips.iter().all(|c| seq.find_item(*c).is_some_and(|(tid, _)| seq.track(tid).is_some_and(|t| !t.locked))))
-                        .and_then(|s| {
-                            let (vh, ah) = (app.ui.timeline.video_track_h, app.ui.timeline.audio_track_h);
-                            new_track_at(seq, layout, p.y, vh, ah).filter(|(kind, _)| *kind == s.kind)
-                        });
+                    // 被主轨吸住时不再新建轨道：落点已经确定在 V1 上。
+                    let new_track = if magnet.is_some() {
+                        None
+                    } else {
+                        start_row
+                            .filter(|_| clips.iter().all(|c| seq.find_item(*c).is_some_and(|(tid, _)| seq.track(tid).is_some_and(|t| !t.locked))))
+                            .and_then(|s| {
+                                let (vh, ah) = (app.ui.timeline.video_track_h, app.ui.timeline.audio_track_h);
+                                new_track_at(seq, layout, p.y, vh, ah).filter(|(kind, _)| *kind == s.kind)
+                            })
+                    };
                     Some(Drag::Move { clips, grab_tick, start_track, offset, track_delta, new_track, copy: mods.alt })
                 }
             }

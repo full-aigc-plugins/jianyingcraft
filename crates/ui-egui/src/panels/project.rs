@@ -488,6 +488,30 @@ fn body(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View, actions
     app.auto.add(&format!("{pre}.count"), Rect::from_min_max(pos2(row.max.x - 160.0, row.min.y), row.max), &count);
 
     let mut y = row.max.y + 6.0;
+    // 剪映式素材类型筛选（全部 / 视频 / 音频 / 图像）：复用 `jy_media_filter`，与顶栏 Tab 同一状态。
+    if app.ui.workspace == "Jianying" {
+        let chips: [(&str, &str); 4] = [("all", tl!("All")), ("video", tl!("Video")), ("audio", tl!("Audio")), ("image", tl!("Image"))];
+        let mut x = rect.min.x + 8.0;
+        for (key, label) in chips {
+            let r = Rect::from_min_size(pos2(x, y), vec2(46.0, 20.0));
+            let sel = match app.ui.jy_media_filter.as_deref() {
+                None => key == "all",
+                Some(k) => k == key,
+            };
+            let resp = ui.interact(r, egui::Id::new(("proj-filter", &pre, key)), Sense::click()).on_hover_text(label);
+            ui.painter().rect_filled(r, 10.0, if sel { t.pill_active_bg } else { t.panel_bg });
+            if !sel {
+                ui.painter().rect_stroke(r, 10.0, Stroke::new(1.0, t.separator), egui::StrokeKind::Inside);
+            }
+            ui.painter().text(r.center(), Align2::CENTER_CENTER, label, Tokens::ui(11.5), if sel { t.text } else { t.text_dim });
+            app.auto.add(&format!("{pre}.filter.{key}"), r, label);
+            if resp.clicked() {
+                app.ui.jy_media_filter = (key != "all").then(|| key.to_string());
+            }
+            x += 52.0;
+        }
+        y += 26.0;
+    }
     if app.session.prefs.project_panel.preview_area {
         let pr = Rect::from_min_size(pos2(rect.min.x + 8.0, y), vec2(rect.width() - 16.0, PREVIEW_H));
         preview_area(app, ui, pr, &pre);

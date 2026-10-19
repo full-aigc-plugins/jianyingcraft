@@ -522,6 +522,7 @@ fn merge(v: &mut Value, patch: &Value) {
 
 pub fn inspect(app: &FilmcraftApp, ctx: &egui::Context) -> Value {
     let size = ctx.content_rect().size();
+    let primary_track = app.session.active_sequence().and_then(crate::panels::timeline::primary_track_id);
     let keyboard_focus = ctx.memory(|memory| memory.focused()).map(|id| {
         let elements: Vec<_> = app.auto.previous.iter().filter(|element| element.response_id == Some(id)).collect();
         json!({
@@ -544,6 +545,12 @@ pub fn inspect(app: &FilmcraftApp, ctx: &egui::Context) -> Value {
         "playback": {"playing": app.playback.playing, "speed": app.playback.speed, "loop": app.playback.looping, "audioClock": app.playback.audio_clock, "dropped": app.playback.meter.counts().1, "shown": app.playback.meter.counts().0, "preroll": app.playback.preroll.is_some()},
         "playhead": app.session.playhead().0,
         "activeSequence": app.session.state.active_sequence.map(|i| i.0),
+        // 主轨磁吸的视图状态（#235）：主轨是第一条 V 轨，不是数据字段；`primaryTrackSnapped`
+        // 是上一次片段拖动是否吸到了主轨（时间边缘或落点竖直磁吸）。
+        "timeline": {
+            "primaryTrack": primary_track.map(|t| t.0),
+            "primaryTrackSnapped": app.tl.primary_track_snapped,
+        },
         "selection": app.session.state.selection.iter().map(|c| c.0).collect::<Vec<_>>(),
         "elements": app.auto.previous.len(),
         "dialog": app.dialog.map(|d| format!("{d:?}")),

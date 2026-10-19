@@ -1,0 +1,208 @@
+//! 剪映式时间轴布局：轨道头 ≤96 px、字幕轨置顶、拖动片段吸附到相邻片段边缘。
+
+use std::sync::mpsc::{Sender, channel};
+
+use egui_kittest::Harness;
+use filmcraft_engine::Session;
+use filmcraft_time::Tick;
+use filmcraft_ui_egui::FilmcraftApp;
+use filmcraft_ui_egui::control::ControlRequest;
+use serde_json::{Value, json};
+
+struct Driver {
+    harness: Harness<'static, FilmcraftApp>,
+    tx: Sender<ControlRequest>,
+}
+
+impl Driver {
+    fn demo() -> Self {
+        let mut session = Session::default();
+        session.execute("file.openDemoProject", json!({})).expect("demo project");
+        let (tx, rx) = channel();
+        let app = FilmcraftApp::new(session).with_control(rx);
+        let harness = Harness::builder().with_size(egui::vec2(1600.0, 980.0)).with_max_steps(10_000).build_eframe(move |_cc| app);
+        let mut d = Driver { harness, tx };
+        d.frames(4);
+        // 剪映工作区：轨道头走 96 px 的紧凑布局。
+        d.ok("ui.set", json!({"workspace": "Jianying"}));
+        d.ok("ui.panel.show", json!({"panel": "Timeline"}));
+        d.frames(4);
+        d
+    }
+
+    fn frames(&mut self, n: usize) {
+        for _ in 0..n {
+            let ctx = self.harness.ctx.clone();
+            let mut raw = std::mem::take(self.harness.input_mut());
+            eframe::App::raw_input_hook(self.harness.state_mut(), &ctx, &mut raw);
+            *self.harness.input_mut() = raw;
+            self.harness.step();
+        }
+    }
+
+    fn ok(&mut self, method: &str, params: Value) -> Value {
+        let (req, reply) = ControlRequest::new(method, params.clone());
+        self.tx.send(req).expect("control channel");
+        for _ in 0..600 {
+            self.frames(1);
+            if let Ok(r) = reply.try_recv() {
+                assert_eq!(r["ok"], true, "{method} {params}: {r}");
+                return r["result"].clone();
+            }
+        }
+        panic!("no reply to {method} {params}");
+    }
+
+    fn exec(&mut self, command: &str, params: Value) -> Value {
+        self.ok("engine.execute", json!({"command": command, "params": params}))
+    }
+
+    fn rect(&mut self, id: &str) -> [f64; 4] {
+        let v = self.ok("ui.elements", json!({"prefix": id}));
+        let e = v.as_array().expect("elements").iter().find(|e| e["id"] == json!(id)).unwrap_or_else(|| panic!("no element {id}")).clone();
+        let r = e["rect"].as_array().expect("rect");
+        [r[0].as_f64().expect("x"), r[1].as_f64().expect("y"), r[2].as_f64().expect("w"), r[3].as_f64().expect("h")]
+    }
+}
+
+const MAX_HEADER_W: f64 = 96.0;
+
+/// #235 字幕轨头必须和视频轨头一样宽：剪映工作区两者都是收敛后的 ≤96 px。
+#[test]
+fn caption_track_header_matches_the_video_track_header_width() {
+    let mut d = Driver::demo();
+    d.exec("captions.newTrack", json!({"format": "Subtitle", "name": "C1"}));
+    d.frames(4);
+    let cap = d.rect("timeline.captionTrack.C1.header");
+    let v1 = d.rect("timeline.track.V1.header");
+    assert!(cap[2] > 0.0, "caption header is laid out: {cap:?}");
+    assert!(cap[2] <= MAX_HEADER_W, "caption header is {:.1} px wide, must be <= {MAX_HEADER_W}", cap[2]);
+    assert!((cap[2] - v1[2]).abs() < 0.5, "caption header {:.1} px must match the video header {:.1} px", cap[2], v1[2]);
+}
+
+#[test]
+fn jianying_track_headers_are_at_most_96_px_wide() {
+    let mut d = Driver::demo();
+    for id in ["timeline.track.V1.header", "timeline.track.A1.header"] {
+        let r = d.rect(id);
+        assert!(r[2] > 0.0, "{id} is laid out: {r:?}");
+        assert!(r[2] <= MAX_HEADER_W, "{id} is {:.1} px wide, must be <= {MAX_HEADER_W}", r[2]);
+    }
+}
+
+#[test]
+fn caption_tracks_sit_above_the_video_tracks() {
+    let mut d = Driver::demo();
+    d.exec("captions.newTrack", json!({"format": "Subtitle", "name": "C1"}));
+    d.frames(4);
+    let cap = d.rect("timeline.captionTrack.C1");
+    let v1 = d.rect("timeline.track.V1.header");
+    assert!(cap[1] < v1[1], "caption header y {} must be above video header y {}", cap[1], v1[1]);
+    assert!(cap[1] + cap[3] <= v1[1] + 0.5, "caption rows {}..{} end at or above the video rows' top {}", cap[1], cap[1] + cap[3], v1[1]);
+    let seq = d.exec("sequence.inspect", json!({}));
+    let clip = seq["video"][0]["items"][0]["clip"].as_u64().expect("a video clip");
+    let body = d.rect(&format!("timeline.clip.{clip}"));
+    assert!(cap[1] < body[1], "caption track is above the video clip: caption {}, clip {}", cap[1], body[1]);
+}
+
+/// 主轨（V1）上的片段拖动到相邻片段边缘附近时吸附到该边缘（SNAP_PX = 9）。
+#[test]
+fn dragging_a_clip_snaps_to_the_neighbour_edge() {
+    let mut d = Driver::demo();
+    d.exec("sequence.snap", json!({"on": true}));
+    d.frames(3);
+    let seq = d.exec("sequence.inspect", json!({}));
+    let items = seq["video"][0]["items"].as_array().expect("V1 items").clone();
+    assert!(items.len() >= 2, "demo V1 has at least two clips");
+    let a = items[items.len() - 2].clone();
+    let b = items[items.len() - 1].clone();
+    let a_end = a["end"].as_i64().expect("a end");
+    let b_clip = b["clip"].as_u64().expect("b clip");
+    assert_eq!(b["start"].as_i64(), Some(a_end), "the demo's last two V1 clips are contiguous");
+
+    // 先把最后一个片段拖进右侧空白，制造一个间隙再拖回来。
+    let rb = d.rect(&format!("timeline.clip.{b_clip}"));
+    let y = rb[1] + rb[3] / 2.0;
+    let from = (rb[0] + rb[2] / 2.0, y);
+    d.ok("ui.drag", json!({"from": {"x": from.0, "y": from.1}, "to": {"x": from.0 + 80.0, "y": from.1}, "steps": 12}));
+    d.frames(3);
+    let rb2 = d.rect(&format!("timeline.clip.{b_clip}"));
+    assert!(rb2[0] > rb[0] + 20.0, "the clip moved right: {} -> {}", rb[0], rb2[0]);
+
+    // 释放点让 b 的起点落在 a.end 右侧约 3 px：磁吸应把它拉回 a.end。
+    let ra = d.rect(&format!("timeline.clip.{}", a["clip"].as_u64().expect("a clip")));
+    let a_end_x = ra[0] + ra[2];
+    let dx = a_end_x + 3.0 - rb2[0];
+    d.ok("ui.drag", json!({"from": {"x": rb2[0] + rb2[2] / 2.0, "y": y}, "to": {"x": rb2[0] + rb2[2] / 2.0 + dx, "y": y}, "steps": 12}));
+    d.frames(3);
+    let after = d.exec("sequence.inspect", json!({}));
+    let moved = after["video"][0]["items"].as_array().expect("V1 items").iter().find(|i| i["clip"].as_u64() == Some(b_clip)).cloned().expect("the moved clip");
+    assert_eq!(moved["start"].as_i64(), Some(a_end), "snapped to the neighbour's edge, not {:.1} px off", 3.0);
+}
+
+/// #235 主轨磁吸（时间）：把 V2 上的片段拖到主轨（V1）片段边缘附近时，落点吸附到 V1 的边缘，
+/// 即使另一条轨的片段边缘像素上更近。结果按 `sequence.inspect` 的 start 断言，不看像素。
+#[test]
+fn dragging_a_clip_snaps_to_the_primary_track_edge() {
+    let mut d = Driver::demo();
+    d.exec("sequence.snap", json!({"on": true}));
+    // 缩小时间轴，让 V1 的边缘与 V2 的边缘同时落在 SNAP_PX（9 px）内。
+    d.ok("ui.set", json!({"timeline": {"pps": 20.0, "scroll": 0.0}}));
+    d.frames(60);
+    let pps = d.ok("ui.inspect", json!({}))["ui"]["timeline"]["pps"].as_f64().expect("timeline pps");
+    assert!((14.0..26.0).contains(&pps), "the test needs 14 < pps < 26 px/s, got {pps}");
+
+    let before = d.exec("sequence.inspect", json!({}));
+    let overlay = before["video"][1]["items"][0].clone();
+    let clip = overlay["clip"].as_u64().expect("the V2 overlay's clip");
+    let item = overlay["item"].as_u64().expect("the V2 overlay's item");
+    let start = Tick(overlay["start"].as_i64().expect("overlay start"));
+    // 主轨 V1 上第三个片段的起点（约 9.5 s）：主轨磁吸要吸到这条边缘。
+    let primary_edge = Tick(before["video"][0]["items"][2]["start"].as_i64().expect("the V1 edge"));
+    // 在 V2 的 10 s 处再放一个片段：它离落点更近，没有主轨磁吸时会先吸到它。
+    let placed = d.exec("timeline.place", json!({"item": item, "track": "V2", "seconds": 10.0, "duration": Tick::from_seconds_f64(0.25).0}));
+    let placed_clip = placed["clips"][0].as_u64().expect("the placed V2 clip");
+    d.frames(4);
+    let seq = d.exec("sequence.inspect", json!({}));
+    let v2_edge = Tick(
+        seq["video"][1]["items"].as_array().expect("V2 items").iter().find(|i| i["clip"].as_u64() == Some(placed_clip)).expect("the placed V2 clip")["start"]
+            .as_i64()
+            .expect("placed start"),
+    );
+    // 落点取两条边缘之间、离 V2 边缘更近的位置（o > gap/2），但仍在 V1 边缘的 SNAP_PX 内（o < 9）。
+    let gap_px = (v2_edge.seconds() - primary_edge.seconds()) * pps;
+    assert!((4.0..16.0).contains(&gap_px), "the two edges are {gap_px:.1} px apart at {pps:.1} px/s");
+    let offset_px = (gap_px / 2.0 + 9.0) / 2.0;
+    let dx = (primary_edge.seconds() + offset_px / pps - start.seconds()) * pps;
+
+    let r = d.rect(&format!("timeline.clip.{clip}"));
+    let from = (r[0] + r[2] / 2.0, r[1] + r[3] / 2.0);
+    d.ok("ui.drag", json!({"from": {"x": from.0, "y": from.1}, "to": {"x": from.0 + dx, "y": from.1}, "steps": 12}));
+    d.frames(4);
+    let after = d.exec("sequence.inspect", json!({}));
+    let moved = after["video"][1]["items"].as_array().expect("V2 items").iter().find(|i| i["clip"].as_u64() == Some(clip)).cloned().expect("the moved overlay");
+    assert_eq!(moved["start"].as_i64(), Some(primary_edge.0), "snapped to V1's edge at {:.3} s, not to the nearer V2 clip", primary_edge.seconds());
+    assert_eq!(d.ok("ui.inspect", json!({}))["timeline"]["primaryTrackSnapped"], json!(true), "ui.inspect reports the primary-track magnet");
+}
+
+/// #235 主轨磁吸（轨道）：把片段拖到主轨 V1 附近（指针还在 V2 行的下缘）时，落点磁吸到 V1。
+/// 落点按 `sequence.inspect` 的轨道归属断言，不看像素。
+#[test]
+fn dragging_a_clip_near_the_primary_track_lands_on_it() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"timeline": {"pps": 20.0, "scroll": 0.0}}));
+    d.frames(60);
+    let seq = d.exec("sequence.inspect", json!({}));
+    let clip = seq["video"][1]["items"][0]["clip"].as_u64().expect("the V2 overlay's clip");
+    let r = d.rect(&format!("timeline.clip.{clip}"));
+    let v1 = d.rect("timeline.track.V1.header");
+    // 指针停在 V1 行上缘上方 4 px：仍在 V2 行里，但已在 SNAP_PX（9 px）的磁吸范围内。
+    let to_y = v1[1] - 4.0;
+    d.ok("ui.drag", json!({"from": {"x": r[0] + r[2] / 2.0, "y": r[1] + r[3] / 2.0}, "to": {"x": r[0] + r[2] / 2.0, "y": to_y}, "steps": 10}));
+    d.frames(4);
+    let after = d.exec("sequence.inspect", json!({}));
+    let on = |track: usize| after["video"][track]["items"].as_array().expect("track items").iter().any(|i| i["clip"].as_u64() == Some(clip));
+    assert!(on(0), "the clip landed on the primary track V1: {after}");
+    assert!(!on(1), "the clip left V2 instead of staying on its row: {after}");
+    assert_eq!(d.ok("ui.inspect", json!({}))["timeline"]["primaryTrackSnapped"], json!(true), "ui.inspect reports the primary-track magnet");
+}

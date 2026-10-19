@@ -1794,7 +1794,11 @@ impl FilmcraftApp {
         ui.painter().rect_filled(full, 0.0, t.app_bg);
         // Compact / Medium（编辑模式）下不画 Premiere 式全局菜单条：菜单收进 `shell_area` 的 ☰，
         // 否则两条顶栏会互相压叠。Wide 与导入/导出模式仍保留全局菜单。
-        let class = crate::layout::LayoutClass::from_width(full.width());
+        // 布局档位每帧只按**窗口宽度**算一次，再传给所有消费者（`dock_area` → `shell_area` /
+        // `panel_body`）。body 内容区左右各内缩 1 px，若下游按 766 px 重算，768 px 窗口就会
+        // 顶栏报 Medium、抽屉却按 Compact 展开（IA-2）。这里与 `ui.inspect` 的 `layoutClass`
+        // 同源（都是窗口宽度），不取内缩后的 body。
+        let class = crate::layout::LayoutClass::from_width(ctx.content_rect().width());
         let shell = class != crate::layout::LayoutClass::Wide && self.ui.mode == state::Mode::Edit;
         let header_h = if self.ui.show_header && !shell { 38.0 } else { 0.0 };
         let header = egui::Rect::from_min_size(full.min, egui::vec2(full.width(), header_h));
@@ -1804,7 +1808,7 @@ impl FilmcraftApp {
         let status_h = if self.ui.show_status_bar { 20.0 } else { 0.0 };
         let body = egui::Rect::from_min_max(egui::pos2(full.min.x + 1.0, header.max.y + 1.0), egui::pos2(full.max.x - 1.0, full.max.y - status_h - 2.0));
         match self.ui.mode {
-            state::Mode::Edit => self.dock_area(ui, body),
+            state::Mode::Edit => self.dock_area(ui, body, class),
             state::Mode::Import => panels::import_mode::show(self, ui, body),
             state::Mode::Export => panels::export_mode::show(self, ui, body),
         }
