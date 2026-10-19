@@ -211,3 +211,33 @@ wgpu harness，Windows 上并发创建会在启动阶段崩掉，原因见 §10�
 - 宿主三导入的浏览器侧 JS 调用仍只做 wasm32 类型检查（没有注入三个全局的宿主页），
   真实文件操作（路径越界、配额、原子写、截图降级）由上面的 11 条宿主测试覆盖；边界见
   `03-panel-bridge.md` §4.1「执行到哪一步」。
+
+## 12. 2026-10-20 插件侧面板桥复核（跨仓实跑）
+
+插件仓 `jianyingcraft-plugin/ui` 的套件在本机跑通（Node v24.14.1，`node_modules` 96 个包已在位）：
+
+```
+$ node --test tests/*.test.mjs
+ℹ tests 46   ℹ pass 44   ℹ fail 0   ℹ skipped 2
+（2 个 skipped 需要外部条件：JIANYINGCRAFT_WASM_JS / CHROME_PATH）
+
+$ $env:CHROME_PATH = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
+$ node --test tests/panel-live.test.mjs
+✔ 浏览器面板：页面轮询并在 wasm 里执行命令 (2898.87ms)
+ℹ tests 1   ℹ pass 1   ℹ fail 0   ℹ skipped 0
+```
+
+由此关闭四条：`adapter ↔ 浏览器面板的最后一公里`、`adapter 消费引擎侧 Bridge`、
+`与 jianyingcraft-plugin 的 adapter 契约对齐`、`面板内命令执行走可见 App 状态`。
+
+证据链：`ui/adapter.mjs` 把 `command_list` / `command_run` / `inspect` / `save_project` 统一
+`dispatch()` 入队 → 页面 `GET /<token>/poll` → `ui/connect.js` 调 `craft_submit` 在
+`window.__jianyingcraftEngine`（页面自己的可见 wasm 实例）上执行 → `craft_take_reply` 取结果 →
+`POST /<token>/reply`。`panel-live` 在真实 Chrome 中断言 `editor_status.ready=true` 且
+`file.openDemoProject` + `sequence.inspect` 返回 7 个片段。
+
+未闭合的一项：`editor-wasm.test.mjs`（wasm 桥契约）需要 **nodejs 目标**的 wasm-bindgen 胶水，
+而仓库产物是 web 目标；用本机 `wasm-bindgen 0.2.129` 从既有 `.wasm` 重新生成会因
+**CLI 与 crate 版本不一致**（导入符号带签名哈希）在实例化时报
+`LinkError: Import #0 __wbg_construct_…: function import requires a callable`。
+需用与 `Cargo.lock` 相同版本的 CLI 重新构建后再跑，本轮未改变结论。

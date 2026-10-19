@@ -102,6 +102,28 @@ fn bridge_limits_are_enforced_at_the_app_boundary() {
     assert_eq!(replies, 32, "every accepted request must produce exactly one reply");
 }
 
+/// 单条回复超过 8 MiB 时，App 边界的桥回 `reply_too_large` 而不是静默丢弃；
+/// 紧随其后的真实命令回复仍然可取（新回复不被挤掉）。
+#[test]
+fn an_oversized_bridge_reply_is_reported_and_keeps_the_next_command_reply() {
+    let mut d = Driver::demo();
+    let padding = "x".repeat(filmcraft_ui_egui::bridge::MAX_BYTES);
+    d.harness.state_mut().bridge.push_reply("huge", Ok(json!({"padding": padding})));
+    let raw = json!({"id": "q-after", "command": "file.newBin", "params": {"name": "AfterHuge"}}).to_string();
+    assert!(d.harness.state_mut().bridge.submit(&raw), "the normal request is still accepted");
+    d.frames(3);
+
+    let huge: Value = serde_json::from_str(&d.harness.state_mut().bridge.take_reply().expect("the reply_too_large envelope")).expect("json");
+    assert_eq!(huge["id"], json!("huge"));
+    assert_eq!(huge["ok"], json!(false));
+    assert_eq!(huge["error"]["code"], json!("reply_too_large"));
+
+    let after: Value = serde_json::from_str(&d.harness.state_mut().bridge.take_reply().expect("the next command's reply")).expect("json");
+    assert_eq!(after["id"], json!("q-after"));
+    assert_eq!(after["ok"], json!(true), "the later reply must survive: {after}");
+    assert!(d.harness.state_mut().bridge.idle(), "both replies were taken");
+}
+
 /// T2：同一批查询命令在"面板桥（可见 App）"与 headless Session 上必须返回深度相等的结果。
 ///
 /// 只选静态查询（不带生成 id、不带时间戳），对比才有意义；`command.list` 也顺带证明

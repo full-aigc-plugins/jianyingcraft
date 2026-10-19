@@ -20,11 +20,12 @@ use std::cell::RefCell;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 
 use filmcraft_ui_egui::ControlRequest;
-use filmcraft_ui_egui::bridge::{Bridge, InFlight};
+use filmcraft_ui_egui::bridge::{self, Bridge, InFlight};
 use serde_json::{Value, json};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::{JsFuture, future_to_promise};
+use web_time::Instant;
 
 type Waiting = (Receiver<Value>, js_sys::Function, js_sys::Function);
 
@@ -168,19 +169,31 @@ fn collect_bridge_replies() {
                 Err(TryRecvError::Disconnected) => Some((entry.id().to_string(), None)),
             }
         });
-        let Some((id, value)) = ready else { break };
-        match value {
-            Some(v) if v.get("ok").and_then(Value::as_bool) == Some(true) => {
-                let result = v.get("result").cloned().unwrap_or(Value::Null);
-                REPLIES.with(|r| r.borrow_mut().push_reply(&id, Ok(result)));
+        if let Some((id, value)) = ready {
+            match value {
+                Some(v) if v.get("ok").and_then(Value::as_bool) == Some(true) => {
+                    let result = v.get("result").cloned().unwrap_or(Value::Null);
+                    REPLIES.with(|r| r.borrow_mut().push_reply(&id, Ok(result)));
+                }
+                Some(v) => {
+                    let message = v.get("error").and_then(Value::as_str).unwrap_or("command failed").to_string();
+                    REPLIES.with(|r| r.borrow_mut().push_reply(&id, Err(message)));
+                }
+                None => REPLIES.with(|r| r.borrow_mut().push_reply(&id, Err("request dropped".into()))),
             }
-            Some(v) => {
-                let message = v.get("error").and_then(Value::as_str).unwrap_or("command failed").to_string();
-                REPLIES.with(|r| r.borrow_mut().push_reply(&id, Err(message)));
-            }
-            None => REPLIES.with(|r| r.borrow_mut().push_reply(&id, Err("request dropped".into()))),
+            IN_FLIGHT.with(|q| q.borrow_mut().pop_front());
+            continue;
         }
-        IN_FLIGHT.with(|q| q.borrow_mut().pop_front());
+        // 队首没有可取的回复：把超过 15 s 的在途请求合成 `timeout` 错误信封并移出登记簿，
+        // 否则一条永不回复的请求会永久堵住后面的回复、并一直占着 32 条 / 8 MiB 预算。
+        // 只回错误、不重放请求：重放会让同一条命令执行两次。
+        let expired = IN_FLIGHT.with(|q| q.borrow_mut().expire(Instant::now(), bridge::REPLY_TIMEOUT));
+        if expired.is_empty() {
+            break;
+        }
+        for envelope in expired {
+            REPLIES.with(|r| r.borrow_mut().push_envelope(envelope));
+        }
     }
 }
 

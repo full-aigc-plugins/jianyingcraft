@@ -340,7 +340,7 @@
       `initialize` 返回 `jianyingcraft-editor 0.1.0`；`tools/list` 返回 **17 个工具**
       （14 公开 + 3 `_panel_*`），与 `dist/tools.json` 完全一致；无面板时
       `editor_status` / `command_run` 均 `isError:true` + "Call open_editor first"（fail-closed）
-- [ ] **adapter ↔ 浏览器面板的最后一公里**（2026-10-19 调查）：adapter 其实**已经有**
+- [x] **adapter ↔ 浏览器面板的最后一公里**（2026-10-19 调查）：adapter 其实**已经有**
       `/<token>/poll`、`/<token>/reply` 两个 HTTP 端点（与 `_panel_*` 同一套队列），
       `/app/` 也由它服务真实 web 应用；缺的是页面侧没有任何脚本去轮询 `/poll`——
       `adapter.mjs` 里那条 `connect.js` 路由要读的 `ui/connect.js` **根本不存在**。
@@ -370,8 +370,13 @@
          命令落不到可见文档——改为页面启动时把模块挂到 `window.__jianyingcraftEngine`，
          连接脚本复用同一实例（`apps/filmcraft-web/web/index.html` 的一行导出）。
       插件全套因此变成 **46 / 46**（含 Chrome + wasm 桥契约）。
-- [ ] adapter 仍走自己的 `_panel_*` 通道，**尚未消费引擎侧 `Bridge`**；下一步把
-      `command_run` 接到派生引擎的 wasm 实例
+- [x] adapter 的 `_panel_*` 通道就是通往引擎 `Bridge` 的传输层：页面侧 `ui/connect.js` 用
+      `craft_submit` / `craft_take_reply` 在**可见 wasm 实例**上执行，再把结果 `POST /reply` 回来
+      *2026-10-20 复核：`ui/adapter.mjs` 的 `command_list` / `command_run` / `inspect` / `save_project`
+      全部走同一个 `dispatch()` → `/<token>/poll` → 页面执行 → `/reply`；`connect.js` 明确复用
+      `window.__jianyingcraftEngine`（不另起第二份 wasm）。真实 Chrome 下
+      `node --test tests/panel-live.test.mjs`（`CHROME_PATH` 指向本机 Chrome）= 1 passed，
+      断言 `editor_status.ready=true`、`file.openDemoProject` + `sequence.inspect` 返回 7 个片段。*
 - [x] 插件 `tools.json`：单一来源 `ui/tools.mjs`（17 工具 / 14 公开 + 3 面板内部），
       `ui/build-tools.mjs` 生成、`build.mjs` 随构建产出并计入 `build-info.json`，
       `ui/tests/tools.test.mjs` 4 条校验（同步、描述、内部工具不公开、command_run 文档）
@@ -395,9 +400,14 @@
 - [x] **wasm 桥契约实测**（2026-10-19）：`wasm-bindgen --target nodejs --out-dir %TEMP%\\jc-node-wasm
       target/wasm32-unknown-unknown/release/filmcraft_web.wasm` 后设
       `JIANYINGCRAFT_WASM_JS` 跑 `tests/editor-wasm.test.mjs`——目录 701 条、受理/回包/空闲全过
-- [ ] 与 `jianyingcraft-plugin` 的 adapter 契约对齐（`command_list` / `command_run` / `save_project`
-      映射到 165 条命令面，动作走 `Bridge`）
-- [ ] 面板内命令执行走可见 App 状态（不得改不可见副本）
+- [x] 与 `jianyingcraft-plugin` 的 adapter 契约对齐（`command_list` / `command_run` / `save_project`
+      映射到引擎命令面，动作走 `Bridge`）
+      *2026-10-20：三个工具均经 `dispatch()` 进入页面桥并在可见 wasm 应用上执行（见上一条的复核）；
+      命令条数以 `craft_catalog()` 实际返回为准（本机 nodejs glue 实测 701 条，不是 165）。*
+- [x] 面板内命令执行走可见 App 状态（不得改不可见副本）
+      *2026-10-20：`connect.js` 只调用页面已初始化的 `window.__jianyingcraftEngine`（曾因第二个
+      wasm 实例导致 `__wbindgen_malloc` 未初始化而落不到可见文档，已修）；`panel-live` 在真实 Chrome
+      里加载 adapter 提供的应用页执行命令并通过，证明改的是可见实例。*
 - [x] **一致性测试 T6（断线不重放）**（2026-10-19）：adapter 的 pending 超时从 45 s 收紧到
       `HEARTBEAT_MS`（15 s），超时同时从 `queue` 移除该条，面板回来不会重放；
       `ui/tests/bridge-disconnect.test.mjs`：心跳一次 → 停止轮询 → `command_run` 在 14–21 s 内
