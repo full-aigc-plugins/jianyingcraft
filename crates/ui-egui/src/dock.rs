@@ -177,7 +177,8 @@ fn vsplit(size: SplitSize, a: DockNode, b: DockNode) -> DockNode {
     DockNode::Split { vertical: true, size, a: Box::new(a), b: Box::new(b) }
 }
 
-pub const WORKSPACES: [&str; 9] = ["Editing", "Assembly", "Color", "Effects", "Audio", "Captions and Graphics", "Learning", "Review", "All Panels"];
+pub const WORKSPACES: [&str; 10] =
+    ["Editing", "Jianying", "Assembly", "Color", "Effects", "Audio", "Captions and Graphics", "Learning", "Review", "All Panels"];
 
 /// The user's workspaces file, beside `preferences.json` in the data directory.
 pub const WORKSPACES_FILE: &str = "workspaces.json";
@@ -366,6 +367,17 @@ pub fn workspace(name: &str) -> DockNode {
                 hsplit(Ratio(0.6), tabs(&[Program], 0), tabs(&[LumetriColor, EssentialGraphics, EssentialSound, TextToSpeech, Properties, AudioTrackMixer], 0)),
             ),
             hsplit(Ratio(0.26), tabs(&[Project, MediaBrowser, Libraries, Info, Effects, Markers, History], 0), bottom_editing()),
+        ),
+        // JianyingCraft 的剪映式四区：左素材 / 中预览 / 右属性+关键帧 / 底时间轴。
+        // 作为可选工作区提供，不改变上游默认布局的行为契约。
+        "Jianying" => vsplit(
+            Ratio(0.62),
+            hsplit(
+                FixedA(320.0),
+                tabs(&[Project, MediaBrowser, Libraries, Info], 0),
+                hsplit(FixedB(340.0), tabs(&[Program], 0), tabs(&[Properties, EffectControls, EssentialGraphics, Text], 0)),
+            ),
+            tabs(&[Timeline, AudioMeters], 0),
         ),
         // Editing (default), Learning, Review — Premiere 26 factory layout:
         // top: Source group | Program | Properties; bottom: Project group | Tools | Timeline | Meters.

@@ -285,8 +285,50 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
     let inst = shown_inst(app);
     let v = view_of(app, inst);
+    // 提示是**叠加**在正常网格之上的，不替换它：图标面板的空白区（`project.empty`）要保留
+    // 双击导入 / 拖入的目标，否则空工程反而不能直接拖素材进来。
+    let root_empty = app.session.project.root.children.is_empty();
+    let empty_bin = app.session.project.root.find_bin(v.bin).is_some_and(|bin| bin.children.is_empty());
     body(app, ui, rect, &v, &mut actions);
+    if root_empty {
+        empty_state(app, ui, rect);
+    } else if empty_bin {
+        empty_bin_state(app, ui, rect, &v);
+    }
     run(app, ui.ctx(), actions);
+}
+
+/// 空文件夹提示：说明"这个文件夹是空的"，并保留名称，id 为 `project.emptyBinHint`。
+fn empty_bin_state(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View) {
+    let t = app.tokens;
+    let name = app.session.project.root.find_bin(v.bin).map(|bin| bin.name.clone()).unwrap_or_default();
+    let center = pos2(rect.center().x, rect.center().y - 10.0);
+    icons::paint(ui.painter(), Rect::from_center_size(pos2(center.x, center.y - 34.0), vec2(34.0, 34.0)), Icon::Folder, t.text_dim.gamma_multiply(0.7));
+    ui.painter().text(center, Align2::CENTER_CENTER, format!("「{name}」是空的"), Tokens::ui(13.0), t.text_dim);
+    ui.painter().text(
+        pos2(center.x, center.y + 22.0),
+        Align2::CENTER_CENTER,
+        "把素材拖进来，或从其他文件夹移入",
+        Tokens::ui(11.5),
+        t.text_dim.gamma_multiply(0.8),
+    );
+    app.auto.add("project.emptyBinHint", rect, "这个文件夹是空的");
+}
+
+/// 空工程提示：图标 + 两行文案，带自动化 id `project.emptyHint`（`project.empty` 已被图标网格的空白区占用）。
+fn empty_state(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
+    let t = app.tokens;
+    let center = pos2(rect.center().x, rect.center().y - 10.0);
+    icons::paint(ui.painter(), Rect::from_center_size(pos2(center.x, center.y - 34.0), vec2(34.0, 34.0)), Icon::Folder, t.text_dim.gamma_multiply(0.7));
+    ui.painter().text(center, Align2::CENTER_CENTER, "把素材拖到这里，开始你的大作吧", Tokens::ui(13.0), t.text_dim);
+    ui.painter().text(
+        pos2(center.x, center.y + 22.0),
+        Align2::CENTER_CENTER,
+        "或点 rail 上的「导入」选择文件",
+        Tokens::ui(11.5),
+        t.text_dim.gamma_multiply(0.8),
+    );
+    app.auto.add("project.emptyHint", rect, "把素材拖到这里，开始你的大作吧");
 }
 
 fn tab_strip(app: &mut FilmcraftApp, ui: &mut egui::Ui, strip: Rect, docked: &[usize]) {

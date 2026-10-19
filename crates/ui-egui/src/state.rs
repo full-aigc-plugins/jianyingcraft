@@ -430,6 +430,39 @@ pub struct KeyframeRef {
 pub struct UiState {
     #[serde(default)]
     pub language: crate::i18n::Language,
+    /// Compact 布局下打开的底部抽屉（素材 / 字幕 / 音频 / 属性）；None 表示都收起。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jy_drawer: Option<crate::layout::Drawer>,
+    /// Compact 顶部选中的一级 Tab。
+    #[serde(default)]
+    pub jy_tab: crate::layout::Tab,
+    /// Compact / Medium 的 ☰ 菜单是否展开。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub jy_menu_open: bool,
+    /// ☰ 菜单的过滤词（按标签或菜单路径匹配，忽略大小写）。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub jy_menu_filter: String,
+    /// ☰ 菜单当前展开的菜单根（`File` / `Edit` …）；`None` 表示停在根列表。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jy_menu_group: Option<String>,
+    /// `Jianying` 工作区顶部一级 Tab 的当前选中项（slug，如 `effects`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jianying_tab: Option<String>,
+    /// `Jianying` 工作区左栏 rail 的当前选中项（如 `素材`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jianying_rail: Option<String>,
+    /// Compact/Medium 顶栏 Tab 选中的面板（`None` 时按旧的三档映射）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jy_shell_panel: Option<crate::dock::PanelKind>,
+    /// 剪映式素材筛选（`audio` / `image`）；`None` 表示"素材"Tab，列全部。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jy_media_filter: Option<String>,
+    /// 下一帧要滚进可视区的顶栏 Tab（控制通道路径用；390 px 下靠后的 Tab 否则点不到）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jy_tab_scroll: Option<String>,
+    /// 顶栏 Tab 的当前 slug（`cut` / `captions` …）；左右循环与高亮用它。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jy_shell_slug: Option<String>,
     pub tool: Tool,
     pub mode: Mode,
     pub workspace: String,
@@ -457,10 +490,10 @@ pub struct UiState {
     #[serde(default)]
     pub effect_controls_split: f32,
     pub show_menu_bar: bool,
-    /// The header bar (Home, Import, Edit, Export, workspaces). An app that embeds FilmCraft can hide it.
+    /// The header bar (Home, Import, Edit, Export, workspaces). An app that embeds JianyingCraft can hide it.
     #[serde(default = "shown")]
     pub show_header: bool,
-    /// The status bar (hints, messages, job progress). An app that embeds FilmCraft can hide it.
+    /// The status bar (hints, messages, job progress). An app that embeds JianyingCraft can hide it.
     #[serde(default = "shown")]
     pub show_status_bar: bool,
     pub dark: bool,
@@ -956,6 +989,17 @@ impl Default for UiState {
     fn default() -> Self {
         Self {
             language: crate::i18n::Language::default(),
+            jy_drawer: None,
+            jy_tab: crate::layout::Tab::default(),
+            jy_menu_open: false,
+            jy_menu_filter: String::new(),
+            jy_menu_group: None,
+            jianying_tab: None,
+            jianying_rail: None,
+            jy_shell_panel: None,
+            jy_media_filter: None,
+            jy_tab_scroll: None,
+            jy_shell_slug: None,
             tool: Tool::Selection,
             mode: Mode::Edit,
             workspace: "Editing".into(),

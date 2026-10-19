@@ -76,7 +76,22 @@ fn paint_badges(ui: &egui::Ui, b: &Badge, at: egui::Pos2, t: &Tokens) {
 }
 
 fn matches_filter(app: &FilmcraftApp, id: ItemId, filter: &str) -> bool {
-    app.session.project.item(id).is_some_and(|i| pp::listed(&app.session.project, i) && (filter.is_empty() || i.name.to_ascii_lowercase().contains(filter)))
+    let Some(item) = app.session.project.item(id) else { return false };
+    if !pp::listed(&app.session.project, item) {
+        return false;
+    }
+    // 剪映的"音频"Tab 只列音频素材：这是 Tab 的语义，不是搜索。
+    if let Some(kind) = app.ui.jy_media_filter.as_deref() {
+        let keep = match kind {
+            "audio" => matches!(item_icon(&item.kind), Icon::Audio),
+            "image" => matches!(item_icon(&item.kind), Icon::Image),
+            _ => true,
+        };
+        if !keep {
+            return false;
+        }
+    }
+    filter.is_empty() || item.name.to_ascii_lowercase().contains(filter)
 }
 
 fn label_color(app: &FilmcraftApp, l: filmcraft_project::Label) -> Color32 {

@@ -824,12 +824,69 @@ pub fn lumetri_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     run(app, ui.ctx(), actions.into_iter().map(|a| ("effects.setParam".to_string(), a)).collect());
 }
 
+/// 剪映专业版的"草稿参数"：未选中片段时，右栏显示工程与序列的事实，而不是空提示。
+fn draft_parameters(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
+    let t = app.tokens;
+    let sequence = app.session.execute("sequence.inspect", json!({})).unwrap_or(Value::Null);
+    let project = app.session.execute("project.inspect", json!({})).unwrap_or(Value::Null);
+
+    fn count_items(node: &Value) -> usize {
+        let mut total = 0;
+        if let Some(children) = node.get("children").and_then(Value::as_array) {
+            for child in children {
+                total += if child.get("children").is_some() { count_items(child) } else { 1 };
+            }
+        }
+        total
+    }
+
+    let name = sequence.get("name").and_then(Value::as_str).unwrap_or("");
+    let settings = sequence.get("settings").cloned().unwrap_or(Value::Null);
+    let width = settings.get("width").and_then(Value::as_u64).unwrap_or(0);
+    let height = settings.get("height").and_then(Value::as_u64).unwrap_or(0);
+    let fps = settings
+        .get("frameRate")
+        .or_else(|| settings.get("frame_rate"))
+        .map(|rate| {
+            let num = rate.get("num").or_else(|| rate.get("numerator")).and_then(Value::as_f64).unwrap_or(0.0);
+            let den = rate.get("den").or_else(|| rate.get("denominator")).and_then(Value::as_f64).unwrap_or(1.0);
+            if den > 0.0 { num / den } else { 0.0 }
+        })
+        .unwrap_or(0.0);
+    let frames = sequence.get("durationFrames").and_then(Value::as_u64).unwrap_or(0);
+    let video = sequence.get("video").and_then(Value::as_array).map_or(0, Vec::len);
+    let audio = sequence.get("audio").and_then(Value::as_array).map_or(0, Vec::len);
+    let items = project.get("root").map(count_items).unwrap_or(0);
+    let rows: [(&str, &str, String); 6] = [
+        ("draft.name", "名称", name.to_string()),
+        ("draft.size", "分辨率", format!("{width} x {height}")),
+        ("draft.fps", "帧率", if fps > 0.0 { format!("{fps:.2} fps") } else { "-".to_string() }),
+        ("draft.duration", "时长", format!("{frames} 帧")),
+        ("draft.tracks", "轨道", format!("V{video} / A{audio}")),
+        ("draft.items", "素材", format!("{items} 项")),
+    ];
+    let mut bui = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(14.0, 10.0))).id_salt("draft-params"));
+    let (header, _) = bui.allocate_exact_size(vec2(bui.available_width(), 26.0), Sense::hover());
+    bui.painter().text(pos2(header.min.x, header.center().y), Align2::LEFT_CENTER, "草稿参数", Tokens::ui(13.0), t.text_dim);
+    for (id, label, value) in rows {
+        let (row, _) = bui.allocate_exact_size(vec2(bui.available_width(), 26.0), Sense::hover());
+        bui.painter().text(pos2(row.min.x, row.center().y), Align2::LEFT_CENTER, label, Tokens::ui(12.0), t.text_dim);
+        bui.painter().text(pos2(row.max.x - 6.0, row.center().y), Align2::RIGHT_CENTER, value.clone(), Tokens::ui(12.5), t.text);
+        app.auto.add(id, row, &value);
+    }
+}
+
 /// Properties panel (Premiere 26): a compact inspector for the selected clip.
 pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
     let clips = selected_clips(app);
     let Some((clip, it, kind)) = clips.first().cloned() else {
-        crate::dock::placeholder(ui, rect, &t, tl!("Select a clip to see its properties"));
+        // 剪映专业版：没选中片段时右栏是"草稿参数"，不是一句灰字。
+        if app.ui.workspace == "Jianying" {
+            draft_parameters(app, ui, rect);
+        } else {
+            crate::dock::placeholder(ui, rect, &t, tl!("Select a clip to see its properties"));
+        }
         return;
     };
     let ph = app.session.playhead();
