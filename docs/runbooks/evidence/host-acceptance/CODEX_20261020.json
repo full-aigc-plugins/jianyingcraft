@@ -55,17 +55,9 @@
     ]
   },
   "blocked": {
-    "tool": "tools/call editor_status",
-    "symptom": "无返回（>10 min）",
-    "root_cause": "jianying-cli 的 Windows 进程列表调用 `tasklist` 且没有超时；本机 tasklist 卡死（CLI 测试也因此需要 JIANYING_CLI_PROCESS_LIST）",
-    "impact": "所有需要判断“剪映是否在运行”的写入路径与 MCP 工具都继承这个卡死",
-    "not_a_plugin_defect": true,
-    "refined": {
-      "after_cli_fix": "jianying-cli 已把 tasklist 限时 5s 并失败闭合（commit 7b31980）",
-      "still_hangs": "adapter 的 editor_status 在无面板连接时仍等待（>10 min 无返回）",
-      "attribution": "属插件 adapter/panel 侧的等待，不是 CLI 的进程列表问题",
-      "next": "需圻 Playwright/CDP 抓 adapter 侧日志，或给 editor_status 加超时并返回“面板未连接”"
-    }
+    "symptom": "round 13 recorded 'tools/call editor_status hangs'",
+    "correction": "That conclusion was WRONG. Re-probed with a per-read timeout while printing every adapter line: editor_status returns immediately with isError=true and 'Call open_editor first' (by design). The earlier probe read one line per request, so an interleaved notification was consumed as the reply and the next read blocked - a probe bug, not an adapter bug.",
+    "cli_side_fix_kept": "jianying-cli bounds tasklist at 5 s and fails closed (commit 7b31980); unrelated to this correction but still useful"
   },
   "other_hosts": {
     "kimi": "npm `kimi` 6.0.2 是无关包；@moonshot-ai/kimi-cli 不存在 → 未安装",
@@ -75,8 +67,25 @@
     "installed": true,
     "mcp_registered": true,
     "tools_listed": true,
-    "tool_call": false,
-    "screenshots": false
+    "tool_call": true,
+    "panel_rendered": true,
+    "screenshots": true,
+    "host_embedded_view_observed": false
   },
-  "note": "这份证据只证明 Codex 安装、MCP 注册与协议层对接；“三段截图”与真实工作流仍未完成"
+  "note": "这份证据只证明 Codex 安装、MCP 注册与协议层对接；“三段截图”与真实工作流仍未完成",
+  "mcp_live": {
+    "evidence": "MCP_LIVE_20261020.json + mcp-panel-before.png / mcp-panel-after.png",
+    "steps": [
+      "editor_status before open_editor -> 'Call open_editor first' (fail-closed)",
+      "open_editor -> editorUrl, ready:false",
+      "Chromium loads the panel -> editor_status.ready:true",
+      "command_run file.openDemoProject + sequence.inspect -> 7 video clips",
+      "screenshots: the panel renders the demo project (V1/V2 clips, A1, timeline, preview)"
+    ],
+    "honest_limits": [
+      "the two screenshots are byte-identical (the page already shows the demo project at startup), so they prove the panel renders, not that a frame changed; the command effect is proven by sequence.inspect's 7 clips",
+      "screenshots come from headless Chromium viewing the panel page, not from the Codex host's embedded webview",
+      "ZCode / Kimi are still not installed"
+    ]
+  }
 }

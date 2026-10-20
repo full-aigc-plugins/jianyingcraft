@@ -556,9 +556,16 @@
       enabled/stdio/command 一致。直接对同一 adapter 说 MCP：`initialize` 返回
       `jianyingcraft-editor 0.1.0`（tools+resources），`tools/list` 返回 **17 个工具**
       （14 公开 + 3 `_panel_*`）。证据 `docs/runbooks/evidence/host-acceptance/CODEX_20261020.json`。
-      **仍缺**：① `tools/call editor_status` 在无面板连接时 >10 min 无返回——属 adapter/panel 侧等待，
-      已在同一证据文件里记明归因与下一步；② Kimi、ZCode 在 npm 上没有可用 CLI（`kimi` 6.0.2 是无关包、
-      `zcode` 0.0.1 是占位包），需要真实宿主安装；③ 三张面板截图未取。
+      **更正（第 14 轮）**：上一轮写的"`editor_status` 卡住"是**探针的 bug**——每次请求只读一行，
+      把中间的通知行当成了应答。用逐行读取 + 超时重测：`editor_status` 在 `open_editor` 之前**立即**返回
+      `isError:true` + `Call open_editor first`（设计如此，fail-closed）。
+      **MCP 级实机链路已跑通**（`docs/runbooks/evidence/host-acceptance/MCP_LIVE_20261020.json`）：
+      `open_editor` → Chromium 加载面板 → `editor_status.ready=true` →
+      `command_run file.openDemoProject` + `sequence.inspect` = **7 个视频片段**；两处截图
+      （`mcp-panel-before.png` / `mcp-panel-after.png`）显示面板真的渲染出演示工程（V1/V2 多片段 + A1 + 时间轴 + 预览）。
+      截图字节相同（页面启动即带示例工程），所以截图只证明"面板能渲染"，命令效果由 `sequence.inspect` 证明。
+      **仍缺**：① 截图来自 headless Chromium 的面板页，不是 Codex 宿主内嵌 webview；② Kimi、ZCode 在 npm 上
+      没有可用 CLI（`kimi` 6.0.2 是无关包、`zcode` 0.0.1 是占位包），需要真实宿主安装；③ 三宿主各自的画面截图未取。
       **静态一致性已加**（2026-10-20，插件仓 `ui/tests/host-manifests.test.mjs`，7 条通过）：四份清单同名同版本、无上游品牌残留、MCP 条目都指向 `ui/dist/adapter.mjs`、ZCode 展开 `${CLAUDE_PLUGIN_ROOT}`、6 个技能 frontmatter 齐全。**仍未做**：真机安装与截图
       → 步骤见 docs/runbooks/three-host-install.md
 

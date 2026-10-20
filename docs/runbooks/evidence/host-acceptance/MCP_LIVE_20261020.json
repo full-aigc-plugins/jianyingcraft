@@ -1,0 +1,38 @@
+{
+  "schema": "jianyingcraft-host-acceptance/mcp-live/v1",
+  "observed_at": "2026-10-20T03:39:01.241Z",
+  "steps": [
+    {
+      "step": "editor_status before open_editor",
+      "result": {
+        "error": "editor_status: Call open_editor first"
+      }
+    },
+    {
+      "step": "open_editor",
+      "editor": "jianyingcraft",
+      "editorUrl": "http://127.0.0.1:61621/4aab6e4b5e37523c560956a63ea80ac30598d3ebcfe5d2a0da6a29c914c25558/app/",
+      "ready": false
+    },
+    {
+      "step": "screenshot before commands",
+      "file": "E:\\workspaces\\workspace-agent-skills\\full-aigc-plugins-repositories\\jianyingcraft\\docs\\runbooks\\evidence\\host-acceptance\\mcp-panel-before.png",
+      "sha256": "88cec42a5c19aec436e09d90931b04495f075c6bb27c8ca98c605e7386562c98"
+    },
+    {
+      "step": "editor_status after panel",
+      "ready": true,
+      "queued": 0,
+      "pending": 0
+    },
+    {
+      "step": "command_run file.openDemoProject + sequence.inspect",
+      "videoClips": 7
+    },
+    {
+      "step": "screenshot after commands",
+      "file": "E:\\workspaces\\workspace-agent-skills\\full-aigc-plugins-repositories\\jianyingcraft\\docs\\runbooks\\evidence\\host-acceptance\\mcp-panel-after.png",
+      "sha256": "88cec42a5c19aec436e09d90931b04495f075c6bb27c8ca98c605e7386562c98"
+    }
+  ]
+}
