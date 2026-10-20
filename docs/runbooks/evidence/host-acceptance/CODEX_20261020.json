@@ -1,0 +1,82 @@
+{
+  "schema": "jianyingcraft-host-acceptance/codex/v1",
+  "observed_at": "2026-10-20",
+  "host": {
+    "name": "codex",
+    "cli_version": "codex-cli 0.163.0",
+    "install": "npm install -g @openai/codex"
+  },
+  "plugin": {
+    "dir": "jianyingcraft-plugin",
+    "dist_build": "node ui/build.mjs",
+    "adapter": "ui/dist/adapter.mjs",
+    "tools": 17
+  },
+  "mcp_registration": {
+    "command": "codex mcp add jianyingcraft-editor -- node ui/dist/adapter.mjs",
+    "exit": 0,
+    "get": {
+      "enabled": true,
+      "transport": "stdio",
+      "command": "node",
+      "args": "ui/dist/adapter.mjs"
+    }
+  },
+  "protocol_handshake": {
+    "initialize": {
+      "protocolVersion": "2024-11-05",
+      "serverInfo": {
+        "name": "jianyingcraft-editor",
+        "version": "0.1.0"
+      },
+      "capabilities": [
+        "tools",
+        "resources"
+      ]
+    },
+    "tools_list": [
+      "_panel_download",
+      "_panel_poll",
+      "_panel_reply",
+      "command_list",
+      "command_run",
+      "editor_status",
+      "engine_cli_list",
+      "engine_cli_run",
+      "engine_diagnose",
+      "inspect",
+      "list_files",
+      "open_browser_editor",
+      "open_editor",
+      "open_file",
+      "save_file",
+      "save_project",
+      "screenshot"
+    ]
+  },
+  "blocked": {
+    "tool": "tools/call editor_status",
+    "symptom": "无返回（>10 min）",
+    "root_cause": "jianying-cli 的 Windows 进程列表调用 `tasklist` 且没有超时；本机 tasklist 卡死（CLI 测试也因此需要 JIANYING_CLI_PROCESS_LIST）",
+    "impact": "所有需要判断“剪映是否在运行”的写入路径与 MCP 工具都继承这个卡死",
+    "not_a_plugin_defect": true,
+    "refined": {
+      "after_cli_fix": "jianying-cli 已把 tasklist 限时 5s 并失败闭合（commit 7b31980）",
+      "still_hangs": "adapter 的 editor_status 在无面板连接时仍等待（>10 min 无返回）",
+      "attribution": "属插件 adapter/panel 侧的等待，不是 CLI 的进程列表问题",
+      "next": "需圻 Playwright/CDP 抓 adapter 侧日志，或给 editor_status 加超时并返回“面板未连接”"
+    }
+  },
+  "other_hosts": {
+    "kimi": "npm `kimi` 6.0.2 是无关包；@moonshot-ai/kimi-cli 不存在 → 未安装",
+    "zcode": "npm `zcode` 0.0.1 是占位包 → 未安装"
+  },
+  "claims": {
+    "installed": true,
+    "mcp_registered": true,
+    "tools_listed": true,
+    "tool_call": false,
+    "screenshots": false
+  },
+  "note": "这份证据只证明 Codex 安装、MCP 注册与协议层对接；“三段截图”与真实工作流仍未完成"
+}

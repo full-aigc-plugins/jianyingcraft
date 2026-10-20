@@ -550,7 +550,16 @@
       `jianyingcraft-scenario-playbooks` 2 这三个交互型技能共 14 个，全部命中 701 条命令目录）。
       证据：`docs/runbooks/evidence/SKILL_COMMAND_IDS_20261020.json`。
       **不证明**：这三个技能的操作步骤被端到端执行过——它们是给人看的操作说明。*
-- [ ] ZCode / Codex / Kimi 实机验收（安装 + MCP 调用 + 画面三段证据）。**静态一致性已加**（2026-10-20，插件仓 `ui/tests/host-manifests.test.mjs`，7 条通过）：四份清单同名同版本、无上游品牌残留、MCP 条目都指向 `ui/dist/adapter.mjs`、ZCode 展开 `${CLAUDE_PLUGIN_ROOT}`、6 个技能 frontmatter 齐全。**仍未做**：真机安装与截图
+- [ ] ZCode / Codex / Kimi 实机验收（安装 + MCP 调用 + 画面三段证据）。**Codex 已部分完成**（2026-10-20）：
+      本机 `npm i -g @openai/codex` → codex-cli 0.163.0；`node ui/build.mjs` 产出 `ui/dist`；
+      `codex mcp add jianyingcraft-editor -- node ui/dist/adapter.mjs` 成功，`codex mcp get` 回报
+      enabled/stdio/command 一致。直接对同一 adapter 说 MCP：`initialize` 返回
+      `jianyingcraft-editor 0.1.0`（tools+resources），`tools/list` 返回 **17 个工具**
+      （14 公开 + 3 `_panel_*`）。证据 `docs/runbooks/evidence/host-acceptance/CODEX_20261020.json`。
+      **仍缺**：① `tools/call editor_status` 在无面板连接时 >10 min 无返回——属 adapter/panel 侧等待，
+      已在同一证据文件里记明归因与下一步；② Kimi、ZCode 在 npm 上没有可用 CLI（`kimi` 6.0.2 是无关包、
+      `zcode` 0.0.1 是占位包），需要真实宿主安装；③ 三张面板截图未取。
+      **静态一致性已加**（2026-10-20，插件仓 `ui/tests/host-manifests.test.mjs`，7 条通过）：四份清单同名同版本、无上游品牌残留、MCP 条目都指向 `ui/dist/adapter.mjs`、ZCode 展开 `${CLAUDE_PLUGIN_ROOT}`、6 个技能 frontmatter 齐全。**仍未做**：真机安装与截图
       → 步骤见 docs/runbooks/three-host-install.md
 
       **更正（同轮复查）**：adapter **本来就**在 `app/index.html` 里注入了
