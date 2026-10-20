@@ -84,8 +84,6 @@ impl TtsDraft {
     }
 }
 
-/// The natural voice package is downloaded.
-
 /// Whether this build can synthesise the natural voices, whatever is installed.
 ///
 /// The package can be present on disk while the binary was built without the `kokoro`
