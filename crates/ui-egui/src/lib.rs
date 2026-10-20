@@ -1802,7 +1802,9 @@ impl FilmcraftApp {
         // 同源（都是窗口宽度），不取内缩后的 body。
         let class = crate::layout::LayoutClass::from_width(ctx.content_rect().width());
         let shell = class != crate::layout::LayoutClass::Wide && self.ui.mode == state::Mode::Edit;
-        let header_h = if self.ui.show_header && !shell { 38.0 } else { 0.0 };
+        // 剪映工作区在 Wide 档只有一条 48 pt 顶栏；其它工作区仍是 38 pt 的 Premiere 顶栏。
+        let jianying_bar = self.ui.mode == state::Mode::Edit && self.ui.workspace == "Jianying" && class == crate::layout::LayoutClass::Wide;
+        let header_h = if self.ui.show_header && !shell { if jianying_bar { crate::header::JIANYING_HEADER_HEIGHT } else { 38.0 } } else { 0.0 };
         let header = egui::Rect::from_min_size(full.min, egui::vec2(full.width(), header_h));
         if self.ui.show_header && !shell {
             header::show(self, ui, header);

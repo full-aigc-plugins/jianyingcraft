@@ -33,6 +33,12 @@ const Y_CURVE: Color32 = Color32::from_rgb(0x60, 0xc0, 0x80);
 const PROPS_NAV_X: f32 = 26.0;
 /// Properties panel: where a row's value fields end, left of the navigator.
 const PROPS_VALUE_R: f32 = PROPS_NAV_X + NAV_STEP + 12.0;
+/// Properties panel tabs (剪映专业版：画面 / 音频 / 变速 / 动画 / 调节). The first item is the label,
+/// the second the automation id suffix (`props.tab.<slug>`) and the key the choice is stored under.
+const PROPERTY_TABS: [(&str, &str); 5] = [("画面", "picture"), ("音频", "audio"), ("变速", "speed"), ("动画", "animation"), ("调节", "color")];
+/// egui memory key of the properties panel's active tab. It is browsing state, not project state:
+/// it is deliberately not a field of the serialized UI state.
+const PROPERTY_TAB_KEY: &str = "properties-active-tab";
 
 /// Timeline time at which the clip shows media time `m` (where a keyframe sits in the sequence).
 fn timeline_time_of(it: &TrackItem, m: Tick) -> Tick {
@@ -876,6 +882,53 @@ fn draft_parameters(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
 }
 
+/// 画属性面板顶部的剪映式页签（画面 / 音频 / 变速 / 动画 / 调节），返回当前页签的 slug。
+///
+/// 当前页签用一条短下划线 + 高亮文字标出；点击只改浏览状态，立即在下一帧生效。页签本身不进
+/// 工程，也不写 UI 序列化字段（用 egui 内存保存），所以关掉再打开面板仍停在原来那页。
+fn property_tabs(app: &mut FilmcraftApp, ui: &mut egui::Ui) -> &'static str {
+    let t = app.tokens;
+    let key = egui::Id::new(PROPERTY_TAB_KEY);
+    let saved = ui.ctx().data(|d| d.get_temp::<String>(key)).unwrap_or_default();
+    // 默认「画面」；内存里是陌生值（旧版本、手改状态）时也回到「画面」。
+    let current = PROPERTY_TABS.iter().map(|(_, slug)| *slug).find(|slug| *slug == saved.as_str()).unwrap_or("picture");
+    let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::hover());
+    ui.painter().line_segment([row.left_bottom(), row.right_bottom()], Stroke::new(1.0, t.separator));
+    let mut x = row.min.x;
+    let mut chosen = None;
+    for (label, slug) in PROPERTY_TABS {
+        let galley = ui.painter().layout_no_wrap(label.to_string(), Tokens::semibold(13.0), t.text);
+        let cell = Rect::from_min_size(pos2(x, row.min.y), vec2(galley.size().x + 18.0, row.height()));
+        if cell.max.x > row.max.x + 0.5 {
+            break;
+        }
+        let resp = ui.interact(cell, egui::Id::new(("props-tab", slug)), Sense::click());
+        let selected = slug == current;
+        if !selected && resp.hovered() {
+            ui.painter().rect_filled(cell, 4.0, t.hover);
+        }
+        ui.painter().galley(
+            pos2(cell.center().x - galley.size().x / 2.0, cell.center().y - galley.size().y / 2.0),
+            galley,
+            if selected { t.text } else { t.text_dim },
+        );
+        if selected {
+            let bar = Rect::from_center_size(pos2(cell.center().x, row.max.y - 2.0), vec2(18.0, 2.0));
+            ui.painter().rect_filled(bar, 1.0, t.accent);
+        }
+        app.auto.add(&format!("props.tab.{slug}"), cell, label);
+        if resp.clicked() {
+            chosen = Some(slug);
+        }
+        x = cell.max.x + 8.0;
+    }
+    if let Some(slug) = chosen {
+        ui.ctx().data_mut(|d| d.insert_temp(key, slug.to_string()));
+        return slug;
+    }
+    current
+}
+
 /// Properties panel (Premiere 26): a compact inspector for the selected clip.
 pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
@@ -893,6 +946,10 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let mt = it.source_time_at(ph.clamp(it.start, it.end() - Tick(1)));
     let mut actions: Vec<(String, Value)> = Vec::new();
     let mut bui = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(14.0, 8.0))).id_salt("props"));
+    // 剪映工作区：右栏顶部是一排文字页签（画面 / 音频 / 变速 / 动画 / 调节），下面才是当前页签的
+    // 内容；其它工作区保持原来的连续分组。页签只决定画哪一组，五组的折叠状态仍然共用。
+    let jianying = app.ui.workspace == "Jianying";
+    let tab = if jianying { property_tabs(app, &mut bui) } else { "" };
     // header: clip name + menu
     let (hr, _) = bui.allocate_exact_size(vec2(bui.available_width(), 30.0), Sense::hover());
     let sw = Rect::from_center_size(pos2(hr.min.x + 8.0, hr.center().y), vec2(12.0, 12.0));
@@ -937,12 +994,14 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     };
     // the sections scroll: a short panel would otherwise cut Audio and the speed button off (#1322)
     let mut open_speed_dialog = false;
+    // 非剪映工作区没有页签（`tab` 为空），照旧一次画出所有分组。
+    let on_tab = |slug: &str| tab.is_empty() || tab == slug;
     egui::ScrollArea::vertical().id_salt("props-scroll").auto_shrink([false, false]).show(&mut bui, |bui| {
         // keep the rows (and their keyframe arrows) clear of the scrollbar at the panel edge
         bui.set_max_width((bui.available_width() - 14.0).max(1.0));
         let eff_idx = |id: &str| it.effects.iter().position(|e| e.effect == id);
         let val = |eid: &str, p: &str| it.effect(eid).and_then(|e| e.param(p)).map(|p| p.value_at(mt));
-        if kind == TrackKind::Video && section(bui, app, "Basic", eff_idx("motion").map(|i| (i, clip.0)), &mut actions) {
+        if on_tab("picture") && kind == TrackKind::Video && section(bui, app, "Basic", eff_idx("motion").map(|i| (i, clip.0)), &mut actions) {
             for (label, p, unit, speed, range) in [
                 (tl!("Position"), "position", "", 1.0, (-100_000.0, 100_000.0)),
                 (tl!("Anchor point"), "anchor", "", 1.0, (-100_000.0, 100_000.0)),
@@ -1013,7 +1072,7 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         }
         // 变速：视频和音频片段都有速度（音频是时间伸缩）。复用现有的「速度 / 持续时间」命令
         // （`clip.speedDuration`），不新增命令面；纯音频选区也必须有这个入口（L-2）。
-        if section(bui, app, "Speed", None, &mut actions) {
+        if on_tab("speed") && section(bui, app, "Speed", None, &mut actions) {
             let (br, bresp) = bui.allocate_exact_size(vec2(118.0, 26.0), Sense::click());
             bui.painter().rect_filled(br, 4.0, if bresp.hovered() { t.hover } else { t.panel_bg });
             bui.painter().rect_stroke(br, 4.0, Stroke::new(1.0, t.separator), egui::StrokeKind::Inside);
@@ -1024,7 +1083,8 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             }
         }
         // 音频：视频片段连同链接音频被选中时，也能在右栏直接调音量 / 声像。
-        if let Some((clip, it, _)) = clips.iter().find(|c| c.2 == TrackKind::Audio)
+        if on_tab("audio")
+            && let Some((clip, it, _)) = clips.iter().find(|c| c.2 == TrackKind::Audio)
             && section(bui, app, "Audio", it.effects.iter().position(|e| e.effect == "volume").map(|i| (i, clip.0)), &mut actions)
         {
             let clip = *clip;
@@ -1055,7 +1115,7 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             }
         }
         // 动画：用现有的关键帧命令（effects.toggleAnimation）给基础参数开 / 关动画。
-        if kind == TrackKind::Video && section(bui, app, "Animation", None, &mut actions) {
+        if on_tab("animation") && kind == TrackKind::Video && section(bui, app, "Animation", None, &mut actions) {
             for (label, eid, param) in [
                 (tl!("Position"), "motion", "position"),
                 (tl!("Scale"), "motion", "scale"),
@@ -1074,7 +1134,7 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             }
         }
         // 调色：复用 Lumetri 的固有参数（未应用时先应用），与「调色」面板同源。
-        if kind == TrackKind::Video && section(bui, app, "Color", eff_idx("lumetri").map(|i| (i, clip.0)), &mut actions) {
+        if on_tab("color") && kind == TrackKind::Video && section(bui, app, "Color", eff_idx("lumetri").map(|i| (i, clip.0)), &mut actions) {
             let lum = eff_idx("lumetri");
             for (label, p, lo, hi) in [
                 (tl!("Temperature"), "temperature", -100.0, 100.0),
@@ -1100,6 +1160,19 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                     actions.push(("effects.setParam".into(), json!({"clip": clip.0, "effect": "lumetri", "param": p, "value": nv})));
                 }
                 properties_nav(app, bui, r, clip, &it, mt, "lumetri", p, &mut actions);
+            }
+        }
+        // 当前页签没有可调内容（例如纯音频片段停在「画面」）：给一句说明，不留一片空白。
+        if jianying {
+            let has_content = match tab {
+                "picture" => kind == TrackKind::Video,
+                "audio" => clips.iter().any(|c| c.2 == TrackKind::Audio),
+                "animation" | "color" => kind == TrackKind::Video,
+                _ => true,
+            };
+            if !has_content {
+                let (r, _) = bui.allocate_exact_size(vec2(bui.available_width(), 44.0), Sense::hover());
+                bui.painter().text(r.center(), Align2::CENTER_CENTER, "该页签没有可调参数", Tokens::ui(12.0), t.text_dim);
             }
         }
     });

@@ -120,9 +120,13 @@ pub struct View {
 
 pub type Actions = Vec<(String, Value)>;
 
-const HEADER_H: f32 = 26.0;
 const FOOTER_H: f32 = 32.0;
 const PREVIEW_H: f32 = 92.0;
+/// 剪映式标题行高度：左侧「素材」/文件夹名，右侧 100×28 的「导入」按钮。
+const TITLE_H: f32 = 32.0;
+/// 剪映式「导入」按钮尺寸。
+const IMPORT_W: f32 = 100.0;
+const IMPORT_H: f32 = 28.0;
 
 fn valid_bin(app: &FilmcraftApp, b: Option<u64>) -> Option<BinId> {
     b.map(BinId).filter(|b| app.session.project.root.find_bin(*b).is_some())
@@ -427,18 +431,27 @@ fn run(app: &mut FilmcraftApp, ctx: &egui::Context, actions: Actions) {
     }
 }
 
-/// One panel instance: breadcrumb, search, Preview Area, the view, footer.
+/// One panel instance: title row with Import, search, Preview Area, the view, footer.
 fn body(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View, actions: &mut Actions) {
     let t = app.tokens;
     let pre = v.prefix.clone();
-    // breadcrumb: up one level, project file and bin path
-    let head = Rect::from_min_size(rect.min + vec2(8.0, 2.0), vec2(rect.width() - 16.0, HEADER_H - 2.0));
     let root_id = app.session.project.root.id;
     let top = match v.inst {
         Inst::Main => root_id,
         Inst::Tab(k) => BinId(app.ui.project_panel.tabs[k].bin),
     };
-    let up = Rect::from_min_size(pos2(head.min.x, head.center().y - 9.0), vec2(22.0, 18.0));
+    // 面包屑路径：工程文件名 + 当前文件夹层级（保留原来的 `project.breadcrumb` 元素）。
+    let mut crumb = format!("{}.fcproj", app.session.project.name);
+    for b in bin_path(&app.session.project.root, v.bin) {
+        crumb.push_str(" / ");
+        crumb.push_str(&b);
+    }
+    // 剪映式标题行：左上返回箭头 +「素材」或当前文件夹名（下面一行小字是路径），
+    // 右上蓝色「导入」按钮（100×28，id `project.import`）。
+    let title_row = Rect::from_min_size(rect.min + vec2(8.0, 2.0), vec2((rect.width() - 16.0).max(1.0), TITLE_H - 4.0));
+    let import = Rect::from_min_size(pos2(title_row.max.x - IMPORT_W, title_row.center().y - IMPORT_H / 2.0), vec2(IMPORT_W, IMPORT_H));
+    let title = if v.bin == root_id { "素材".to_string() } else { app.session.project.root.find_bin(v.bin).map(|bin| bin.name.clone()).unwrap_or_default() };
+    let up = Rect::from_min_size(pos2(title_row.min.x, title_row.center().y - 9.0), vec2(22.0, 18.0));
     let up_resp = ui.interact(up, egui::Id::new((&pre, "up")), Sense::click()).on_hover_text(tl!("Up one level"));
     app.auto.add(&format!("{pre}.up"), up, "Up one level");
     let can_up = v.bin != top;
@@ -451,18 +464,34 @@ fn body(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View, actions
         let parent = parent_bin(&app.session.project.root, v.bin);
         navigate(app, v.inst, parent.map(|b| b.0));
     }
-    let mut crumb = format!("{}.fcproj", app.session.project.name);
-    for b in bin_path(&app.session.project.root, v.bin) {
-        crumb.push_str(" / ");
-        crumb.push_str(&b);
-    }
+    // 文字让出右侧按钮的宽度，避免长文件夹名压到按钮上。
+    let text_l = (up.max.x + 8.0).min(import.min.x);
+    let text_r = (import.min.x - 8.0).max(text_l);
+    let title_area = Rect::from_min_max(pos2(text_l, title_row.min.y), pos2(text_r, title_row.center().y));
+    let crumb_area = Rect::from_min_max(pos2(text_l, title_row.center().y - 1.0), pos2(text_r, title_row.max.y));
     let fs = font(app);
-    let cr = ui.painter().with_clip_rect(head);
-    cr.text(pos2(up.max.x + 8.0, head.center().y), Align2::LEFT_CENTER, &crumb, Tokens::ui(fs - 0.5), t.text_dim);
-    app.auto.add(&format!("{pre}.breadcrumb"), head, &crumb);
+    ui.painter().with_clip_rect(title_area).text(pos2(text_l, title_area.center().y), Align2::LEFT_CENTER, &title, Tokens::semibold(13.0), t.text);
+    ui.painter().with_clip_rect(crumb_area).text(pos2(text_l, crumb_area.center().y), Align2::LEFT_CENTER, &crumb, Tokens::ui(fs - 2.0), t.text_dim);
+    app.auto.add(&format!("{pre}.title"), title_area, &title);
+    app.auto.add(&format!("{pre}.breadcrumb"), crumb_area, &crumb);
+    let import_resp = ui.interact(import, egui::Id::new((&pre, "import")), Sense::click()).on_hover_text("导入素材");
+    let import_bg = if import_resp.is_pointer_button_down_on() {
+        t.accent.gamma_multiply(0.82)
+    } else if import_resp.hovered() {
+        t.accent_hover
+    } else {
+        t.accent
+    };
+    ui.painter().rect_filled(import, 6.0, import_bg);
+    ui.painter().text(import.center(), Align2::CENTER_CENTER, "导入", Tokens::semibold(12.0), Color32::WHITE);
+    app.auto.add(&format!("{pre}.import"), import, "导入");
+    if import_resp.clicked() {
+        // 走既有导入流程：`file.import` 无路径时由 `file_dialog` 调 `pick_files`，落到当前文件夹。
+        actions.push(("file.import".into(), json!({"bin": v.bin.0})));
+    }
 
     // search row: field, Find, item count
-    let row = Rect::from_min_size(pos2(rect.min.x + 8.0, head.max.y + 2.0), vec2(rect.width() - 16.0, 24.0));
+    let row = Rect::from_min_size(pos2(rect.min.x + 8.0, rect.min.y + TITLE_H + 1.0), vec2(rect.width() - 16.0, 24.0));
     let sw = (row.width() * 0.45).clamp(80.0, 240.0);
     let search_rect = Rect::from_min_size(row.min, vec2(sw, 22.0));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(search_rect).id_salt((&pre, "search")));

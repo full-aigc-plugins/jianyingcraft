@@ -18,6 +18,12 @@ const OFFLINE: Color32 = Color32::from_rgb(0xe8, 0x5c, 0x5c);
 const BIN_COLOR: Color32 = Color32::from_rgb(237, 150, 58);
 /// Width of the label chip lead-in before the Name column.
 const LEAD: f32 = 26.0;
+/// 剪映式网格卡片：间距 8px、圆角 6px，悬停时整张卡片提亮。
+const CARD_GAP: f32 = 8.0;
+/// 卡片底色比缩略图向外扩出的内边距（px）。
+const CARD_PAD: f32 = 6.0;
+/// 卡片圆角（px）。
+const CARD_RADIUS: f32 = 6.0;
 
 pub fn item_icon(k: &ItemKind) -> Icon {
     match k {
@@ -843,10 +849,24 @@ fn card(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, id: ItemId, pre: &st
     let resp = ui.interact(r.expand(2.0), egui::Id::new((pre, "card", id.0)), sense);
     let th = Rect::from_min_size(r.min, vec2(r.width(), r.width() * 9.0 / 16.0));
     let selected = app.session.state.project_selection.contains(&id);
-    let card_bg = Rect::from_min_max(th.min - vec2(6.0, 6.0), pos2(th.max.x + 6.0, r.max.y + 2.0));
-    ui.painter().rect_filled(card_bg, 4.0, if selected { t.tl_header_bg } else { t.panel_bg });
+    let hovered = resp.hovered();
+    let card_bg = Rect::from_min_max(th.min - vec2(CARD_PAD, CARD_PAD), pos2(th.max.x + CARD_PAD, r.max.y + 2.0));
+    // 剪映式悬停高亮：未选中的卡片在指针下也提亮底色，并描一圈淡蓝边。
+    ui.painter().rect_filled(
+        card_bg,
+        CARD_RADIUS,
+        if selected {
+            t.tl_header_bg
+        } else if hovered {
+            t.hover
+        } else {
+            t.panel_bg
+        },
+    );
     if selected {
-        ui.painter().rect_stroke(card_bg, 4.0, Stroke::new(1.5, t.accent), StrokeKind::Inside);
+        ui.painter().rect_stroke(card_bg, CARD_RADIUS, Stroke::new(1.5, t.accent), StrokeKind::Inside);
+    } else if hovered {
+        ui.painter().rect_stroke(card_bg, CARD_RADIUS, Stroke::new(1.0, t.focus.gamma_multiply(0.55)), StrokeKind::Inside);
     }
     let at = hover_time(app, ui, &resp, th, &it);
     thumb(app, ui, th, &it, at);
@@ -930,12 +950,25 @@ fn bin_card(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, b: &Bin, v: &Vie
     let th = Rect::from_min_size(r.min, vec2(r.width(), r.width() * 9.0 / 16.0));
     let resp = ui.interact(r.expand(2.0), egui::Id::new((&v.prefix, "bincard", b.id.0)), Sense::click_and_drag());
     let selected = app.ui.project_panel.selected_bin == Some(b.id.0);
-    let bg = Rect::from_min_max(th.min - vec2(6.0, 6.0), pos2(th.max.x + 6.0, r.max.y + 2.0));
-    ui.painter().rect_filled(bg, 4.0, if selected { t.tl_header_bg } else { t.panel_bg });
+    let hovered = resp.hovered();
+    let bg = Rect::from_min_max(th.min - vec2(CARD_PAD, CARD_PAD), pos2(th.max.x + CARD_PAD, r.max.y + 2.0));
+    ui.painter().rect_filled(
+        bg,
+        CARD_RADIUS,
+        if selected {
+            t.tl_header_bg
+        } else if hovered {
+            t.hover
+        } else {
+            t.panel_bg
+        },
+    );
     if selected {
-        ui.painter().rect_stroke(bg, 4.0, Stroke::new(1.5, t.accent), StrokeKind::Inside);
+        ui.painter().rect_stroke(bg, CARD_RADIUS, Stroke::new(1.5, t.accent), StrokeKind::Inside);
+    } else if hovered {
+        ui.painter().rect_stroke(bg, CARD_RADIUS, Stroke::new(1.0, t.focus.gamma_multiply(0.55)), StrokeKind::Inside);
     }
-    ui.painter().rect_filled(th, 2.0, Color32::from_gray(26));
+    ui.painter().rect_filled(th, 4.0, Color32::from_gray(26));
     icons::paint(ui.painter(), Rect::from_center_size(th.center(), vec2(th.height() * 0.6, th.height() * 0.6)), Icon::Folder, BIN_COLOR);
     let mut n = Vec::new();
     b.all_items(&mut n);
@@ -967,7 +1000,9 @@ pub fn icon_view(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View
     let Some(bin) = app.session.project.root.find_bin(v.bin).cloned() else { return };
     let size = v.icon_size;
     let th_h = size * 9.0 / 16.0;
-    let cell = vec2(size + 20.0, th_h + 34.0);
+    // 单元格 = 卡片底色（缩略图 + 两侧 CARD_PAD）+ 卡片间距 CARD_GAP，横竖都留 8px。
+    // 底色上沿高出内容 CARD_PAD、下沿低 2px，所以竖向额外占 CARD_PAD + 2。
+    let cell = vec2(size + 2.0 * CARD_PAD + CARD_GAP, th_h + 20.0 + CARD_PAD + 2.0 + CARD_GAP);
     let ids = icon_order(app, &bin, filter);
     let bins: Vec<Bin> = if filter.is_empty() {
         bin.children.iter().filter_map(|e| if let BinEntry::Bin(b) = e { Some(b.clone()) } else { None }).collect()

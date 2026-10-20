@@ -2,15 +2,38 @@
 //! document title centred, the workspace name and quick actions on the right. On macOS the menus
 //! live in the native menu bar (set up by the app); elsewhere a compact in-window menu bar follows
 //! the mode tabs.
+//!
+//! 剪映专业版工作区（Wide + `Jianying` + 编辑模式）只有**一条** 48 pt 顶栏：左侧 ☰（打开 shell
+//! 菜单）→ 13 个一级 Tab → 右侧「导出」。这条顶栏取代原来的「Premiere 全局菜单条 + 42 pt Tab 条」
+//! 两行结构；其余工作区与导入/导出模式仍使用上面的 Premiere 顶栏。
 
 use egui::{Color32, Rect, Sense, Stroke, pos2, vec2};
 
 use crate::FilmcraftApp;
 use crate::icons::{self, Icon};
+use crate::layout::LayoutClass;
 use crate::state::Mode;
 use crate::theme::Tokens;
 
+/// 剪映专业版单行顶栏的高度（Wide + `Jianying`）。
+///
+/// `lib.rs` 的顶栏高度仍是 38 pt；顶栏本体按本常量向下多画 10 pt，`dock_ui` 再把 dock 内容区
+/// 相应下移，所以这一行视觉上是完整的 48 pt，而不用改共享的窗口骨架。
+pub(crate) const JIANYING_HEADER_HEIGHT: f32 = 48.0;
+
+/// 该帧是否走剪映专业版的单行顶栏。
+///
+/// 只在**编辑模式**下生效：导入/导出模式仍复用 Premiere 顶栏（快速导出、外观、工作区等入口
+/// 都在那里），否则两套出口会互相盖住。
+fn is_jianying_desktop(app: &FilmcraftApp, rect: Rect) -> bool {
+    app.ui.mode == Mode::Edit && app.ui.workspace == "Jianying" && LayoutClass::from_width(rect.width()) == LayoutClass::Wide
+}
+
 pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
+    if is_jianying_desktop(app, rect) {
+        jianying_bar(app, ui, rect);
+        return;
+    }
     let t = app.tokens;
     let p = ui.painter().clone();
     p.rect_filled(rect, 0.0, t.header_bg);
@@ -168,4 +191,66 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             ui.ctx().data_mut(|d| d.insert_temp(popup_id, false));
         }
     }
+}
+
+/// 剪映专业版的单行顶栏：☰ → 13 个一级 Tab → 「导出」。
+///
+/// 只画导航与导出，没有 Home / 模式 Tab / 文档标题 / 工作区名 / 快速导出——剪映桌面版把这些
+/// 入口放在草稿列表和导出面板里。全局菜单收进 ☰（`ui.jy_menu_open`，弹层由 `dock_area` 在面板
+/// 之后绘制，保证盖在预览与时间轴之上）。
+///
+/// `rect` 由 `lib.rs` 按 [`JIANYING_HEADER_HEIGHT`] 分配（Wide 下 48 pt）。
+/// 不再靠下游手工下移内容区。
+fn jianying_bar(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
+    let t = app.tokens;
+    let bar = rect;
+    let p = ui.painter().clone();
+    p.rect_filled(bar, 0.0, t.header_bg);
+    p.line_segment([bar.left_bottom(), bar.right_bottom()], Stroke::new(1.0, Color32::BLACK));
+    app.auto.add("jy.topbar", bar, crate::brand::PRODUCT_NAME);
+    // 空白处可拖动窗口；双击切换最大化（与 Premiere 顶栏一致）。
+    let drag = ui.interact(bar, egui::Id::new("jy-header-drag"), Sense::click_and_drag());
+    if drag.drag_started() {
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+    }
+    if drag.double_clicked() {
+        let max = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
+    }
+    // ☰：全局菜单的唯一入口。和 Compact/Medium 的 ☰ 共用同一份状态与弹层。
+    let menu = Rect::from_center_size(pos2(bar.min.x + 25.0, bar.center().y), vec2(30.0, 28.0));
+    let menu_response = ui.interact(menu, egui::Id::new("jy.menu"), Sense::click()).on_hover_text(tl!("Menu"));
+    if app.ui.jy_menu_open || menu_response.hovered() {
+        p.rect_filled(menu, 6.0, if app.ui.jy_menu_open { t.accent_hover } else { t.hover });
+    }
+    for line in 0..3 {
+        let y = menu.center().y - 5.0 + line as f32 * 5.0;
+        p.line_segment([pos2(menu.min.x + 9.0, y), pos2(menu.max.x - 9.0, y)], Stroke::new(1.5, t.text));
+    }
+    app.auto.add("jy.menu", menu, "Menu");
+    if menu_response.clicked() {
+        app.ui.jy_menu_open = !app.ui.jy_menu_open;
+        if app.ui.jy_menu_open {
+            // 每次打开都从菜单根开始，不继承上次展开的分组；两个弹层不叠加。
+            app.ui.jy_menu_group = None;
+            app.ui.jy_tab_more = false;
+        }
+    }
+    // 右上角「导出」：剪映桌面版最显眼的那颗按钮。
+    let export = Rect::from_min_size(pos2(bar.max.x - 12.0 - 76.0, bar.center().y - 14.0), vec2(76.0, 28.0));
+    let export_response = ui.interact(export, egui::Id::new("jy.export"), Sense::click()).on_hover_text(tl!("Export"));
+    p.rect_filled(export, 6.0, if export_response.hovered() { t.accent_hover } else { t.accent });
+    let export_label = tl!("Export");
+    let galley = p.layout_no_wrap(export_label.to_string(), Tokens::semibold(12.5), Color32::WHITE);
+    p.galley(pos2(export.center().x - galley.size().x / 2.0, export.center().y - galley.size().y / 2.0), galley, Color32::WHITE);
+    app.auto.add("jy.export", export, export_label);
+    if export_response.clicked() {
+        app.ui.jy_menu_open = false;
+        let ctx = ui.ctx().clone();
+        let _ = crate::menus::invoke(app, &ctx, "file.exportMedia", serde_json::json!({}));
+    }
+    // 13 个一级 Tab：画在 ☰ 与「导出」之间，点哪个就切到哪个面板（`jy.tabstrip.*` 与
+    // `jy.tab.*` 两套自动化 id 都登记，见 `dock_ui::jianying_tab_row`）。
+    let tabs = Rect::from_min_max(pos2(menu.max.x + 10.0, bar.min.y), pos2((export.min.x - 12.0).max(menu.max.x + 10.0), bar.max.y));
+    app.jianying_tab_row(ui, tabs, &t);
 }

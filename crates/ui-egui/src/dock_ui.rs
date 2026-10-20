@@ -5,6 +5,7 @@ use egui::{Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use serde_json::{Value, json};
 
 use crate::dock::{self, DockAction, DockNode, Group, PanelKind};
+use crate::icons::{self, Icon};
 use crate::layout::LayoutClass;
 use crate::menus::MenuItem;
 use crate::theme::Tokens;
@@ -826,35 +827,52 @@ impl FilmcraftApp {
 
     /// 时间轴工具条：剪映式高频动作（撤销 / 重做 / 分割 / 删除 / 播放 / 定格 / 倒放）。
     /// Compact 挂在时间轴上方，`Jianying` 工作区的 Wide 档挂在 Timeline 面板顶部；只做转发。
+    ///
+    /// 剪映工具条是图标按钮，不是文字按钮：这里复用 `icons.rs` 的既有图标，tooltip 仍显示原来的
+    /// 中文动作名，播放中「播放」仍切成「暂停」。`jy.tool.*` 的自动化 id 与 label 不变。
     fn timeline_toolbar(&mut self, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
         ui.painter().rect_filled(rect, 0.0, t.tl_header_bg);
-        // 第四列表示"需要选中片段"：删除/定格/倒放在没有选区时必须是灰的。
-        let entries: [(&str, &str, &str, serde_json::Value, bool); 7] = [
-            ("jy.tool.undo", "撤销", "edit.undo", json!({}), false),
-            ("jy.tool.redo", "重做", "edit.redo", json!({}), false),
-            ("jy.tool.split", "分割", "sequence.addEdit", json!({}), false),
-            ("jy.tool.delete", "删除", "edit.clear", json!({}), true),
-            ("jy.tool.play", "播放", "playback.toggle", json!({}), false),
-            ("jy.tool.freeze", "定格", "clip.frameHold", json!({}), true),
-            ("jy.tool.reverse", "倒放", "clip.speedDuration", json!({"reverse": true}), true),
+        // 最后一个 bool 表示"需要选中片段"：删除/定格/倒放在没有选区时必须是灰的。
+        let entries: [(&str, &str, Icon, &str, serde_json::Value, bool); 7] = [
+            ("jy.tool.undo", "撤销", Icon::Undo, "edit.undo", json!({}), false),
+            ("jy.tool.redo", "重做", Icon::Redo, "edit.redo", json!({}), false),
+            ("jy.tool.split", "分割", Icon::Razor, "sequence.addEdit", json!({}), false),
+            ("jy.tool.delete", "删除", Icon::Trash, "edit.clear", json!({}), true),
+            ("jy.tool.play", "播放", Icon::Play, "playback.toggle", json!({}), false),
+            ("jy.tool.freeze", "定格", Icon::Camera, "clip.frameHold", json!({}), true),
+            ("jy.tool.reverse", "倒放", Icon::Loop, "clip.speedDuration", json!({"reverse": true}), true),
         ];
-        let cell_width = rect.width() / entries.len() as f32;
+        let button_w = 34.0_f32;
+        let button_h = 28.0_f32.min(rect.height()).max(0.0);
+        let mut x = rect.min.x + 8.0;
         let mut chosen: Option<(&str, serde_json::Value)> = None;
         let has_selection = !self.session.state.selection.is_empty();
-        for (index, (id, label, command, params, needs_selection)) in entries.iter().enumerate() {
+        for (index, (id, label, icon, command, params, needs_selection)) in entries.iter().enumerate() {
+            // 两组细分隔线：撤销/重做 | 分割/删除 | 播放/定格/倒放。
+            if index == 2 || index == 4 {
+                let divider = Rect::from_center_size(pos2(x - 2.0, rect.center().y), egui::vec2(1.0, button_h * 0.55));
+                ui.painter().rect_filled(divider, 0.0, t.text_dim.gamma_multiply(0.3));
+            }
+            let cell = Rect::from_min_size(pos2(x, rect.center().y - button_h / 2.0), egui::vec2(button_w, button_h));
+            x = cell.max.x + 4.0;
+            if cell.max.x > rect.max.x - 2.0 {
+                break;
+            }
             // 按钮跟着命令的启用条件走，并且选区为空时删除/定格/倒放一律灰掉。
             let enabled =
                 (!needs_selection || has_selection) && filmcraft_engine::find_command(command).is_none_or(|spec| (spec.enabled)(&self.session).is_ok());
-            let cell = Rect::from_min_size(egui::pos2(rect.min.x + index as f32 * cell_width, rect.min.y), egui::vec2(cell_width, rect.height()));
             let response = ui.interact(cell, egui::Id::new(*id), if enabled { Sense::click() } else { Sense::hover() });
             if enabled && response.hovered() {
-                ui.painter().rect_filled(cell, 0.0, t.hover);
+                ui.painter().rect_filled(cell, 4.0, t.hover);
             }
             let color = if enabled { t.text } else { t.text_dim.gamma_multiply(0.6) };
             // 播放中显示"暂停"，这是剪映工具条的即时反馈。
-            let text = if *label == "播放" && self.playback.playing { "暂停" } else { *label };
-            let galley = ui.painter().layout_no_wrap(text.to_string(), Tokens::ui(12.5), color);
-            ui.painter().galley(egui::pos2(cell.center().x - galley.size().x / 2.0, cell.center().y - galley.size().y / 2.0), galley, color);
+            let playing = *label == "播放" && self.playback.playing;
+            let text = if playing { "暂停" } else { *label };
+            let icon = if playing { Icon::Pause } else { *icon };
+            let response = response.on_hover_text(text);
+            let icon_rect = Rect::from_center_size(cell.center(), vec2(16.0, 16.0).min(cell.size()));
+            icons::paint(ui.painter(), icon_rect, icon, color);
             self.auto.add(id, cell, text);
             if enabled && response.clicked() {
                 chosen = Some((command, params.clone()));
@@ -866,15 +884,19 @@ impl FilmcraftApp {
         }
     }
 
-    /// 剪映专业版的一级 Tab 条（Wide + `Jianying` 工作区）：素材 / 音频 / 文本 / 贴纸 / 特效 /
+    /// 剪映专业版的一级 Tab 行（Wide + `Jianying` 工作区）：素材 / 音频 / 文本 / 贴纸 / 特效 /
     /// 转场 / 字幕 / 智能包装 / 滤镜 / 调节 / 模板 / 数字人 / 插件。
     ///
-    /// 只做**导航**：有对应面板的 Tab 调 `show_panel`；模板/数字人/智能包装/插件在本仓库没有实现，
-    /// 画成灰色且不可点——不摆假入口。
-    fn jianying_tabstrip(&mut self, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
-        ui.painter().rect_filled(rect, 0.0, t.tl_header_bg);
-        ui.painter()
-            .line_segment([egui::pos2(rect.min.x, rect.max.y), egui::pos2(rect.max.x, rect.max.y)], egui::Stroke::new(1.0, t.text_dim.gamma_multiply(0.35)));
+    /// 只画按钮、不画背景与「导出」——它们属于顶栏（`header::jianying_bar`），这里只负责把这一行
+    /// 排进给定的 `rect`。只做**导航**：有对应面板的 Tab 调 `show_panel`；模板/数字人/智能包装/
+    /// 插件在本仓库没有实现，画成灰色且不可点——不摆假入口。
+    ///
+    /// 自动化 id 同时登记两套：`jy.tabstrip.<slug>` 是 Wide 档沿用的旧契约（测试与脚本按它点击），
+    /// `jy.tab.<slug>` 与 Compact/Medium 顶栏的一级 Tab 同名（`SHELL_TABS`），两套都指向同一块矩形。
+    pub(crate) fn jianying_tab_row(&mut self, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
+        if rect.width() <= 0.0 || rect.height() <= 0.0 {
+            return;
+        }
         let tabs: [(&str, &str, Option<PanelKind>); 13] = [
             ("素材", "media", Some(PanelKind::Project)),
             ("音频", "audio", Some(PanelKind::Project)),
@@ -890,42 +912,36 @@ impl FilmcraftApp {
             ("数字人", "avatar", None),
             ("插件", "plugins", None),
         ];
-        // 剪映专业版右上角那颗显眼的「导出」。
-        let export_rect = Rect::from_min_size(egui::pos2(rect.max.x - 8.0 - 72.0, rect.center().y - 14.0), egui::vec2(72.0, 28.0));
-        let export_response = ui.interact(export_rect, egui::Id::new("jy.export"), Sense::click());
-        ui.painter().rect_filled(export_rect, 6.0, if export_response.hovered() { t.accent_hover } else { t.accent });
-        let export_galley = ui.painter().layout_no_wrap("导出".to_string(), Tokens::semibold(12.5), Color32::WHITE);
-        ui.painter().galley(
-            egui::pos2(export_rect.center().x - export_galley.size().x / 2.0, export_rect.center().y - export_galley.size().y / 2.0),
-            export_galley,
-            Color32::WHITE,
-        );
-        self.auto.add("jy.export", export_rect, "导出");
-        if export_response.clicked() {
-            let ctx = ui.ctx().clone();
-            let _ = crate::menus::invoke(self, &ctx, "file.exportMedia", json!({}));
-        }
-
         let mut chosen: Option<(String, PanelKind)> = None;
-        let mut x = rect.min.x + 8.0;
+        let mut x = rect.min.x;
+        // 没点过 Tab 时默认高亮「素材」：剪映桌面版一进来就停在素材区，而不是一排都不亮。
+        let current = self.ui.jianying_tab.as_deref().unwrap_or("media");
+        let pill = Rect::from_min_size(egui::pos2(rect.min.x, rect.center().y - 14.0), egui::vec2(rect.width(), 28.0));
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(pill).id_salt("jy-header-tabs"));
+        child.set_clip_rect(rect);
+        let p = child.painter().clone();
         for (label, slug, target) in tabs {
             let color = if target.is_some() { t.text } else { t.text_dim };
-            let galley = ui.painter().layout_no_wrap(label.to_string(), Tokens::ui(12.0), color);
+            let galley = p.layout_no_wrap(label.to_string(), Tokens::ui(12.0), color);
             let width = galley.size().x + 18.0;
-            let cell = Rect::from_min_size(egui::pos2(x, rect.center().y - 14.0), egui::vec2(width, 28.0));
-            if cell.max.x > export_rect.min.x - 8.0 {
+            if x + width > rect.max.x + 0.5 {
                 break;
             }
-            let response = ui.interact(cell, egui::Id::new(("jy-tabstrip", slug)), Sense::click());
-            let active = self.ui.jianying_tab.as_deref() == Some(slug);
+            let cell = Rect::from_min_size(egui::pos2(x, pill.min.y), egui::vec2(width, 28.0));
+            let response = child.interact(cell, egui::Id::new(("jy-tabstrip", slug)), Sense::click());
+            let active = current == slug;
             if active {
-                ui.painter().rect_filled(cell, 6.0, t.accent);
+                p.rect_filled(cell, 6.0, t.accent);
             } else if response.hovered() && target.is_some() {
-                ui.painter().rect_filled(cell, 6.0, t.hover);
+                p.rect_filled(cell, 6.0, t.hover);
             }
             let text = if active { Color32::WHITE } else { color };
-            ui.painter().galley(egui::pos2(cell.min.x + 9.0, cell.center().y - galley.size().y / 2.0), galley, text);
+            p.galley(egui::pos2(cell.min.x + 9.0, cell.center().y - galley.size().y / 2.0), galley, text);
             self.auto.add(&format!("jy.tabstrip.{slug}"), cell, label);
+            // 与 Compact/Medium 顶栏同名的第二套 id（标签一一对应）。
+            if let Some(shell_id) = SHELL_TABS.iter().find(|tab| tab.0 == label).map(|tab| tab.2) {
+                self.auto.add(shell_id, cell, label);
+            }
             if response.clicked()
                 && let Some(panel) = target
             {
@@ -939,6 +955,118 @@ impl FilmcraftApp {
             self.ui.jy_media_filter = (slug == "audio").then(|| "audio".to_string());
             self.show_panel(panel);
         }
+    }
+
+    /// 剪映工作区的轻量面板标题行（26 pt）。
+    ///
+    /// 剪映专业版没有 Premiere 的 dock 页签（项目 / 媒体浏览器 / 库 / 信息、属性 / 效果控件 /
+    /// 基本图形 / 文本），停靠组只留一条标题行：左边面板名，右边「切换面板」（多面板组才有）与
+    /// 「面板菜单」。页签虽然不画，自动化契约不缩水——`panel.tab.<Panel>`、`panel.menu.<Panel>`、
+    /// `panel.drag.<Panel>` 照旧登记，切换下拉里每个面板另有 `panel.tabs.item.<Panel>`。
+    ///
+    /// 返回该组**内容区**的矩形（标题行以下），调用方用它画面板体。
+    fn jianying_panel_chrome(&mut self, ui: &mut egui::Ui, g: &Group, t: &Tokens, actions: &mut Vec<DockAction>) -> Rect {
+        let painter = ui.painter().clone();
+        painter.rect_filled(g.rect, t.radius, t.panel_bg);
+        let Some(active) = g.panels.get(g.active).copied() else { return g.content };
+        // 组太矮时不画标题行：宁可少一条装饰，也不把面板内容压没。
+        let row_h = 26.0_f32.min((g.rect.height() - 24.0).max(0.0));
+        let strip = Rect::from_min_size(g.rect.min, egui::vec2(g.rect.width(), row_h));
+        if row_h >= 24.0 {
+            painter.rect_filled(strip, 0.0, t.tl_header_bg);
+            painter.line_segment([strip.left_bottom(), strip.right_bottom()], Stroke::new(1.0, t.text_dim.gamma_multiply(0.22)));
+        }
+        // 左侧 10 pt 拖拽手柄：整组移动 / 拖出浮动，行为与原来的 dock 页签条一致。
+        let grip = Rect::from_min_size(strip.min, egui::vec2(10.0_f32.min(strip.width()), row_h));
+        let grip_response = ui.interact(grip, egui::Id::new(("panel-drag", g.path.clone())), Sense::drag());
+        self.auto.add_response(&format!("panel.drag.{}", active.id()), &grip_response, "Move panel");
+        if grip_response.drag_started() {
+            actions.push(DockAction::BeginDrag(active));
+        }
+        let title = crate::i18n::t(active.title()).to_string();
+        let galley = painter.layout_no_wrap(title.clone(), Tokens::ui(12.0), t.text_dim);
+        if row_h >= 18.0 {
+            painter.galley(pos2(strip.min.x + 14.0, strip.center().y - galley.size().y / 2.0), galley.clone(), t.text_dim);
+        }
+        let title_w = (galley.size().x + 24.0).min((strip.width() - 56.0).max(0.0));
+        let title_rect = Rect::from_min_size(egui::pos2(strip.min.x + 12.0, strip.min.y), egui::vec2(title_w, row_h));
+        let title_response = ui.interact(title_rect, egui::Id::new(("panel-title", g.path.clone())), Sense::click());
+        title_response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, true, title.as_str()));
+        self.auto.add_response(&format!("panel.tab.{}", active.id()), &title_response, active.title());
+        if title_response.clicked() {
+            actions.push(DockAction::Focus(active));
+        }
+        // 右侧从右往左排：面板菜单 ≡，其左是「切换面板」⌄（只有多面板组才画）。
+        let mut rx = strip.max.x - 6.0;
+        if row_h >= 18.0 {
+            let menu_rect = Rect::from_center_size(pos2((rx - 11.0).max(strip.min.x + 2.0), strip.center().y), egui::vec2(22.0, 18.0));
+            rx -= 24.0;
+            let menu_response = ui.interact(menu_rect, egui::Id::new(("panel-menu", g.path.clone())), Sense::click());
+            menu_response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "panel menu"));
+            self.auto.add_response(&format!("panel.menu.{}", active.id()), &menu_response, "panel menu");
+            if menu_response.hovered() {
+                painter.rect_filled(menu_rect, 4.0, t.hover);
+            }
+            icons::paint(
+                &painter,
+                Rect::from_center_size(menu_rect.center(), egui::vec2(14.0, 14.0)),
+                Icon::Hamburger,
+                if menu_response.hovered() { t.text } else { t.text_dim },
+            );
+            if menu_response.clicked() {
+                actions.push(DockAction::PanelMenu(active, menu_rect.left_bottom()));
+            }
+            if g.panels.len() > 1 {
+                let pick_rect = Rect::from_center_size(pos2((rx - 9.0).max(strip.min.x + 2.0), strip.center().y), egui::vec2(18.0, 18.0));
+                let pick_id = egui::Id::new(("panel-pick-area", g.path.clone()));
+                let ctx = ui.ctx().clone();
+                let open = ctx.data(|d| d.get_temp::<bool>(pick_id)).unwrap_or(false);
+                let pick_response = ui.interact(pick_rect, egui::Id::new(("panel-pick", g.path.clone())), Sense::click()).on_hover_text(tl!("Panels"));
+                self.auto.add_response(&format!("panel.tabs.switch.{}", active.id()), &pick_response, "Panels");
+                if pick_response.hovered() || open {
+                    painter.rect_filled(pick_rect, 4.0, t.hover);
+                }
+                icons::paint(&painter, pick_rect.shrink(2.0), Icon::ChevronDown, if pick_response.hovered() { t.text } else { t.text_dim });
+                let clicked = pick_response.clicked();
+                if clicked {
+                    ctx.data_mut(|d| d.insert_temp(pick_id, !open));
+                }
+                let opened = if clicked { !open } else { open };
+                if opened {
+                    let mut picked: Option<PanelKind> = None;
+                    let area = egui::Area::new(pick_id.with("area"))
+                        .order(egui::Order::Foreground)
+                        .pivot(egui::Align2::RIGHT_TOP)
+                        .fixed_pos(pick_rect.right_bottom())
+                        .show(&ctx, |ui| {
+                            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                                ui.set_min_width(132.0);
+                                for panel in &g.panels {
+                                    let label = if *panel == active {
+                                        format!("✓ {}", crate::i18n::t(panel.title()))
+                                    } else {
+                                        crate::i18n::t(panel.title()).to_string()
+                                    };
+                                    let row = ui.button(label);
+                                    self.auto.add_response(&format!("panel.tabs.item.{}", panel.id()), &row, panel.title());
+                                    if row.clicked() {
+                                        picked = Some(*panel);
+                                    }
+                                }
+                            });
+                        });
+                    if let Some(panel) = picked {
+                        actions.push(DockAction::Activate(panel));
+                        actions.push(DockAction::Focus(panel));
+                        ctx.data_mut(|d| d.remove::<bool>(pick_id));
+                    } else if !clicked && area.response.clicked_elsewhere() {
+                        // 打开的那一帧里 `clicked_elsewhere` 必然为真（弹层当时还不存在），跳过。
+                        ctx.data_mut(|d| d.remove::<bool>(pick_id));
+                    }
+                }
+            }
+        }
+        Rect::from_min_max(pos2(g.rect.min.x, g.rect.min.y + row_h), g.rect.max)
     }
 
     /// 剪映专业版左栏竖向 rail。有对应功能的（导入 / 素材）可点，其余（子草稿 / 我的 / AI /
@@ -1014,17 +1142,12 @@ impl FilmcraftApp {
             return;
         }
         let t = self.tokens;
-        // 剪映专业版工作区：顶部一级 Tab 条占用 42 px，其下仍是四区 dock 树。
-        let body = if class == LayoutClass::Wide && self.ui.workspace == "Jianying" && body.height() > 200.0 {
-            let strip_height = 42.0_f32.min(body.height() * 0.12);
-            let strip = Rect::from_min_size(body.min, egui::vec2(body.width(), strip_height));
-            self.jianying_tabstrip(ui, strip, &t);
-            Rect::from_min_max(egui::pos2(body.min.x, strip.max.y), body.max)
-        } else {
-            body
-        };
+        let jianying = class == LayoutClass::Wide && self.ui.workspace == "Jianying";
+        // 剪映专业版只有一条 48 pt 顶栏：`header::show` 已经把它画进 body 顶部 10 pt。这里把 dock
+        // 内容区同步下移同样的距离，顶栏不会压住第一行面板标题。`body.min.y - 1` 就是 `lib.rs`
+        // 已经画出的顶栏高度（Wide = 38）；隐藏顶栏时不动。
         // 左栏竖向 rail：导入 / 素材 / 子草稿 / 我的 / AI / 云 / 官方 / 即梦。
-        let body = if class == LayoutClass::Wide && self.ui.workspace == "Jianying" && body.width() > 520.0 {
+        let body = if jianying && body.width() > 520.0 {
             let rail_width = 56.0_f32.min(body.width() * 0.08);
             let rail = Rect::from_min_size(body.min, egui::vec2(rail_width, body.height()));
             self.jianying_rail(ui, rail, &t);
@@ -1046,19 +1169,35 @@ impl FilmcraftApp {
         let seqs = self.seq_tabs();
         let mut actions = vec![];
         let mut targets = vec![];
+        let mut contents: Vec<Rect> = Vec::with_capacity(groups.len());
         for group in &groups {
-            let chrome = dock::draw_group_chrome_details(ui, group, &seqs, &t, &mut self.auto);
-            if let Some(target) = target(group, chrome.tabs, true) {
-                targets.push(target);
+            // 剪映工作区不画 Premiere 的 dock 页签（项目/媒体浏览器/库/信息、属性/效果控件/…），
+            // 每组只留一条轻量标题行；时间轴组例外——它的页签条同时承载「打开中的序列」，
+            // 换成标题行会丢掉切换/关闭/重排序列的入口。
+            if jianying && !group.panels.contains(&PanelKind::Timeline) {
+                let content = self.jianying_panel_chrome(ui, group, &t, &mut actions);
+                let strip = Rect::from_min_max(group.rect.min, pos2(group.rect.max.x, content.min.y));
+                if let Some(panel) = group.panels.get(group.active).copied()
+                    && let Some(target) = target(group, vec![(panel, strip)], true)
+                {
+                    targets.push(target);
+                }
+                contents.push(content);
+            } else {
+                let chrome = dock::draw_group_chrome_details(ui, group, &seqs, &t, &mut self.auto);
+                if let Some(target) = target(group, chrome.tabs, true) {
+                    targets.push(target);
+                }
+                actions.extend(chrome.actions);
+                contents.push(group.content);
             }
-            actions.extend(chrome.actions);
         }
         if maximized.is_none() {
             self.ui.dock = dock;
         }
-        for group in &groups {
+        for (group, content) in groups.iter().zip(contents) {
             if let Some(panel) = group.panels.get(group.active).copied() {
-                self.panel_body(ui, panel, group.content, class);
+                self.panel_body(ui, panel, content, class);
             }
         }
         for group in &groups {
@@ -1075,6 +1214,12 @@ impl FilmcraftApp {
         }
         self.dispatch_dock_actions(&ctx, actions);
         self.panel_drag(&ctx, body, &targets);
+        // 剪映顶栏的 ☰ 菜单必须在面板之后画，才盖得住预览与时间轴（顶栏本身先于 dock 绘制）。
+        if jianying && self.ui.jy_menu_open {
+            let full = ui.max_rect();
+            let header = Rect::from_min_size(full.min, egui::vec2(full.width(), crate::header::JIANYING_HEADER_HEIGHT));
+            self.shell_menu(ui, header, body, &t);
+        }
         panels::panel_menu_popup(self, ui);
         self.cancel_value_drag(ui.ctx());
     }
