@@ -480,8 +480,20 @@
       the no-download fallback"），所以识别出来的词和输入文本对不上；用系统 SAPI 合成的同一句话
       经 whisper.cpp 交叉校验可完整识别（"The Quick Brown Fox jumps over the lazy dog."），
       证明 ASR 链路本身正确，问题在语音质量不在识别。
-- [ ] 技能实跑未覆盖：字幕面板样式预览、`captions.setStyle` 的渲染效果
-      → 步骤见 docs/runbooks/skill-reruns.md
+- [x] 字幕面板样式预览 + `captions.setStyle` 的渲染效果（2026-10-20，全自动）
+      `tests/captions_style_render_ui.rs::set_style_repaints_the_caption_band`：demo 工程 A1 上
+      `transcript.set` → `transcript.createCaptions`，在 1920×1080 黑画布上按字幕中点合成
+      `filmcraft_render::caption_overlays`（与导出同一条路径），逐属性断言像素变化——
+      size 54→96（lit 19040→59520、bbox 放大）、color 白→红（dominant `[248,248,248]`→`[248,0,0]`，
+      白色实心 0）、`background:false`（盒像素 46560→0）、`outline 8 / #00ff00`（绿描边 0→13997、
+      红字仍在）；每步都断言「字幕带之外像素严格 ==0」。5 张 PNG 落在 `target/ui-snapshots/captions-style-*.png`。
+      `tests/captions_style_panel_ui.rs::style_strip_previews_and_dispatches_the_caption_style`：
+      9 个样式控件 id 全部存在且在窗口内，且从 AccessKit 树读到**显示值**（Inter / 54.0 px / Box 勾选 /
+      Align=center）；改 size 后模型与预览都是 96，点 Align=R / Box 同步反映；从面板外
+      `captions.setStyle{size:72,font:"Noto Serif",align:"left"}` 后下一帧预览即更新（证明不是陈旧副本）。
+      截图：`captions-style-panel*.png`。
+      *顺带更正*：该条原写的 `captions.createCaptions` 实际是 `transcript.createCaptions`；
+      空工程无法 seed（`transcript.set` 需要 A1 上有 clip 的 media item），两个测试都用 demo fixture。
 - [x] **批量混剪核心链路实跑验证**（2026-10-18，headless CLI）：
       `clip.replaceFromBin`（clip 29 → item 6，联动音频 30 一起换）→ `file.saveCopy`（28,245 字节工作副本）
       → `file.exportMedia`（**17,984,537 字节 mp4**，`offlineMedia: []`）；替换后片段时间不变，
