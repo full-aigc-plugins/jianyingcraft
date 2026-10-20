@@ -55,6 +55,9 @@ fn a_listed_zh_cn_system_voice_speaks_chinese() {
     assert_eq!(higher.samples.len(), audio.samples.len(), "pitch keeps the length");
     assert!(higher.samples != audio.samples, "+6 semitones changed nothing");
     // an English voice refuses the same text with an explanation instead of mispronouncing it
-    let err = tts::voice_in("basic-female", None).expect("the built-in voice").synthesize("你好", &tts::Params::default()).expect_err("English voices cannot say Chinese");
+    let err = tts::voice_in("basic-female", None)
+        .expect("the built-in voice")
+        .synthesize("你好", &tts::Params::default())
+        .expect_err("English voices cannot say Chinese");
     assert!(err.to_string().contains("Chinese"), "{err}");
 }

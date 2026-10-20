@@ -159,11 +159,7 @@ fn parse_voices(stdout: &str) -> Vec<SystemVoice> {
 /// SAPI reports `Female` / `Male`; anything else is treated as female (the voices that matter report
 /// one of the two, and `Gender` has no "unknown" case).
 fn parse_gender(gender: &str) -> Gender {
-    if gender.eq_ignore_ascii_case("male") {
-        Gender::Male
-    } else {
-        Gender::Female
-    }
+    if gender.eq_ignore_ascii_case("male") { Gender::Male } else { Gender::Female }
 }
 
 /// `Microsoft Huihui Desktop` → `system-microsoft-huihui-desktop`, made unique within `existing`.

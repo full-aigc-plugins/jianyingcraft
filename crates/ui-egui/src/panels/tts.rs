@@ -27,12 +27,8 @@ const FOOTER_H: f32 = 48.0;
 /// The voice groups the panel lists, most capable first. A group with no voice in the chosen
 /// language is left out, so English shows the natural and built-in voices and Chinese shows either
 /// the system's own zh-CN voices or the clearly marked placeholder.
-const ENGINE_HEADINGS: &[(&str, &str)] = &[
-    ("neural", "Natural voices"),
-    ("system", "System voices (Windows)"),
-    ("basic", "Basic voices (built in)"),
-    ("placeholder", "Placeholder (cannot speak)"),
-];
+const ENGINE_HEADINGS: &[(&str, &str)] =
+    &[("neural", "Natural voices"), ("system", "System voices (Windows)"), ("basic", "Basic voices (built in)"), ("placeholder", "Placeholder (cannot speak)")];
 
 /// What the panel is writing (UI state, serde so agents can read it).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
