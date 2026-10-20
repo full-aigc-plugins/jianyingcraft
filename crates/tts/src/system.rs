@@ -135,6 +135,11 @@ fn parse_voices(stdout: &str) -> Vec<SystemVoice> {
         if name.is_empty() || culture.is_empty() {
             continue;
         }
+        // Only Simplified Chinese: SAPI lists every installed voice, and an English voice cannot
+        // pronounce Han text (the catalogue would then advertise something it cannot do).
+        if culture != "zh-CN" {
+            continue;
+        }
         // `VoiceInfo` is `Copy` and holds `&'static str`; a handful of names is leaked once per
         // process, together with the cached catalogue
         let name = leak(name.to_string());
@@ -142,16 +147,7 @@ fn parse_voices(stdout: &str) -> Vec<SystemVoice> {
         let id = leak(unique_id(&out, name));
         let description = "Windows system voice (zh-CN) spoken by the Windows speech engine (SAPI); pace and vocal pitch are applied as SSML prosody percentages. Enumerated from the system, so it really speaks Chinese.";
         out.push(SystemVoice {
-            info: VoiceInfo {
-                id,
-                name,
-                language,
-                gender: parse_gender(gender.trim()),
-                engine: ENGINE,
-                description,
-                license: LICENSE,
-                installed: true,
-            },
+            info: VoiceInfo { id, name, language, gender: parse_gender(gender.trim()), engine: ENGINE, description, license: LICENSE, installed: true },
         });
     }
     out
@@ -506,7 +502,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_zh_cn_voices_are_kept_and_they_get_stable_ids() {
+    fn chinese_system_voices_are_kept_with_a_stable_id_and_their_language() {
         let stdout = "Microsoft Huihui Desktop|zh-CN|Female|Adult\n\
                       Microsoft Kangkang|zh-CN|Male|Adult\n\
                       Microsoft Zira Desktop|en-US|Female|Adult\n\
@@ -515,9 +511,11 @@ mod tests {
                       broken line\n";
         let voices = parse_voices(stdout);
         let names: Vec<&str> = voices.iter().map(|v| v.info.name).collect();
+        // only Simplified Chinese system voices are listed: the other languages already have
+        // built-in/neural voices, and an English OS voice cannot pronounce Han text
         assert_eq!(names, vec!["Microsoft Huihui Desktop", "Microsoft Kangkang"], "{names:?}");
-        assert_eq!(voices[0].info.id, "system-microsoft-huihui-desktop");
-        assert_eq!(voices[1].info.id, "system-microsoft-kangkang");
+        assert_eq!(voices[0].info.id, "system-windows-microsoft-huihui-desktop");
+        assert_eq!(voices[1].info.id, "system-windows-microsoft-kangkang");
         assert_eq!(voices[0].info.language, "zh-CN");
         assert_eq!(voices[0].info.engine, ENGINE);
         assert!(voices[0].info.installed, "a listed system voice can speak");
@@ -526,8 +524,8 @@ mod tests {
         // a duplicate name still gets a unique id
         let again = parse_voices("Microsoft Huihui Desktop|zh-CN|Female|Adult\nMicrosoft Huihui Desktop|zh-CN|Female|Adult\n");
         assert_eq!(again.len(), 2);
-        assert_eq!(again[1].info.id, "system-microsoft-huihui-desktop-2");
-        // an empty listing is the normal no-Chinese-voice case, not an error
+        assert_eq!(again[1].info.id, "system-windows-microsoft-huihui-desktop-2");
+        // a machine with no Chinese system voice is the normal empty case, not an error
         assert!(parse_voices("").is_empty());
     }
 

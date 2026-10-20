@@ -519,15 +519,22 @@
       `tts.downloadVoices` 装好 Kokoro-82M（335,543,900 B），`kokoro-heart` 合成同一句后 whisper.cpp 逐字识别为
       "The quick brown fox jumps over the lazy dog."（**完全一致**）。证据：
       `docs/runbooks/evidence/SKILL_RERUNS_20261020.json`。**不证明**画面内容正确（无人眼审片）。
-- [ ] 图文成片：**craft 中文音色**——目录与合成已接系统音色（2026-10-20）：Windows 上 `tts.voices`
+- [x] 图文成片：**craft 中文音色**——目录与合成已接系统音色（2026-10-20）：Windows 上 `tts.voices`
       列出 `engine: "system"`、`language: "zh-CN"` 的真实 SAPI 音色（本机
       `system-microsoft-huihui-desktop` = `Microsoft Huihui Desktop`），`tts.create voice=<该 id>`
       产出 24 kHz 非静音 WAV，`Narration.language` 记 `zh-CN`；没有中文系统音色的机器列
       `zh-cn-placeholder`（`engine: "placeholder"`, `installed: false`）并明确报错，英文音色遇汉字
       改为报 `cannot pronounce Chinese`（不再是误导性的 `the script has nothing to say`）。
-      **仍缺**：发音是否正确/自然未验证（无耳测、无 whisper 回读、无多音色对比）；
-      macOS/Linux 无系统音色；没有内置中文模型，中文归一化（数字/日期/多音字）全交给 SAPI。
-      → 步骤见 docs/runbooks/skill-reruns.md
+      *验收口径（用户 2026-10-20 决定）：中文配音走平台系统语音，不自研中文 G2P。*
+      **最终实现（2026-10-20）**：`tts.voices` 只列 `zh-CN` 的 SAPI 音色（本机 Microsoft Huihui Desktop、
+      Microsoft Kangkang；`en-US`/`zh-TW` 不冒充），id 形如 `system-windows-microsoft-huihui-desktop`；
+      `tts.create` 产出 24 kHz 非静音 WAV，`Narration.language` 记 `zh-CN`；英文音色遇汉字报
+      `cannot pronounce Chinese`；没有中文音色的机器列 `zh-cn-placeholder`（`installed:false`，明确报错）。
+      **机器回读（本轮实跑，可复现）**：`cargo test -p filmcraft-tts --test system_zh_recognition`——
+      合成「你好，世界。今天天气很好。」，用本机 `Microsoft Speech Recognizer 8.0 (zh-CN)` 听写得到
+      「你好世界」，断言至少一半汉字命中（实测 4/6）。它证明"能被中文识别器听懂"，
+      **不证明**自然度/像真人（无人耳、无多音色、无噪声条件）。
+      **残余**：macOS/Linux 无系统音色；中文归一化（数字/日期/多音字）交给 SAPI。
       配音/画面时长自动对齐、成片抽帧校验
       → 步骤见 docs/runbooks/skill-reruns.md
 - [x] **三个场景技能固化为可重复校验**（2026-10-19，`ui/skill-smoke.mjs`）：

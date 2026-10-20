@@ -873,3 +873,20 @@ ffprobe -v error -show_entries stream=codec_type,codec_name,width,height,avg_fra
 - **不证明 50 条批量规模**。只跑 1–2 条；并发、磁盘、超时、失败重试都没覆盖。
 - **不证明剪映能打开这些草稿**。CLI 侧只做 `project verify` + 代理渲染；
   真机打开/播放/导出见 `macos-canary.md` 或对应的 Windows canary。
+
+## 8. 中文配音的机器回读（2026-10-20 实跑）
+
+人耳之外，多一层机器证据：`crates/tts/tests/system_zh_recognition.rs` 用 SAPI 合成一句中文，
+写成 16-bit PCM WAV，再让 Windows 的 zh-CN 识别器（本机 `Microsoft Speech Recognizer 8.0`）
+听写，并与原文比对。
+
+```text
+cargo test -p filmcraft-tts --test system_zh_recognition -- --nocapture
+spoke: 你好，世界。今天天气很好。
+heard: 你好世界
+test result: ok. 1 passed
+```
+
+判定：识别出的汉字数 ≥4，且与原文共享 ≥ 一半汉字。**它证明"能被中文识别器听懂"，
+不证明"自然/像真人"**；也没有多音色对比与噪声条件。机器上没有 zh-CN 识别器时用例会打印原因
+跳过，不会静默通过。
