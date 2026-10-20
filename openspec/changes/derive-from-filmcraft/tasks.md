@@ -550,7 +550,7 @@
       `jianyingcraft-scenario-playbooks` 2 这三个交互型技能共 14 个，全部命中 701 条命令目录）。
       证据：`docs/runbooks/evidence/SKILL_COMMAND_IDS_20261020.json`。
       **不证明**：这三个技能的操作步骤被端到端执行过——它们是给人看的操作说明。*
-- [ ] ZCode / Codex / Kimi 实机验收（安装 + MCP 调用 + 画面三段证据）
+- [ ] ZCode / Codex / Kimi 实机验收（安装 + MCP 调用 + 画面三段证据）。**静态一致性已加**（2026-10-20，插件仓 `ui/tests/host-manifests.test.mjs`，7 条通过）：四份清单同名同版本、无上游品牌残留、MCP 条目都指向 `ui/dist/adapter.mjs`、ZCode 展开 `${CLAUDE_PLUGIN_ROOT}`、6 个技能 frontmatter 齐全。**仍未做**：真机安装与截图
       → 步骤见 docs/runbooks/three-host-install.md
 
       **更正（同轮复查）**：adapter **本来就**在 `app/index.html` 里注入了
