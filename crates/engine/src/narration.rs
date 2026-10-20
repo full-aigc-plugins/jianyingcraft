@@ -144,7 +144,15 @@ fn package_json() -> Value {
 fn voices(_s: &mut Session, _p: &Value) -> Result<Value> {
     let dir = crate::transcript::models_dir();
     let voices = tts::voices_in(dir.as_deref());
-    let languages = tts::LANGUAGES;
+    // 语言必须来自本机真的能说的音色：没有中文音色的机器不该报 zh-CN。
+    let mut languages: Vec<(String, String)> = Vec::new();
+    for v in &voices {
+        if languages.iter().any(|(id, _)| id == v.language) {
+            continue;
+        }
+        let name = tts::LANGUAGES.iter().find(|(id, _)| *id == v.language).map(|(_, name)| (*name).to_string()).unwrap_or_else(|| v.language.to_string());
+        languages.push((v.language.to_string(), name));
+    }
     Ok(json!({
         "package": package_json(),
         "languages": languages.iter().map(|(id, name)| json!({"id": id, "name": name})).collect::<Vec<_>>(),

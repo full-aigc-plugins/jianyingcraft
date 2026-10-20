@@ -1285,6 +1285,8 @@ mod project_panel_tests;
 #[cfg(test)]
 mod proxies_tests;
 #[cfg(test)]
+mod quick_short_video_tests;
+#[cfg(test)]
 #[cfg(test)]
 mod relink_tests;
 #[cfg(test)]
