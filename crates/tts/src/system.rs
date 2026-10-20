@@ -132,19 +132,20 @@ fn parse_voices(stdout: &str) -> Vec<SystemVoice> {
             continue;
         };
         let (name, culture) = (name.trim(), culture.trim());
-        if name.is_empty() || !culture.eq_ignore_ascii_case(zh::LANGUAGE) {
+        if name.is_empty() || culture.is_empty() {
             continue;
         }
         // `VoiceInfo` is `Copy` and holds `&'static str`; a handful of names is leaked once per
         // process, together with the cached catalogue
         let name = leak(name.to_string());
+        let language = leak(culture.to_string());
         let id = leak(unique_id(&out, name));
         let description = "Windows system voice (zh-CN) spoken by the Windows speech engine (SAPI); pace and vocal pitch are applied as SSML prosody percentages. Enumerated from the system, so it really speaks Chinese.";
         out.push(SystemVoice {
             info: VoiceInfo {
                 id,
                 name,
-                language: zh::LANGUAGE,
+                language,
                 gender: parse_gender(gender.trim()),
                 engine: ENGINE,
                 description,
@@ -164,7 +165,7 @@ fn parse_gender(gender: &str) -> Gender {
 
 /// `Microsoft Huihui Desktop` → `system-microsoft-huihui-desktop`, made unique within `existing`.
 fn unique_id(existing: &[SystemVoice], name: &str) -> String {
-    let base = format!("system-{}", slug(name));
+    let base = format!("system-windows-{}", slug(name));
     if !existing.iter().any(|v| v.info.id == base) {
         return base;
     }
@@ -386,6 +387,9 @@ fn decode_wav(bytes: &[u8]) -> Result<Audio, TtsError> {
     samples.try_reserve_exact(data.len() / 2).map_err(|e| TtsError::System(format!("unable to allocate the narration: {e}")))?;
     for pair in data.as_chunks::<2>().0 {
         samples.push(f32::from(i16::from_le_bytes(*pair)) / 32_768.0);
+    }
+    if !samples.iter().any(|s| *s != 0.0) {
+        return Err(TtsError::System("the system voice returned silence".into()));
     }
     Ok(Audio { samples, sample_rate: rate })
 }

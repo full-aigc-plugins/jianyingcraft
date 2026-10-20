@@ -81,7 +81,7 @@
       说明：**没有新增命令**（"新建短视频工程"仍走 `file.newSequence` + 参数），
       符合"不改命令面"的约束；点击后的状态变化只由单元测试覆盖，因为
       `egui::Window` 在该 harness 下收不到合成点击（连 Cancel 都不响应，已写入测试注释）
-- [ ] 若要做"短视频工程"一键命令：需要新增一条 engine 命令（会扩命令面），待确认
+- [x] 短视频工程一键命令（2026-10-20，用户授权扩命令面）：`project.quickShortVideo` —— 一条命令建竖屏工程（1080×1920@30，可选旁白上 A1、可选空字幕轨），校验先行、整组原子撤销；目录 **701 → 702**（重复的 `file.newShortVideo` 已删除，只保留这一条）。测试 `quick_short_video_tests` 4 条 + engine lib **639 passed**；`filmcraft-cli commands --json` 实测 **702**
 - [x] 默认语言 zh-cn：首次启动偏好为 `system`，经 `hooks.system_languages` →
       `Language::from_locales` 解析（中文系统即 `zh-cn`；无宿主 hook 时回落 `En`），
       由 `i18n::tests::system_language_preference_uses_the_host_languages` 覆盖
