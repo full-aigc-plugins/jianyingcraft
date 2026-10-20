@@ -510,7 +510,19 @@
       （clip 60，2.98 s）→ `captions.import`（2 条）→ `captions.list`（1 轨 2 条）→
       `durationFrames=450` → 导出 **909,010 字节 mp4**，`offlineMedia: []`。
       详见 `docs/derivation/10-skill-runbook-verification.md` §11-13
-- [x] 图文成片的外部素材导入：`skill-smoke.mjs::text-to-video-external-import` 用 `file.import {path}` 导入一张外部 PNG（item 48），再 `timeline.place` 上 V1，`sequence.inspect` 断言该 item 在轨（7 clips，70 bytes）。**仍缺**：中文配音（`tts.voices` 只有 `en-US`），属环境限制
+- [x] 图文成片的外部素材导入：`skill-smoke.mjs::text-to-video-external-import` 用 `file.import {path}` 导入一张外部 PNG（item 48），再 `timeline.place` 上 V1，`sequence.inspect` 断言该 item 在轨（7 clips，70 bytes）。
+- [x] 成片抽帧校验 + 配音可懂度（2026-10-20）
+      导出 `ttv.mp4` 经 **ffprobe 9.0.2** 复核 1080×1920 / 450 帧 / 15.018 s，并用
+      `ffmpeg -vf select='eq(n,0)+eq(n,225)+eq(n,449)' -fps_mode passthrough` 抽出 3 帧（10,566 / 11,754 /
+      11,754 B）。配音侧：本机原用 formant 合成器（`basic-female`，源码自述 "intelligible-ish and clearly
+      robotic"），whisper.cpp 只能听出乱码；本轮以 `--features whisper,filmcraft-engine/neural-voices` 构建并
+      `tts.downloadVoices` 装好 Kokoro-82M（335,543,900 B），`kokoro-heart` 合成同一句后 whisper.cpp 逐字识别为
+      "The quick brown fox jumps over the lazy dog."（**完全一致**）。证据：
+      `docs/runbooks/evidence/SKILL_RERUNS_20261020.json`。**不证明**画面内容正确（无人眼审片）。
+- [ ] 图文成片：**craft 原生中文音色**仍未实现——`tts.voices` 只有 en-US，`tts.create` 输入中文报
+      `the script has nothing to say`（2026-10-20 负向对照）。CLI 侧可用系统中文语音
+      （`Microsoft Huihui Desktop`）绕过，但那不是 craft 自身能力。
+      → 步骤见 docs/runbooks/skill-reruns.md
       配音/画面时长自动对齐、成片抽帧校验
       → 步骤见 docs/runbooks/skill-reruns.md
 - [x] **三个场景技能固化为可重复校验**（2026-10-19，`ui/skill-smoke.mjs`）：

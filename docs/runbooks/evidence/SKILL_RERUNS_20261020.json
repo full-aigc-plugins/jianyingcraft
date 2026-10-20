@@ -1,0 +1,90 @@
+{
+  "schema": "jianyingcraft-skill-reruns/v1",
+  "observed_at": "2026-10-20",
+  "host": {
+    "os": "windows",
+    "note": "本机无 ffprobe/whisper/神经音色，本轮逐项安装后实跑"
+  },
+  "tools": {
+    "ffprobe": "ffprobe 9.0.2-essentials_build-www.gyan.dev",
+    "whisper_cpp": "whisper.cpp v1.7.6 whisper-cli + ggml-tiny.bin",
+    "engine_features": [
+      "whisper",
+      "filmcraft-engine/neural-voices"
+    ]
+  },
+  "asr": {
+    "model": "whisper-tiny (safetensors, 151,061,672 B) via transcript.downloadModel",
+    "engine_run": {
+      "command": "transcript.generate model=whisper-tiny language=en",
+      "result": {
+        "items": [
+          {
+            "item": 8,
+            "language": "en",
+            "source": "whisper-tiny",
+            "speakers": 1,
+            "words": 8
+          }
+        ],
+        "skipped": []
+      }
+    },
+    "cross_check": {
+      "engine_basic_female_transcript": "with love talks about the song that's lessy-buck.",
+      "whisper_cpp_on_same_wav": "with love talks about the song that's lessy-buck.",
+      "whisper_cpp_on_sapi_reference": "The Quick Brown Fox jumps over the lazy dog.",
+      "conclusion": "ASR 链路正确；内置 basic-female 是 formant 合成器，本身不可懂"
+    }
+  },
+  "neural_voice": {
+    "package": {
+      "id": "kokoro-82m",
+      "bytes": 335543900,
+      "license": "Apache-2.0 (Kokoro-82M by hexgrad)"
+    },
+    "voice": "kokoro-heart",
+    "run": {
+      "command": "tts.create text='The quick brown fox jumps over the lazy dog.' voice=kokoro-heart",
+      "wav_bytes": 312044,
+      "sample_rate": 24000
+    },
+    "asr_roundtrip": {
+      "whisper_cpp": "The quick brown fox jumps over the lazy dog.",
+      "exact_match": true
+    },
+    "chinese_control": {
+      "command": "tts.create text='你好，世界。这是中文配音验收。' voice=kokoro-heart",
+      "result": "ok:false, error: 'the script has nothing to say'",
+      "meaning": "craft 自带音色只有 en-US，中文 G2P 仍未实现"
+    }
+  },
+  "text_to_video": {
+    "producer": "jianyingcraft-plugin/ui/skill-smoke.mjs (scenario text-to-video)",
+    "export": {
+      "width": 1080,
+      "height": 1920,
+      "frames": 450,
+      "duration_s": 15.018,
+      "bytes": 909010,
+      "offline_media": 0
+    },
+    "frame_extraction": {
+      "command": "ffmpeg -i ttv.mp4 -vf \"select='eq(n,0)+eq(n,225)+eq(n,449)'\" -fps_mode passthrough frames/frame-%02d.png",
+      "frames": 3,
+      "sizes_bytes": [
+        10566,
+        11754,
+        11754
+      ],
+      "note": "只证明可解码且尺寸正确；画面内容未做人眼审片"
+    }
+  },
+  "claims": {
+    "transcript_generate_runs": true,
+    "neural_voice_intelligible": true,
+    "chinese_voice_in_craft": false,
+    "frame_extraction_verified": true,
+    "human_review_of_footage": false
+  }
+}
