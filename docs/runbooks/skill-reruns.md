@@ -146,8 +146,14 @@ say -v '?' | grep -i zh
 }
 ```
 
-`tts.voices` 的 `languages` 只有 `en-US`；这正是任务 490 的缺口，不要用 CLI 的中文 TTS
-把它掩盖过去（见 §7）。
+`tts.voices` 的 `languages` **当时**只有 `en-US`；这正是任务 490 的缺口（上面的实测记录保留不动），
+不要用 CLI 的中文 TTS 把它掩盖过去（见 §7）。
+
+> **2026-10-20 更新**：装有 Windows 中文 SAPI 音色的机器上，`tts.voices` 的 `languages` 至少包含
+> `en-US` 与 `zh-CN`，`voices` 里有 `engine: "system"`、`installed: true` 的真实条目（本机为
+> `system-microsoft-huihui-desktop` = `Microsoft Huihui Desktop`）；没有中文系统音色的机器会列
+> `zh-cn-placeholder`（`engine: "placeholder"`, `installed: false`）并在选中时明确报错。
+> craft 自身现在能出声，但**发音质量未验证**（见 §7）。
 
 ### 3.2 A：`transcript.generate`（craft，真实 Whisper）
 
@@ -455,6 +461,14 @@ foreach ($r in $rows | Where-Object status -eq "ok") {
 & $FC --project "$WS\ttv.fcproj" export "$WS\ttv.mp4"
 ```
 
+前两步（工程 + 竖屏序列）也可以一条命令完成（#84 `project.quickShortVideo`，旁白走 `narration.text`、
+空字幕轨走 `captions=true`）：
+
+```powershell
+& $FC --compact exec project.quickShortVideo 'name=TTV' 'width=1080' 'height=1920' 'fps=30' 'narration.text=Hello world' --save-as "$WS\ttv.fcproj"
+& $FC --project "$WS\ttv.fcproj" export "$WS\ttv.mp4"
+```
+
 ```sh
 "$FC" --compact exec file.newProject 'name=TTV' --save-as "$WS/ttv.fcproj"
 "$FC" --project "$WS/ttv.fcproj" --save --compact exec file.newSequence 'name=TTV' 'width=1080' 'height=1920' 'fps=30'
@@ -506,9 +520,16 @@ foreach ($r in $rows | Where-Object status -eq "ok") {
 filmcraft-cli: tts.create: invalid parameters for `tts.create`: the script has nothing to say
 ```
 
-这条负向对照证明：**craft 的 `tts.voices` 目前没有中文音色/中文归一化**，
-所以 490 的中文配音不能靠 craft 自身完成。下面用 CLI 的中文 TTS 完成"成片"这一半，
-并在证据里分开写"CLI 中文配音通过"与"craft 原生中文音色仍未完成"。
+这条负向对照证明：**当时的** craft 没有中文音色/中文归一化，所以 490 的中文配音不能靠 craft
+自身完成。下面用 CLI 的中文 TTS 完成"成片"这一半，并在证据里分开写"CLI 中文配音通过"与
+"craft 中文音色"。
+
+> **2026-10-20 更新**（同一台机器，当前二进制）：`tts.voices` 真实列出
+> `system-microsoft-huihui-desktop`（`language: "zh-CN"`, `engine: "system"`），
+> `tts.create voice=system-microsoft-huihui-desktop` 产出 4.23 s / 24000 Hz / 406 KB 的非静音 WAV，
+> `Narration.language` 记为 `zh-CN`。上面那条 `voice=basic-female` 的报错也改了：
+> `the 'basic-female' voice speaks English and cannot pronounce Chinese ('你')`，不再是
+> `the script has nothing to say`。**发音是否正确/自然仍未验证**。
 
 #### 3.4.3 CLI 侧：中文配音 + 竖屏成片
 
@@ -843,8 +864,10 @@ ffprobe -v error -show_entries stream=codec_type,codec_name,width,height,avg_fra
   多人分离的评测。真实质量需要标注集和词错误率。
 - **不证明 ffprobe 能判断创作正确性**。它只证明容器/流/画幅/帧率/时长；内容对不对
   仍需人看片。
-- **不证明中文 TTS 自然度**。只用一个系统音色、一段短文本；没有主观评分，也没有
-  多音色/多厂商对比。
+- **不证明中文 TTS 自然度，也不证明发音正确**。2026-10-20 起 craft 能用 Windows 系统中文音色出声
+  （断言只覆盖：非静音、时长 > 0.25 s、24000 Hz、pace 改变长度、音高设置改变波形、英文音色拒绝汉字），
+  但没有耳测、没有 whisper 回读、没有多音色/多厂商对比，也没有中文归一化评测（数字/日期/多音字由
+  SAPI 决定）。"能出声"不等于"读对了"。
 - **不关闭 490 的 craft 原生中文音色**。craft `tts.voices` 仍然只有 `en-US`；
   §3.4.3 是 CLI 侧的中文配音，不等于 craft 的 TTS 引擎支持中文。
 - **不证明 50 条批量规模**。只跑 1–2 条；并发、磁盘、超时、失败重试都没覆盖。

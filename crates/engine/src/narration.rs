@@ -143,10 +143,12 @@ fn package_json() -> Value {
 
 fn voices(_s: &mut Session, _p: &Value) -> Result<Value> {
     let dir = crate::transcript::models_dir();
+    let voices = tts::voices_in(dir.as_deref());
+    let languages = tts::LANGUAGES;
     Ok(json!({
         "package": package_json(),
-        "languages": tts::LANGUAGES.iter().map(|(id, name)| json!({"id": id, "name": name})).collect::<Vec<_>>(),
-        "voices": tts::voices_in(dir.as_deref()),
+        "languages": languages.iter().map(|(id, name)| json!({"id": id, "name": name})).collect::<Vec<_>>(),
+        "voices": voices,
         "defaultVoice": tts::default_voice_id(),
         "pitches": VocalPitch::ALL.iter().map(|p| json!({"id": p.id(), "label": p.label(), "semitones": p.semitones()})).collect::<Vec<_>>(),
         "pace": {"min": tts::MIN_PACE, "max": tts::MAX_PACE, "default": 1.0},

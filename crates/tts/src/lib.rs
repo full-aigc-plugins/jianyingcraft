@@ -4,10 +4,18 @@
 //! - [`voices`] / [`voice`]: the voice catalogue (id, name, language, gender, engine, licence).
 //! - [`script`]: splits a script into speech and pause markers (`[pause 1s]`, `[pause 500ms]`).
 //! - [`formant`]: the built-in voices, an original source–filter formant synthesizer. They need
-//!   no download and work everywhere (also in the web build); they sound robotic. The neural voices
-//!   (Kokoro-82M, downloaded on first use) are added behind a feature in a later milestone.
+//!   no download and work everywhere (also in the web build); they sound robotic and they speak
+//!   English. The neural voices (Kokoro-82M, downloaded on first use) are added behind a feature in a
+//!   later milestone.
+//! - [`system`]: the Windows system (SAPI) **zh-CN** voices, enumerated and spoken through the same
+//!   `System.Speech` engine, so a listed Chinese voice really speaks Chinese.
+//! - [`zh`]: the zh-CN placeholder listed when the machine has no Chinese speech engine, and the
+//!   check that makes English voices refuse Han text with an explanation instead of reading it as if
+//!   it were English.
 //!
-//! Everything is deterministic: the same script and settings give the same samples.
+//! The built-in and neural voices are deterministic: the same script and settings give the same
+//! samples. A system voice is the operating system's synthesizer, so it can differ between Windows
+//! versions and installed voice packages.
 
 pub mod catalog;
 pub mod formant;
@@ -16,6 +24,8 @@ pub mod kokoro;
 #[cfg(feature = "kokoro")]
 pub mod neural;
 pub mod script;
+pub mod system;
+pub mod zh;
 
 use serde::Serialize;
 
@@ -49,6 +59,12 @@ pub enum TtsError {
     NotInstalled,
     #[error("natural voices are not available in this build (built without the `kokoro` feature)")]
     Unavailable,
+    /// A voice that cannot say this script: an English voice given Chinese, or the zh-CN placeholder.
+    #[error("{0}")]
+    Unsupported(String),
+    /// The Windows system (SAPI) speech engine failed: it did not start, timed out, or wrote no audio.
+    #[error("system voice: {0}")]
+    System(String),
 }
 
 /// How a voice speaks.
@@ -111,7 +127,8 @@ pub struct VoiceInfo {
     pub engine: &'static str,
     pub description: &'static str,
     pub license: &'static str,
-    /// Usable now (built in, or downloaded).
+    /// Usable now: built in, downloaded, or backed by the system's speech engine. The zh-CN
+    /// placeholder is listed so the gap is visible, and it is `false` because nothing can speak it.
     pub installed: bool,
 }
 
@@ -122,14 +139,26 @@ pub trait Voice: Send + Sync {
     fn synthesize(&self, text: &str, params: &Params) -> Result<Audio, TtsError>;
 }
 
-/// Languages offered (English only for now).
-pub const LANGUAGES: &[(&str, &str)] = &[("en-US", "English (United States)")];
+/// Languages offered: English first (the default), then Chinese.
+///
+/// `zh-CN` is always offered so the panel never hides the gap; whether a Chinese voice can really
+/// speak depends on the machine (see [`voices_in`]).
+pub const LANGUAGES: &[(&str, &str)] = &[("en-US", "English (United States)"), (zh::LANGUAGE, "中文（简体）")];
 
-/// Every voice JianyingCraft knows: the built-in voices, then the neural voices (installed when their
-/// package is downloaded into `models_dir`).
+/// Every voice JianyingCraft knows, in catalogue order: the built-in voices, the Chinese voices
+/// (this machine's Windows system voices, or the [`zh`] placeholder when it has none), then the neural
+/// voices (installed when their package is downloaded into `models_dir`).
 pub fn voices_in(models_dir: Option<&std::path::Path>) -> Vec<VoiceInfo> {
     let installed = models_dir.is_some_and(catalog::installed) && cfg!(feature = "kokoro");
-    formant::VOICES.iter().map(|v| v.info).chain(catalog::VOICES.iter().map(|v| VoiceInfo { installed, ..v.info })).collect()
+    let system = system::voices();
+    let mut out: Vec<VoiceInfo> = formant::VOICES.iter().map(|v| v.info).collect();
+    out.extend(system.iter().map(|v| v.info()));
+    if system.is_empty() {
+        // no Chinese speech engine here: say so instead of leaving zh-CN out
+        out.push(zh::placeholder_info());
+    }
+    out.extend(catalog::VOICES.iter().map(|v| VoiceInfo { installed, ..v.info }));
+    out
 }
 
 /// The built-in voices (always available).
@@ -137,8 +166,15 @@ pub fn voices() -> Vec<VoiceInfo> {
     formant::VOICES.iter().map(|v| v.info).collect()
 }
 
-/// The voice with this id.
+/// The voice with this id: a built-in voice, a Windows system zh-CN voice, or the zh-CN placeholder.
+/// Neural voices need [`voice_in`] (they live in a downloaded package).
 pub fn voice(id: &str) -> Result<Box<dyn Voice>, TtsError> {
+    if let Some(v) = system::find(id) {
+        return Ok(Box::new(v) as Box<dyn Voice>);
+    }
+    if id == zh::PLACEHOLDER_ID {
+        return Ok(Box::new(zh::PlaceholderVoice) as Box<dyn Voice>);
+    }
     formant::VOICES
         .iter()
         .find(|v| v.info.id == id)
@@ -218,5 +254,51 @@ mod tests {
         assert_eq!(check_text("  [pause 1s] ... "), Err(TtsError::Empty));
         assert_eq!(check_text(&"a".repeat(MAX_TEXT_BYTES + 1)), Err(TtsError::TextTooLong));
         assert!(check_text("Hi").is_ok());
+    }
+
+    /// `tts.voices` must always answer for Chinese: a real system voice where the machine has one, and
+    /// the clearly marked placeholder where it has none.
+    #[test]
+    fn the_catalogue_always_offers_chinese() {
+        assert_eq!(LANGUAGES[0].0, "en-US", "English stays the default language");
+        assert!(LANGUAGES.iter().any(|(id, _)| *id == "zh-CN"), "{LANGUAGES:?}");
+        let all = voices_in(None);
+        for (i, a) in all.iter().enumerate() {
+            assert!(all.iter().skip(i + 1).all(|b| b.id != a.id), "duplicate id {}", a.id);
+        }
+        let chinese: Vec<VoiceInfo> = all.iter().copied().filter(|v| v.language == "zh-CN").collect();
+        assert!(!chinese.is_empty(), "no zh-CN entry: {:?}", all.iter().map(|v| (v.id, v.language)).collect::<Vec<_>>());
+        for v in &chinese {
+            assert_eq!(voice_in(v.id, None).map(|x| x.info().id).ok(), Some(v.id), "{} does not resolve", v.id);
+        }
+        if system::voices().is_empty() {
+            let placeholder = chinese.iter().find(|v| v.id == zh::PLACEHOLDER_ID).expect("the placeholder when no system voice");
+            assert_eq!(placeholder.engine, "placeholder");
+            assert!(!placeholder.installed, "it cannot speak, so it is not installed");
+            assert!(placeholder.description.contains("cannot speak Chinese"), "{}", placeholder.description);
+            let err = voice_in(zh::PLACEHOLDER_ID, None).and_then(|v| v.synthesize("你好，世界", &Params::default())).unwrap_err();
+            assert!(err.to_string().contains("placeholder"), "{err}");
+        } else {
+            for v in &chinese {
+                assert_eq!(v.engine, "system");
+                assert_eq!(v.language, "zh-CN");
+                assert!(v.installed, "a system voice can speak: {v:?}");
+            }
+        }
+    }
+
+    /// English voices refuse Chinese with a message that says what to do, instead of dropping the
+    /// characters ("the script has nothing to say") or reading them as English.
+    #[test]
+    fn english_voices_refuse_chinese() {
+        for id in ["basic-female", "basic-male"] {
+            let v = voice(id).unwrap();
+            let msg = v.synthesize("你好，世界", &Params::default()).unwrap_err().to_string();
+            assert!(msg.contains(id), "{msg}");
+            assert!(msg.contains("Chinese"), "{msg}");
+            assert!(msg.contains("zh-CN"), "{msg}");
+            // English still works
+            assert!(v.synthesize("Hello there.", &Params::default()).is_ok());
+        }
     }
 }

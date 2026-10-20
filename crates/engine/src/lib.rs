@@ -41,6 +41,7 @@ pub mod project_manager;
 pub mod project_panel;
 pub mod project_tools;
 pub mod proxies;
+pub mod quick_short_video;
 pub mod relink;
 pub mod remix;
 pub mod scene_detect;
@@ -1284,6 +1285,7 @@ mod project_panel_tests;
 #[cfg(test)]
 mod proxies_tests;
 #[cfg(test)]
+#[cfg(test)]
 mod relink_tests;
 #[cfg(test)]
 mod remix_tests;
@@ -1303,6 +1305,7 @@ mod sequence_tabs_tests;
 mod sequence_tools_tests;
 #[cfg(test)]
 mod settings_tests;
+#[cfg(test)]
 #[cfg(test)]
 mod shortcuts_tests;
 #[cfg(test)]

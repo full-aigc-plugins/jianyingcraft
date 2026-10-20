@@ -400,7 +400,7 @@ emerge --ask media-video/filmcraft-bin
 ## Derivation
 
 JianyingCraft is a fork of [FilmCraft](https://github.com/storytold/filmcraft), pinned to the commit
-recorded in [DERIVATION.md](DERIVATION.md). The engine, codecs, render pipeline and the 701-command
+recorded in [DERIVATION.md](DERIVATION.md). The engine, codecs, render pipeline and the 702-command
 agent surface are upstream work by the ArtCraft team and the FilmCraft contributors, used under
 MIT OR Apache-2.0. This fork changes the brand layer (product name, text wordmark, help links marked
 `(upstream)`) and the interaction layout.

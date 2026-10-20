@@ -15,7 +15,7 @@
 //! no-download fallback, not the main voice.
 
 use crate::script::{self, Segment};
-use crate::{Audio, Gender, MAX_SECONDS, Params, SAMPLE_RATE, TtsError, Voice, VoiceInfo, check_text};
+use crate::{Audio, Gender, MAX_SECONDS, Params, SAMPLE_RATE, TtsError, Voice, VoiceInfo, check_text, zh};
 
 /// A built-in voice: catalogue entry plus its speaking parameters.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -83,6 +83,9 @@ impl Voice for FormantVoice {
     fn synthesize(&self, text: &str, params: &Params) -> Result<Audio, TtsError> {
         check_text(text)?;
         params.check()?;
+        // the spelling rules are English: Han characters would be dropped one by one, so say why
+        // instead of reporting "nothing to say" (or, in mixed text, reading around them)
+        zh::reject_han(self.spec.info.id, text)?;
         let segments = script::parse(text);
         // phones per speech segment, and the length check before anything is rendered
         let mut plan: Vec<Piece> = Vec::with_capacity(segments.len());
@@ -718,7 +721,10 @@ mod tests {
         let v = voice("basic-female").unwrap();
         assert_eq!(v.synthesize("", &Params::default()), Err(TtsError::Empty));
         assert_eq!(v.synthesize("👍 🎬", &Params::default()), Err(TtsError::Empty));
-        assert_eq!(v.synthesize("日本語", &Params::default()), Err(TtsError::Empty));
+        // Han characters are refused with a reason (an English voice cannot say them); kana alone
+        // still falls through to the "nothing to say" path
+        assert!(matches!(v.synthesize("日本語", &Params::default()), Err(TtsError::Unsupported(m)) if m.contains("Chinese")));
+        assert_eq!(v.synthesize("こんにちは", &Params::default()), Err(TtsError::Empty));
         assert_eq!(v.synthesize("[pause 2s]", &Params::default()), Err(TtsError::Empty));
         assert!(matches!(v.synthesize("hi", &Params { pace: f64::NAN, ..Default::default() }), Err(TtsError::Invalid(_))));
         // 64 KB of letters would be over the 30-minute limit: refused before rendering

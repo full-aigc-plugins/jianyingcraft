@@ -1,0 +1,55 @@
+{
+  "schema": "jianyingcraft-skill-command-ids/v1",
+  "observed_at": "2026-10-20",
+  "tool": "jianyingcraft-plugin/ui/verify-skills.mjs --catalog <commands.json>",
+  "catalog": {
+    "source": "filmcraft-cli commands --json",
+    "commands": 701
+  },
+  "result": {
+    "exit": 0,
+    "skills": {
+      "jianyingcraft-batch-remix": {
+        "ids": 7,
+        "missing": 0
+      },
+      "jianyingcraft-captions": {
+        "ids": 15,
+        "missing": 0
+      },
+      "jianyingcraft-editor": {
+        "ids": 4,
+        "missing": 0
+      },
+      "jianyingcraft-scenario-playbooks": {
+        "ids": 2,
+        "missing": 0
+      },
+      "jianyingcraft-text-to-video": {
+        "ids": 11,
+        "missing": 0
+      },
+      "jianyingcraft-use": {
+        "ids": 8,
+        "missing": 0
+      }
+    },
+    "total_ids": 47,
+    "total_missing": 0
+  },
+  "interactive_skills": {
+    "jianyingcraft-editor": {
+      "ids": 4,
+      "missing": 0
+    },
+    "jianyingcraft-scenario-playbooks": {
+      "ids": 2,
+      "missing": 0
+    },
+    "jianyingcraft-use": {
+      "ids": 8,
+      "missing": 0
+    }
+  },
+  "note": "这三个技能本身是交互说明，没有独立命令流可脚本化；按 2026-10-20 决定，以「它们引用的命令 id 全部存在」作为验收口径。"
+}

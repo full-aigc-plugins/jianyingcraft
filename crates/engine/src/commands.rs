@@ -1133,6 +1133,70 @@ fn marker_list_mut(s: &mut Session) -> Result<(ItemId, Tick)> {
     Ok((seq, s.playhead()))
 }
 
+/// Everything a "new sequence" command asks for, after its parameters are parsed.
+struct NewSequence {
+    settings: SequenceSettings,
+    video_tracks: u32,
+    audio_tracks: u32,
+    name: String,
+    track_type: Option<filmcraft_project::AudioChannels>,
+    /// Items to place back to back after creation (`fromItems`); the first one chose the settings.
+    from_ids: Vec<ItemId>,
+    /// Mark the new sequence In 0 / Out `len` and give it a work area of that length.
+    work_area: Option<Tick>,
+}
+
+/// Create a sequence from validated settings and make it the active one. This is the shared body of
+/// `file.newSequence` and `file.newSequenceFromClip`: one undo step, `from_ids` placed back to back, and an
+/// optional default work area (`seconds`).
+fn create_sequence(s: &mut Session, cmd: &str, title: &str, spec: NewSequence) -> Result<ItemId> {
+    let NewSequence { mut settings, video_tracks: nv, audio_tracks: na, name, track_type, from_ids, work_area } = spec;
+    settings.preset = format!("{}x{} {}", settings.width, settings.height, settings.frame_rate.label());
+    settings.validate().map_err(|e| bad(cmd, e))?;
+    if nv > 256 || na > 256 {
+        return Err(bad(cmd, "at most 256 video and 256 audio tracks are supported"));
+    }
+    let seq_label = s.prefs.labels.defaults.sequence;
+    let id = s.edit_group(title, |s| {
+        let id = s.edit(title, |pr, st2| {
+            let id = pr.new_sequence(&name, settings, nv as usize, na as usize, None);
+            if let Some(it) = pr.item_mut(id) {
+                it.label = seq_label;
+            }
+            if let Some(q) = pr.sequence_mut(id) {
+                if let Some(c) = track_type {
+                    q.audio_tracks.iter_mut().for_each(|t| t.channels = c);
+                }
+                // A default work area gives an empty sequence a length to edit and export against.
+                if let Some(len) = work_area {
+                    let fd = q.settings.frame_rate.frame_duration();
+                    let len = len.max(fd);
+                    q.work_area = Some(TimeRange::new(Tick::ZERO, len));
+                    q.mark_in = Some(Tick::ZERO);
+                    q.mark_out = Some(len - fd);
+                }
+            }
+            st2.active_sequence = Some(id);
+            if !st2.open_sequences.contains(&id) {
+                st2.open_sequences.push(id);
+            }
+            Ok(id)
+        })?;
+        if let Some((&from, rest)) = from_ids.split_first() {
+            let dur = s.project.item(from).map(|i| i.duration()).unwrap_or_default();
+            let tg = s.targeting();
+            let ids = place_item(s, from, TimeRange::new(Tick::ZERO, dur), Tick::ZERO, tg.video_dest, tg.audio_dest, false, "New Sequence From Clip", None)?;
+            if !rest.is_empty() {
+                let end = s.active_sequence().and_then(|q| ids.iter().filter_map(|c| q.find_item(*c).map(|(_, i)| i.end())).max()).unwrap_or_default();
+                place_items(s, &json!({"time": end.0}), &json!(rest.iter().map(|i| i.0).collect::<Vec<_>>()))?;
+            }
+        }
+        Ok(id)
+    })?;
+    s.events.push(crate::Event::OpenSequence(id));
+    Ok(id)
+}
+
 fn build() -> Vec<CommandSpec> {
     let mut v = vec![
         // ================= File =================
@@ -1175,7 +1239,7 @@ fn build() -> Vec<CommandSpec> {
             Some("Cmd+N"),
             r#"{"name":str,"width":u32=1920,"height":u32=1080,"fps":f64=23.976,"sampleRate":u32=48000,"video":n=3,"audio":n=3,"mix":"Stereo|Mono|5.1|Adaptive"?,"trackType":"Standard|Mono|5.1|Adaptive"?,"fromItem":itemId?,"fromItems":[itemId]?}"#,
             always,
-            |s, p| s.edit_group("New Sequence", |s| {
+            |s, p| {
                 // `fromItems` is `fromItem` for a list: the first sets the sequence, the rest follow it back to back
                 let mut from_ids: Vec<ItemId> = match p.get("fromItems") {
                     None => Vec::new(),
@@ -1214,43 +1278,14 @@ fn build() -> Vec<CommandSpec> {
                     ),
                     None => None,
                 };
-                st.preset = format!("{}x{} {}", st.width, st.height, st.frame_rate.label());
-                st.validate().map_err(|e| bad("file.newSequence", e))?;
                 let nv = checked_u32_p(p, "video", "file.newSequence")?.unwrap_or(3);
                 let na = checked_u32_p(p, "audio", "file.newSequence")?.unwrap_or(3);
-                if nv > 256 || na > 256 {
-                    return Err(bad("file.newSequence", "at most 256 video and 256 audio tracks are supported"));
-                }
                 let n = s.project.sequences().count() + 1;
                 let name = str_p(p, "name").map(str::to_string).unwrap_or_else(|| format!("Sequence {n:02}"));
-                let seq_label = s.prefs.labels.defaults.sequence;
-                let id = s.edit("New Sequence", |pr, st2| {
-                    let id = pr.new_sequence(&name, st, nv as usize, na as usize, None);
-                    if let Some(it) = pr.item_mut(id) {
-                        it.label = seq_label;
-                    }
-                    if let (Some(c), Some(q)) = (track_type, pr.sequence_mut(id)) {
-                        q.audio_tracks.iter_mut().for_each(|t| t.channels = c);
-                    }
-                    st2.active_sequence = Some(id);
-                    if !st2.open_sequences.contains(&id) {
-                        st2.open_sequences.push(id);
-                    }
-                    Ok(id)
-                })?;
-                if let Some((&from, rest)) = from_ids.split_first() {
-                    let dur = s.project.item(from).map(|i| i.duration()).unwrap_or_default();
-                    let tg = s.targeting();
-                    let ids =
-                        place_item(s, from, TimeRange::new(Tick::ZERO, dur), Tick::ZERO, tg.video_dest, tg.audio_dest, false, "New Sequence From Clip", None)?;
-                    if !rest.is_empty() {
-                        let end = s.active_sequence().and_then(|q| ids.iter().filter_map(|c| q.find_item(*c).map(|(_, i)| i.end())).max()).unwrap_or_default();
-                        place_items(s, &json!({"time": end.0}), &json!(rest.iter().map(|i| i.0).collect::<Vec<_>>()))?;
-                    }
-                }
-                s.events.push(crate::Event::OpenSequence(id));
+                let spec = NewSequence { settings: st, video_tracks: nv, audio_tracks: na, name, track_type, from_ids, work_area: None };
+                let id = create_sequence(s, "file.newSequence", "New Sequence", spec)?;
                 Ok(json!({"sequence": id.0}))
-            })
+            }
         ),
         cmd!("file.newBin", "Bin", ["File", "New"], Some("Cmd+B"), r#"{"name":str,"parent":binId?}"#, always, |s, p| {
             let n = str_p(p, "name").unwrap_or("New Bin").to_string();
@@ -3420,6 +3455,8 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::remix::commands());
     v.extend(crate::voiceover::commands());
     v.extend(crate::narration::commands());
+    // #84: the one-command short-video project (sequence + optional narration + optional caption track)
+    v.extend(crate::quick_short_video::commands());
     v.extend(crate::keyboard::commands());
     v.extend(crate::project_panel::commands());
     v.extend(crate::media_browser::commands());

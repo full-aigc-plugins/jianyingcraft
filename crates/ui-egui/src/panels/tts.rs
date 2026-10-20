@@ -24,6 +24,16 @@ use crate::theme::Tokens;
 const PAD: f32 = 14.0;
 const FOOTER_H: f32 = 48.0;
 
+/// The voice groups the panel lists, most capable first. A group with no voice in the chosen
+/// language is left out, so English shows the natural and built-in voices and Chinese shows either
+/// the system's own zh-CN voices or the clearly marked placeholder.
+const ENGINE_HEADINGS: &[(&str, &str)] = &[
+    ("neural", "Natural voices"),
+    ("system", "System voices (Windows)"),
+    ("basic", "Basic voices (built in)"),
+    ("placeholder", "Placeholder (cannot speak)"),
+];
+
 /// What the panel is writing (UI state, serde so agents can read it).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -256,10 +266,14 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         label(ui, &t, "Voice");
         let voice_name = voices.iter().find(|v| v.id == d.voice).map_or(d.voice.as_str(), |v| v.name);
         let cb = egui::ComboBox::from_id_salt("tts-voice").selected_text(voice_name).width(w).show_ui(ui, |ui| {
-            for (engine, heading) in [("neural", "Natural voices"), ("basic", "Basic voices (built in)")] {
-                ui.label(egui::RichText::new(heading).color(t.text_faint).size(11.0));
-                for v in voices.iter().filter(|v| v.language == d.language && v.engine == engine) {
-                    let label = if v.engine == "neural" && !v.installed { format!("{} (download)", v.name) } else { v.name.to_string() };
+            for (engine, heading) in ENGINE_HEADINGS {
+                let group: Vec<&filmcraft_tts::VoiceInfo> = voices.iter().filter(|v| v.language == d.language && v.engine == *engine).collect();
+                if group.is_empty() {
+                    continue;
+                }
+                ui.label(egui::RichText::new(*heading).color(t.text_faint).size(11.0));
+                for v in group {
+                    let label = if *engine == "neural" && !v.installed { format!("{} (download)", v.name) } else { v.name.to_string() };
                     let r = ui.selectable_label(d.voice == v.id, label).on_hover_text(v.description);
                     if r.clicked() {
                         d.voice = v.id.to_string();

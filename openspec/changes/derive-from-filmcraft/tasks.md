@@ -519,9 +519,14 @@
       `tts.downloadVoices` 装好 Kokoro-82M（335,543,900 B），`kokoro-heart` 合成同一句后 whisper.cpp 逐字识别为
       "The quick brown fox jumps over the lazy dog."（**完全一致**）。证据：
       `docs/runbooks/evidence/SKILL_RERUNS_20261020.json`。**不证明**画面内容正确（无人眼审片）。
-- [ ] 图文成片：**craft 原生中文音色**仍未实现——`tts.voices` 只有 en-US，`tts.create` 输入中文报
-      `the script has nothing to say`（2026-10-20 负向对照）。CLI 侧可用系统中文语音
-      （`Microsoft Huihui Desktop`）绕过，但那不是 craft 自身能力。
+- [ ] 图文成片：**craft 中文音色**——目录与合成已接系统音色（2026-10-20）：Windows 上 `tts.voices`
+      列出 `engine: "system"`、`language: "zh-CN"` 的真实 SAPI 音色（本机
+      `system-microsoft-huihui-desktop` = `Microsoft Huihui Desktop`），`tts.create voice=<该 id>`
+      产出 24 kHz 非静音 WAV，`Narration.language` 记 `zh-CN`；没有中文系统音色的机器列
+      `zh-cn-placeholder`（`engine: "placeholder"`, `installed: false`）并明确报错，英文音色遇汉字
+      改为报 `cannot pronounce Chinese`（不再是误导性的 `the script has nothing to say`）。
+      **仍缺**：发音是否正确/自然未验证（无耳测、无 whisper 回读、无多音色对比）；
+      macOS/Linux 无系统音色；没有内置中文模型，中文归一化（数字/日期/多音字）全交给 SAPI。
       → 步骤见 docs/runbooks/skill-reruns.md
       配音/画面时长自动对齐、成片抽帧校验
       → 步骤见 docs/runbooks/skill-reruns.md
@@ -530,8 +535,14 @@
       captions（2 条、SRT 2 cue / 103 字节）、batch-remix（副本 28,245 B + 成片 17,984,537 B，
       `offline 0`）、text-to-video（1080×1920 / 450 帧 / 2 字幕 / 2 片段 / 909,010 B，`offline 0`）。
       未设 `FILMCRAFT_CLI` 时 skip（退出 0）
-- [ ] 其余三个技能（编辑器/使用指南/场景手册）是交互说明，没有独立命令流可脚本化；
+- [x] 其余三个技能（编辑器/使用指南/场景手册）是交互说明，没有独立命令流可脚本化；
       它们的命令 id 已由 `verify-skills` 校验
+      *2026-10-20 口径确认（用户决定）：以「它们引用的命令 id 全部存在于当前命令目录」为验收标准。*
+      *实测：`node ui/verify-skills.mjs --catalog <filmcraft-cli commands --json>` → exit 0，
+      6 个技能共 47 个 id、missing=0（`jianyingcraft-editor` 4、`jianyingcraft-use` 8、
+      `jianyingcraft-scenario-playbooks` 2 这三个交互型技能共 14 个，全部命中 701 条命令目录）。
+      证据：`docs/runbooks/evidence/SKILL_COMMAND_IDS_20261020.json`。
+      **不证明**：这三个技能的操作步骤被端到端执行过——它们是给人看的操作说明。*
 - [ ] ZCode / Codex / Kimi 实机验收（安装 + MCP 调用 + 画面三段证据）
       → 步骤见 docs/runbooks/three-host-install.md
 

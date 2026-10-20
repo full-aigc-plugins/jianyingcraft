@@ -226,6 +226,8 @@ pub(crate) fn apply_layout(v: &mut Vec<CommandSpec>) {
         c.menu = &["File", "Project Settings"];
     }
     let layout: Vec<(At, Vec<&'static str>)> = vec![
+        // #84: the one-command short-video project sits next to the sequence commands it uses
+        (At::After("file.newSequenceFromClip"), vec!["project.quickShortVideo"]),
         (At::After("file.newBinFromSelection"), vec!["file.newSearchBin"]),
         (At::Before("file.closeProject"), vec!["file.close"]),
         (At::After("file.closeProject"), vec!["file.closeAllProjects", "file.closeAllOtherProjects"]),

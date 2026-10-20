@@ -14,7 +14,7 @@ use filmcraft_tts_text::{Chunk, Lang, Lexicon, Overrides};
 
 use crate::catalog;
 use crate::kokoro::{KOKORO_RATE, Kokoro, VoicePack};
-use crate::{Audio, MAX_SECONDS, Params, TtsError, Voice, VoiceInfo, check_text};
+use crate::{Audio, MAX_SECONDS, Params, TtsError, Voice, VoiceInfo, check_text, zh};
 
 /// Silence between sentences, ms.
 const SENTENCE_GAP_MS: u32 = 120;
@@ -73,6 +73,9 @@ impl Voice for NeuralVoice {
     fn synthesize(&self, text: &str, params: &Params) -> Result<Audio, TtsError> {
         check_text(text)?;
         params.check()?;
+        // Kokoro's voices here are US English: the CMU dictionary and letter-to-sound rules have
+        // nothing for Han characters, so refuse them with a reason instead of producing silence
+        zh::reject_han(self.info.id, text)?;
         let chunks = filmcraft_tts_text::phonemize(text, Lang::EnUs, &self.lexicon, &Overrides::default()).map_err(|e| TtsError::Invalid(e.to_string()))?;
         let rate = KOKORO_RATE;
         let max = (MAX_SECONDS * f64::from(rate)) as usize;

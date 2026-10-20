@@ -12,7 +12,7 @@
 
 **现状**：`file.newSequence` + 参数已经能建出竖屏工程（`new_sequence_offers_aspect_presets`
 覆盖入口渲染），但"短视频工程"作为**一条命令**不存在。上一轮刻意没有新增命令，以遵守
-"不改命令面"的约束。
+"不改命令面"的约束。（2026-10-20：用户已拍板选 B，`project.quickShortVideo` 已实现，见下。）
 
 **为什么需要你拍板**：新增 engine 命令会同时扩：命令目录（701 → 702）、capability manifest、
 CLI `describe`/`commands` 输出、MCP 工具面（如果暴露）、i18n 词条、以及一条永久维护成本。
@@ -25,7 +25,14 @@ CLI `describe`/`commands` 输出、MCP 工具面（如果暴露）、i18n 词条
 | B. 加 `project.quickShortVideo` | 一条命令建出 1080×1920/30 + 可选默认字幕轨 + 可选 TTS 旁白 | ~1 天（含测试/目录/capability/文档） | 命令面永久 +1；参数设计一旦发布难改 |
 | C. 加通用"配方"命令 | `project.applyRecipe {"recipe":"short-video","params":{...}}`，配方是数据不是命令 | ~2–3 天 | 抽象更重；配方 schema 需要版本化 |
 
-**我的建议**：A。理由：现在两个技能（图文成片、批量混剪）已经用"命令序列"完成同样的事，
+**已定（2026-10-20，用户确认）：选 B**，id `project.quickShortVideo`，菜单
+`File ▸ New`（不新增顶级菜单）。参数
+`{"name":str?,"width":u32=1080,"height":u32=1920,"fps":f64=30,"narration":{"text":str,"voice":str?}?,"captions":bool=false}`。
+行为：没有工程时先建工程（同 `file.newProject`，已有工程不顶掉）、建序列（同 `file.newSequence`）、
+可选把旁白放到 A1（同 `tts.create`）、可选建一条空字幕轨（同 `captions.newTrack`）。参数先校验，
+四步同一撤销步，失败整体回滚。测例：`crates/engine/src/quick_short_video_tests.rs`。
+
+**当时的建议（已被上面的决定取代）**：A。理由：现在两个技能（图文成片、批量混剪）已经用"命令序列"完成同样的事，
 再加一条复合命令只会让"能用命令组合"和"必须用复合命令"两条路并存。若你希望降低使用门槛，
 选 C 比 B 更值——配方可扩展且不逐个占命令 id。
 
@@ -35,6 +42,22 @@ CLI `describe`/`commands` 输出、MCP 工具面（如果暴露）、i18n 词条
 CMUdict 词典 + 拼写规则）；`tts.voices` 只有 en-US（2 个内置 + 9 个 Kokoro 神经音色）。
 输入中文会报 `the script has nothing to say`。上一轮已验证：英文神经音色 `kokoro-heart`
 经 whisper.cpp 回读**逐字一致**，所以模型侧没问题，缺的是中文前端。
+
+**2026-10-20 已落地（方案 A 的"枚举 + 合成"部分，未做中文 G2P）**：
+
+- `crates/tts/src/system.rs` 用 Windows 自带的 SAPI（`System.Speech`，经 PowerShell 5.1 调用，
+  **无新依赖、无 unsafe**）真实枚举 zh-CN 系统音色，并真实合成：`engine: "system"`、
+  `language: "zh-CN"`、`installed: true`。本机条目为
+  `system-microsoft-huihui-desktop`（Microsoft Huihui Desktop）。
+- 没有中文系统音色的机器上，目录里给 `zh-cn-placeholder`（`engine: "placeholder"`,
+  `installed: false`），选中即报"占位、不能发音"，不会用英文音色冒充；内置/神经英文音色遇到汉字
+  文本改为明确报错（`the 'basic-female' voice speaks English and cannot pronounce Chinese ('你')`），
+  不再返回误导性的 `the script has nothing to say`。
+- 实测：`tts.create voice=system-microsoft-huihui-desktop` 产出 4.23 s / 24000 Hz / 406 KB 的非静音
+  WAV，`Narration.language` 记为 `zh-CN`；pace 1.5 变短、+6 半音改变波形（断言见
+  `crates/tts/tests/system_zh.rs`）。**发音是否正确/自然未验证**（没有人耳、没有 whisper 回读、
+  没有多音色对比），中文归一化（数字、日期、多音字）完全交给 SAPI。
+- 仍未做：macOS `AVSpeechSynthesizer` / Linux 系统音色；把系统音色接进 `tts-text` 的中文前端。
 
 **三个选项**
 

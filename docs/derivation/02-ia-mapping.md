@@ -168,7 +168,11 @@ Wide 档的内置工作区 **`Jianying`** 已按剪映专业版补齐四件外�
 | 导入方式 | `media_import` 的引用/复制策略 | **新增开关** |
 | 自由层级 | 同轨重叠（overlap） | **需确认上游策略**，差异点 |
 | 素材代理 / 代理模式 | 上游 proxies 作业 | 复用，补 UI |
-| 比例 / 分辨率 / 帧率 | 序列设置 | 复用，改为竖屏默认 |
+| 比例 / 分辨率 / 帧率 | 序列设置 | 复用，改为竖屏默认；#84 起 `project.quickShortVideo` 一条命令建出 1080×1920/30，可选旁白与空字幕轨 |
+
+> "新建短视频工程"：早期口径是 `file.newSequence` + 参数两步；#84 之后可以用
+> `project.quickShortVideo` 一条命令完成（`File ▸ New`），参数与回滚语义见
+> `docs/proposals/remaining-openspec-decisions.md` §1 与 `crates/engine/src/quick_short_video.rs`。
 
 这条正好验证了第 4 节「选中即属性」的设计：**未选中时右栏就是工程/序列参数**。
 

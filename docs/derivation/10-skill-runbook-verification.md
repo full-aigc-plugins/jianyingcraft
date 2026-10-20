@@ -153,6 +153,17 @@ Get-Content E:\...\_ref\captions-out.srt
 {"id":"file.exportMedia","params":{"path":"...\\ttv-out.mp4","wait":true,"preset":"Match Source – Adaptive Medium Bitrate"}}
 ```
 
+同一条链的前两步（建工程 + 建竖屏序列）现在也能一条命令完成（#84）：
+
+```jsonl
+{"id":"project.quickShortVideo","params":{"name":"TTV Vertical","width":1080,"height":1920,"fps":30,"narration":{"text":"JianyingCraft text to video check."},"captions":true}}
+```
+
+它按顺序做四件事：没有工程时建工程（同 `file.newProject`，已有工程不会被顶掉）、建序列
+（同 `file.newSequence`）、可选把旁白放到 A1（同 `tts.create`）、可选建一条**空**字幕轨
+（同 `captions.newTrack`，不凭空生成字幕）。参数在动手前先校验，四步在同一撤销步里，
+任一步失败整体回滚，报错就是失败那一步自己的错误。
+
 ## 12. 断言（对应技能 §5）
 
 | 技能判据 | 实测 |
@@ -172,7 +183,10 @@ Get-Content E:\...\_ref\captions-out.srt
 **没覆盖**：
 
 - `file.import` 外部素材（本机无素材文件；用合成片段替代）；
-- 中文配音（`tts.voices` 只返回 `en-US`，中文文案需要先下模型/音色）；
+- 中文配音的**发音质量**（2026-10-20 起 `tts.voices` 已含 zh-CN：装有 Windows 中文 SAPI 音色的机器上
+  列出真实的 `system-…` 条目并由系统引擎发声，没有时列 `zh-cn-placeholder` 占位并明确报错。本轮实测
+  `tts.create voice=system-microsoft-huihui-desktop` 产出 4.23 s / 24000 Hz 非静音 WAV，但**没有人耳或
+  主观评分验证发音是否正确/自然**，也没有多音色对比）；
 - 每段配音与画面时长对齐的自动裁剪（本次靠素材自然时长）；
 - 重跑 `file.exportMedia` 之后的成片抽帧检查（未做像素级校验）。
 
