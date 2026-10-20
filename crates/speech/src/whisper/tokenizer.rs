@@ -39,7 +39,9 @@ fn unicode_to_byte() -> HashMap<char, u8> {
             n += 1;
         }
     }
-    bs.iter().zip(&cs).map(|(&b, &c)| (char::from_u32(c).expect("valid"), b as u8)).collect()
+    // c 总是 ASCII 或 256..的非代理码位，必定合法；用 filter_map 避免在
+    // 这条热路径上带一个 expect（clippy::expect_used）。
+    bs.iter().zip(&cs).filter_map(|(&b, &c)| char::from_u32(c).map(|ch| (ch, b as u8))).collect()
 }
 
 impl Tokenizer {
