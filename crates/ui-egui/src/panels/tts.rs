@@ -66,7 +66,7 @@ impl Default for TtsDraft {
         TtsDraft {
             text: String::new(),
             language: "en-US".into(),
-            voice: if natural_installed() { "kokoro-heart".into() } else { filmcraft_tts::default_voice_id().into() },
+            voice: if natural_voice_available() { "kokoro-heart".into() } else { filmcraft_tts::default_voice_id().into() },
             pitch: VocalPitch::Default,
             pace: 1.0,
             advanced_open: true,
@@ -85,8 +85,17 @@ impl TtsDraft {
 }
 
 /// The natural voice package is downloaded.
-fn natural_installed() -> bool {
-    filmcraft_engine::transcript::models_dir().as_deref().is_some_and(filmcraft_tts::catalog::installed)
+
+/// Whether this build can synthesise the natural voices, whatever is installed.
+///
+/// The package can be present on disk while the binary was built without the `kokoro`
+/// feature (that is the default build), and then picking a natural voice fails at
+/// synthesis time. Ask the catalogue: [`filmcraft_tts::voices_in`] marks a voice
+/// `installed` only when the feature is on *and* its package is downloaded, so a
+/// default derived from it can always speak.
+fn natural_voice_available() -> bool {
+    let dir = filmcraft_engine::transcript::models_dir();
+    filmcraft_tts::voices_in(dir.as_deref()).iter().any(|v| v.engine == "neural" && v.installed)
 }
 
 /// State of job `id`: `None` while running, else its result.
