@@ -1265,6 +1265,11 @@ impl FilmcraftApp {
         for group in &groups {
             dock::paint_group_focus(ui, group, self.ui.focused, &t);
         }
+        // 剪映 Wide：预览与时间轴之间只留一条 1 px 细线（gutter 原样保留 4 pt 命中区）。
+        // 必须画在面板与聚焦描边之后，才能盖住 gutter 的底色。
+        if jianying {
+            self.paint_jianying_pane_seam(ui, &groups, body, &t);
+        }
         let floating_order = self.floating_order(&ctx);
         for index in floating_order.into_iter().filter(|_| maximized.is_none()) {
             if let Some(target) = self.floating_group(&ctx, index, &seqs, &mut actions, class) {
@@ -1284,6 +1289,52 @@ impl FilmcraftApp {
         }
         panels::panel_menu_popup(self, ui);
         self.cancel_value_drag(ui.ctx());
+    }
+
+    /// 剪映专业版：把预览与时间轴之间的横向 dock gutter 画成一条 1 px 细线。
+    ///
+    /// 来源：`dock::layout_with_actions` 按 `Tokens::gap`（4 pt）在根 Split 上留出一条
+    /// `app_bg`（深色主题下比面板的 `panel_bg` 更暗）的空带——截图里预览面板底部与时间轴组头
+    /// 之间那条 12–16 px 的纯底色带，就是这 4 pt gutter 加上监听器走带条自身的行内留白。
+    /// 剪映里两块面板之间只有一条 1 px 分隔线。
+    ///
+    /// 做法：面板与聚焦描边画完之后，用面板底色盖掉这条空带，只在时间轴组的上沿画 1 px。
+    /// dock 树的几何一点没动：`ResizeHandle` 的 4 pt divider 与 ±3 pt 命中区原样保留，
+    /// 指针拖动、方向键与读屏仍然可用；悬停/拖拽 gutter 时细线换成聚焦色，分隔依然能被发现。
+    /// 只处理横向的根分隔（时间轴在整行面板之下）；时间轴被拖到侧面或整组最大化时直接跳过。
+    fn paint_jianying_pane_seam(&self, ui: &egui::Ui, groups: &[Group], body: Rect, t: &Tokens) {
+        let Some(timeline) = groups.iter().find(|group| group.panels.contains(&PanelKind::Timeline)) else { return };
+        // 上方一排面板（Project / Program / Properties）：与时间轴横向有交集、且底边在它上方。
+        let above = groups
+            .iter()
+            .filter(|group| !group.panels.contains(&PanelKind::Timeline))
+            .filter(|group| group.rect.min.x < timeline.rect.max.x && group.rect.max.x > timeline.rect.min.x)
+            .filter(|group| group.rect.max.y <= timeline.rect.min.y + 0.5)
+            .map(|group| group.rect.max.y)
+            .reduce(f32::max);
+        let Some(top) = above else { return };
+        let gap = timeline.rect.min.y - top;
+        // 只认横向根分隔的 4 pt（留 1 pt 浮点余量）；左右分栏或浮动的 gutter 不动。
+        if gap < 0.5 || gap > t.gap + 1.0 {
+            return;
+        }
+        let x0 = body.min.x.max(timeline.rect.min.x);
+        let x1 = body.max.x.min(timeline.rect.max.x);
+        if x1 <= x0 {
+            return;
+        }
+        // 用面板底色填平 gutter：原先那条更暗的 app_bg 空带消失，两排面板看起来贴在一起。
+        ui.painter().rect_filled(Rect::from_min_max(pos2(x0, top), pos2(x1, timeline.rect.min.y)), 0.0, t.panel_bg);
+        // 细线落在时间轴组的上沿，正好替换掉聚焦组原本画在那里的 1 px 描边：
+        // 聚焦时保持聚焦色（外观与修改前完全一致），未聚焦时用中性分隔色。
+        let focused = timeline.panels.get(timeline.active) == Some(&self.ui.focused);
+        // 命中区与 craft_ui 的 ResizeHandle 一致：divider 上下各扩 3 pt。
+        let hovered =
+            ui.ctx().pointer_hover_pos().is_some_and(|pos| Rect::from_min_max(pos2(x0, top - 3.0), pos2(x1, timeline.rect.min.y + 3.0)).contains(pos));
+        let color = if focused || hovered { t.focus } else { t.text_dim.gamma_multiply(0.35) };
+        // 对齐到整数像素行，保证是干干净净的 1 px，而不是抗锯齿糊出来的两条灰边。
+        let y = timeline.rect.min.y.round();
+        ui.painter().rect_filled(Rect::from_min_max(pos2(x0, y), pos2(x1, y + 1.0)), 0.0, color);
     }
 
     /// 把待置顶的浮动面板提到最上面（与点击顺序无关）。

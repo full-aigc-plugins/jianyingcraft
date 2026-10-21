@@ -42,6 +42,18 @@ impl Driver {
         d
     }
 
+    /// 1280×1024 的 Desktop 尺寸：剪映工作区下右栏 Properties 就是 282×566（验收尺寸）。
+    fn demo_desktop() -> Self {
+        let mut session = Session::default();
+        session.execute("file.openDemoProject", json!({})).expect("demo project");
+        let (tx, rx) = channel();
+        let app = FilmcraftApp::new(session).with_control(rx);
+        let harness = Harness::builder().with_size(egui::vec2(1280.0, 1024.0)).with_max_steps(10_000).build_eframe(move |_cc| app);
+        let mut d = Driver { harness, tx };
+        d.frames(5);
+        d
+    }
+
     /// 同 [`Driver::demo`]，但用 wgpu 后端（`FILMCRAFT_UI_SNAPSHOT_DIR` 下截图用）与 Wide 档尺寸。
     fn demo_render() -> Self {
         let mut session = Session::default();
@@ -321,8 +333,8 @@ fn picture_segments_default_to_basic_and_the_rest_are_not_implemented() {
     assert!(!d.has("props.segment.empty"));
 }
 
-/// 剪映式行高与排列：「基础」折叠行 26、数值行 28；缩放 / 旋转是「标签 + 滑块 + 数值框」，
-/// 位置是 X、Y 两个数值框；基础分组之下是那串 26 高的可折叠占位行。
+/// 剪映式行高与排列：「基础」标题 24、数值行 24；缩放 / 旋转是「标签 + 滑块 + 数值框」，
+/// 位置是 X、Y 两个数值框；基础分组之下是那串 24 高的可折叠占位行。
 #[test]
 fn picture_rows_use_the_jianying_row_heights() {
     let mut d = Driver::demo();
@@ -334,30 +346,34 @@ fn picture_rows_use_the_jianying_row_heights() {
     d.frames(4);
 
     let header = d.rect("props:Basic").expect("the Basic header");
-    assert!((header[3] - 26.0).abs() < 0.5, "the collapse header is 26 high, got {}", header[3]);
+    assert!((header[3] - 24.0).abs() < 0.5, "the collapse header is 24 high, got {}", header[3]);
 
     for param in ["position", "scale", "rotation"] {
         let row = d.rect(&format!("properties.row.motion.{param}")).unwrap_or_else(|| panic!("{param} row missing"));
-        assert!((row[3] - 28.0).abs() < 0.5, "the {param} row is 28 high, got {}", row[3]);
+        assert!((row[3] - 24.0).abs() < 0.5, "the {param} row is 24 high, got {}", row[3]);
         if param == "position" {
             // 位置是 X、Y 两个数值框：并排、都在行内、Y 在 X 右边。
             let x = d.rect("properties.value.motion.position.x").expect("the X box");
             let y = d.rect("properties.value.motion.position.y").expect("the Y box");
             assert!(x[0] + x[2] <= y[0] + 0.5, "X sits left of Y: {x:?} {y:?}");
             assert!(y[0] + y[2] <= row[0] + row[2], "the Y box stays inside the row");
+            // 数值框 17 高：24 的行高里上下各 3.5 点（内边距比收紧前少 2 点）。
+            assert!((y[3] - 17.0).abs() < 0.5, "the value box is 17 high, got {}", y[3]);
+            assert!((y[1] - row[1] - 3.5).abs() < 0.5, "the value box keeps a 3.5-point padding: box {y:?} row {row:?}");
         } else {
             // 滑块在数值框左边，两者都在行内。
             let slider = d.rect(&format!("properties.slider.motion.{param}")).expect("the slider");
             let value = d.rect(&format!("properties.value.motion.{param}")).expect("the value box");
             assert!(slider[0] + slider[2] <= value[0] + 0.5, "the {param} slider sits left of its value box: {slider:?} {value:?}");
             assert!(value[0] + value[2] <= row[0] + row[2], "the {param} value box stays inside the row");
-            assert!(slider[0] >= row[0] + 60.0, "the {param} slider starts after the label column: {slider:?} {row:?}");
+            // 标签列 70 点：滑块从标签之后开始。
+            assert!(slider[0] >= row[0] + 70.0, "the {param} slider starts after the 70-point label column: {slider:?} {row:?}");
         }
     }
 
-    // 基础分组之下是剪映那串折叠行：26 高、在基础行下面、AI 类也在。
+    // 基础分组之下是剪映那串折叠行：24 高、在基础行下面、AI 类也在。
     let warp = d.rect("props.op.warp").expect("the 变形 row");
-    assert!((warp[3] - 26.0).abs() < 0.5, "a placeholder collapse row is 26 high, got {}", warp[3]);
+    assert!((warp[3] - 24.0).abs() < 0.5, "a placeholder collapse row is 24 high, got {}", warp[3]);
     assert!(warp[1] > header[1], "the placeholder rows sit below the Basic group");
     for slug in ["stroke", "shadow", "stabilize", "quality", "superres", "denoise", "repair", "relight", "upscale"] {
         assert!(d.has(&format!("props.op.{slug}")), "{slug} placeholder row missing");
@@ -375,6 +391,62 @@ fn picture_rows_use_the_jianying_row_heights() {
     d.ok("ui.click", json!({"x": box_rect[0] + box_rect[2] - 8.0, "y": box_rect[1] + 4.0}));
     d.frames(3);
     assert_eq!(d.motion_scale(clip), before + 1.0, "the value box's up arrow steps the scale by one percent");
+}
+
+/// 右栏紧凑度（1280×1024，剪映工作区下 Properties 面板正好 282×566）：「画面」页签的内容一屏可见。
+///
+/// 验收口径：`ui.elements` 里 `properties.*`（真实数值行 / 滑块 / 数值框 / 关键帧按钮）的最大底边
+/// 必须落在面板底边之内；10 个占位折叠行排在真实分组之后、默认收起，整串最多只允许最后一行探出
+/// 面板底边（不超过一行），不允许出现 2–3 行的滚动。
+#[test]
+fn picture_tab_fits_the_desktop_properties_panel() {
+    let mut d = Driver::demo_desktop();
+    d.ok("ui.set", json!({"workspace": "Jianying"}));
+    d.ok("ui.panel.show", json!({"panel": "Properties"}));
+    let seq = d.exec("sequence.inspect", json!({}));
+    let clip = seq["video"][0]["items"][0]["clip"].as_u64().expect("a video clip");
+    d.exec("timeline.select", json!({"clips": [clip]}));
+    d.frames(6);
+
+    let rect_of = |e: &Value| -> [f64; 4] {
+        let r = e["rect"].as_array().expect("an element rect");
+        [r[0].as_f64().expect("x"), r[1].as_f64().expect("y"), r[2].as_f64().expect("w"), r[3].as_f64().expect("h")]
+    };
+    // 面板就是验收尺寸：约 282 宽、566 高。
+    let panel = d.rect("panel.Properties").expect("the Properties panel");
+    assert!((panel[2] - 282.0).abs() < 1.5, "the right-hand panel is 282 wide, got {panel:?}");
+    assert!((panel[3] - 566.0).abs() < 1.5, "the right-hand panel is 566 high, got {panel:?}");
+    let bottom = panel[1] + panel[3];
+
+    // 页签行 30 高、分组标题 24 高（收紧后的行高）。
+    let tab = d.rect("props.tab.picture").expect("the picture tab");
+    assert!((tab[3] - 30.0).abs() < 0.5, "the tab strip is 30 high, got {}", tab[3]);
+    let basic = d.rect("props:Basic").expect("the Basic header");
+    assert!((basic[3] - 24.0).abs() < 0.5, "the Basic header is 24 high, got {}", basic[3]);
+
+    // 真实内容（位置大小 / 不透明度 / 裁剪的数值行）全部落在面板底边之内。
+    let mut max_bottom = f64::NEG_INFINITY;
+    for e in d.ok("ui.elements", json!({"prefix": "properties."})).as_array().expect("elements") {
+        let r = rect_of(e);
+        max_bottom = max_bottom.max(r[1] + r[3]);
+    }
+    assert!(max_bottom <= bottom, "every properties.* row is inside the 566-high panel (max y {max_bottom}, bottom {bottom})");
+
+    // 10 个占位折叠行：默认收起、在真实分组之后、行高 24，整串最多探出一行。
+    let mut previous_top = basic[1];
+    let mut last_bottom = f64::NEG_INFINITY;
+    for slug in ["warp", "stroke", "shadow", "stabilize", "quality", "superres", "denoise", "repair", "relight", "upscale"] {
+        let r = d.rect(&format!("props.op.{slug}")).unwrap_or_else(|| panic!("{slug} placeholder row missing"));
+        assert!((r[3] - 24.0).abs() < 0.5, "{slug} is 24 high, got {}", r[3]);
+        assert!(r[1] >= previous_top, "{slug} sits below the previous row ({r:?} after {previous_top})");
+        previous_top = r[1];
+        last_bottom = last_bottom.max(r[1] + r[3]);
+        assert!(!d.has(&format!("props.op.{slug}.detail")), "{slug} starts collapsed");
+    }
+    assert!(
+        last_bottom - bottom <= 24.0,
+        "the placeholder block overflows the panel bottom by at most one row (last bottom {last_bottom}, panel bottom {bottom})"
+    );
 }
 
 /// 截图（设置 `FILMCRAFT_UI_SNAPSHOT_DIR` 时）：Wide 1280×1024 的「画面」页签，用来和剪映截图对照。

@@ -68,16 +68,17 @@ const PROPERTY_PLACEHOLDER_ROWS: [(&str, &str, bool); 10] = [
     ("智能打光", "relight", true),
     ("补分辨率", "upscale", true),
 ];
-/// 剪映式数值行 / 折叠行的行高（截图像素级：数值行 28、折叠行 26）。
-const JY_ROW_H: f32 = 28.0;
-const JY_SECTION_H: f32 = 26.0;
+/// 剪映式数值行 / 分组标题 / 折叠行的行高（截图像素级；右栏 566 高的一屏预算）。
+/// 收紧前是 28 / 26 / 26：数值行降 4 点、两档标题行降 2 点，整列才放得进 282×566 的右栏。
+const JY_ROW_H: f32 = 24.0;
+const JY_SECTION_H: f32 = 24.0;
 /// 剪映式数值框的宽度：右侧一列数值框，框内是白的（可拖动 / 点击输入的）数值，最右边是一对
 /// 上下步进小箭头。
 const JY_BOX_W: f32 = 62.0;
-/// 行首标签列宽，之后才是滑块（英文界面里 "Anchor point" 也要放得下）。
-const JY_LABEL_W: f32 = 76.0;
-/// 数值框的高度（行高 28 里留出上下各 4.5 点）。
-const JY_BOX_H: f32 = 19.0;
+/// 行首标签列宽，之后才是滑块（英文界面里 "Anchor point" 也要放得下；从 76 收紧到 70 点）。
+const JY_LABEL_W: f32 = 70.0;
+/// 数值框的高度：24 的行高里上下各留 3.5 点（内边距比收紧前的 4.5 点少 2 点）。
+const JY_BOX_H: f32 = 17.0;
 /// 剪映当前页签的高亮色（截图里是青色 #10c1cd）。
 const JY_ACCENT: Color32 = Color32::from_rgb(0x10, 0xc1, 0xcd);
 
@@ -934,7 +935,7 @@ fn property_tabs(app: &mut FilmcraftApp, ui: &mut egui::Ui) -> &'static str {
     let saved = ui.ctx().data(|d| d.get_temp::<String>(key)).unwrap_or_default();
     // 默认「画面」；内存里是陌生值（旧版本、手改状态）或占位页签时也回到「画面」。
     let current = PROPERTY_TABS.iter().find(|(_, slug, placeholder)| !*placeholder && *slug == saved.as_str()).map_or("picture", |(_, slug, _)| *slug);
-    let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::hover());
+    let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::hover());
     ui.painter().line_segment([row.left_bottom(), row.right_bottom()], Stroke::new(1.0, t.separator));
     let cell_w = (row.width() / PROPERTY_TABS.len() as f32).max(1.0);
     let mut chosen = None;
@@ -981,12 +982,12 @@ fn property_segments(app: &mut FilmcraftApp, ui: &mut egui::Ui) -> &'static str 
     let key = egui::Id::new(PROPERTY_SEGMENT_KEY);
     let saved = ui.ctx().data(|d| d.get_temp::<String>(key)).unwrap_or_default();
     let current = PROPERTY_SEGMENTS.iter().map(|(_, slug)| *slug).find(|slug| *slug == saved.as_str()).unwrap_or("basic");
-    let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
+    let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::hover());
     let gap = 6.0;
     let w = ((row.width() - gap * (PROPERTY_SEGMENTS.len() as f32 - 1.0)) / PROPERTY_SEGMENTS.len() as f32).max(1.0);
     let mut chosen = None;
     for (i, (label, slug)) in PROPERTY_SEGMENTS.iter().enumerate() {
-        let cell = Rect::from_min_size(pos2(row.min.x + i as f32 * (w + gap), row.min.y + 6.0), vec2(w, 22.0));
+        let cell = Rect::from_min_size(pos2(row.min.x + i as f32 * (w + gap), row.min.y + 4.0), vec2(w, 22.0));
         let resp = ui.interact(cell, egui::Id::new(("props-seg", *slug)), Sense::click());
         let active = *slug == current;
         ui.painter().rect_filled(cell, 4.0, if active { t.pill_active_bg } else { t.hover });
@@ -1010,7 +1011,7 @@ fn property_segments(app: &mut FilmcraftApp, ui: &mut egui::Ui) -> &'static str 
     current
 }
 
-/// 剪映式数值行：左侧标签、行高 28。返回整行的矩形，右侧的滑块 / 数值框按它摆放；`id` 是这一行
+/// 剪映式数值行：左侧标签、行高 24。返回整行的矩形，右侧的滑块 / 数值框按它摆放；`id` 是这一行
 /// 的自动化 id（`properties.row.<effect>.<param>`），方便自动化核对行高与排列。
 fn jy_row(app: &mut FilmcraftApp, ui: &mut egui::Ui, label: &str, id: &str) -> Rect {
     let t = app.tokens;
@@ -1036,7 +1037,7 @@ fn jy_pair_boxes(r: Rect) -> (Rect, Rect) {
 /// 数值框左边的滑块范围：标签列之后到数值框之前。
 fn jy_slider_rect(r: Rect) -> Rect {
     let b = jy_box_rect(r);
-    Rect::from_min_max(pos2(r.min.x + JY_LABEL_W + 4.0, r.center().y - 8.0), pos2(b.min.x - 8.0, r.center().y + 8.0))
+    Rect::from_min_max(pos2(r.min.x + JY_LABEL_W + 4.0, r.center().y - 7.0), pos2(b.min.x - 8.0, r.center().y + 7.0))
 }
 
 /// 剪映式数值框：细边框 + 框内右侧的数值（沿用 `hot_number`：拖动改值、点击输入算式），框的
@@ -1133,12 +1134,13 @@ fn unimplemented_segment(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
 
 /// 剪映「画面」页签里、位置大小之下的可折叠行（变形 / 描边 / 阴影 / 视频防抖 / …）。
 ///
-/// 这些效果在我们的效果模型里还没有，所以只画折叠行：左侧文字 + 右侧小三角，行高 26；展开是
+/// 这些效果在我们的效果模型里还没有，所以只画折叠行：左侧文字 + 右侧小三角，行高 24；展开是
 /// 一句灰字说明，不新造效果数据。折叠状态借用 `collapsed_fx`，但占位行「在表里」表示展开——
 /// 它们默认收起，和剪映一致。
 fn placeholder_row(app: &mut FilmcraftApp, ui: &mut egui::Ui, label: &str, slug: &str, ai: bool) {
     let t = app.tokens;
     let key = format!("props.op:{slug}");
+    // 在 `collapsed_fx` 里表示展开；不在表里表示收起——默认收起，和剪映一致（点一下才展开）。
     let expanded = app.ui.collapsed_fx.contains(&key);
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), JY_SECTION_H), Sense::click());
     if resp.hovered() {
@@ -1152,7 +1154,7 @@ fn placeholder_row(app: &mut FilmcraftApp, ui: &mut egui::Ui, label: &str, slug:
         x += 16.0;
     }
     ui.painter().text(pos2(x, r.center().y), Align2::LEFT_CENTER, label, Tokens::ui(12.0), t.text_dim);
-    // 右侧的小三角（行高 26，三角离右边缘 8 点）
+    // 右侧的小三角（行高 24，三角离右边缘 8 点）
     let tw = Rect::from_center_size(pos2(r.max.x - 13.0, r.center().y), vec2(10.0, 10.0));
     icons::paint(ui.painter(), tw, if expanded { Icon::ChevronDown } else { Icon::ChevronRight }, t.text_faint);
     app.auto.add(&format!("props.op.{slug}"), r, label);
@@ -1187,6 +1189,9 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let mt = it.source_time_at(ph.clamp(it.start, it.end() - Tick(1)));
     let mut actions: Vec<(String, Value)> = Vec::new();
     let mut bui = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(14.0, 8.0))).id_salt("props"));
+    // 右栏紧凑度：剪映的属性行之间没有额外行距（全局样式是 4 点），行高本身就是节奏。
+    // 「画面」页签一屏放得下靠的就是这条 + 上面收紧过的行高。
+    bui.spacing_mut().item_spacing.y = 0.0;
     // 剪映工作区：右栏顶部是一排文字页签（AI 编辑 / 画面 / 变速 / 动画 / 调节 / AI效果），下面
     // 才是当前页签的内容；其它工作区保持原来的连续分组。页签只决定画哪一组。
     let jianying = app.ui.workspace == "Jianying";
@@ -1205,7 +1210,7 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         r
     };
     // 剪映式分组（基础 / 变速 / 动画 / 音频 / 调色）：标题可折叠，自动化 id 是 `props:<Group>`。
-    // 行高 26、左侧文字、右侧小三角（截图里的折叠行样式）。
+    // 行高 24、左侧文字、右侧小三角（截图里的折叠行样式）。
     let section = |ui: &mut egui::Ui, app: &mut FilmcraftApp, name: &str, reset: Option<(usize, u64)>, actions: &mut Vec<(String, Value)>| -> bool {
         let key = format!("props:{name}");
         let open = !app.ui.collapsed_fx.contains(&key);
@@ -1251,7 +1256,7 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         if on_tab("picture") && jianying && segment != "basic" {
             unimplemented_segment(app, bui);
         } else if picture && section(bui, app, "Basic", eff_idx("motion").map(|i| (i, clip.0)), &mut actions) {
-            // 位置 / 锚点：左侧标签 + 右侧 X、Y 两个数值框（行高 28）。
+            // 位置 / 锚点：左侧标签 + 右侧 X、Y 两个数值框（行高 24）。
             for (label, p) in [(tl!("Position"), "position"), (tl!("Anchor point"), "anchor")] {
                 let r = jy_row(app, bui, label, &format!("properties.row.motion.{p}"));
                 let (bx, by) = jy_pair_boxes(r);
