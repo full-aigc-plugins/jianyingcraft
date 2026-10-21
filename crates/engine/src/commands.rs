@@ -2993,16 +2993,28 @@ fn build() -> Vec<CommandSpec> {
             "Apply Effect",
             [],
             None,
-            r#"{"clips":[id]?,"effect":"gaussian_blur|Gaussian Blur|…","resourceId":str?,"effectId":str?}"#,
+            r#"{"clips":[id]?,"effect":"gaussian_blur|Gaussian Blur|…"?,"resourceId":str?,"effectId":str?}"#,
             has_seq,
             |s, p| {
-                let name = str_p(p, "effect").ok_or_else(|| bad("effects.apply", "need `effect`"))?;
-                let def = resolve_effect_name(s, p, name).ok_or_else(|| bad("effects.apply", format!("unknown effect `{name}`")))?;
+                // Jianying's resource numbering travels with the new instance (checked before any edit)
+                let (resource_id, effect_id) = resource_meta_p(p, "effects.apply")?;
+                // `effect` wins when both are given; with only a `resourceId`, the verified map stands in.
+                let name: String = match str_p(p, "effect") {
+                    Some(n) => n.to_string(),
+                    None => {
+                        let Some(rid) = resource_id.as_deref() else {
+                            return Err(bad("effects.apply", "need `effect` (or a `resourceId` in the verified map)"));
+                        };
+                        match crate::resource_map::engine_transition_for(rid) {
+                            Some(engine) => engine.to_string(),
+                            None => return Err(bad("effects.apply", crate::resource_map::unmapped_effect_message(rid))),
+                        }
+                    }
+                };
+                let def = resolve_effect_name(s, p, &name).ok_or_else(|| bad("effects.apply", format!("unknown effect `{name}`")))?;
                 if filmcraft_project::graphic::is_layer_id(def.id) {
                     return Err(bad("effects.apply", "graphic layers are added with graphics.newText / graphics.newShape"));
                 }
-                // Jianying's resource numbering travels with the new instance (checked before any edit)
-                let (resource_id, effect_id) = resource_meta_p(p, "effects.apply")?;
                 if matches!(def.kind, filmcraft_project::EffectKind::VideoTransition | filmcraft_project::EffectKind::AudioTransition) {
                     let mut q = p.clone();
                     q["effect"] = json!(def.id);
@@ -4249,14 +4261,26 @@ fn apply_transition(s: &mut Session, p: &Value, kind: TrackKind) -> Result<Value
 /// Uses the same `effect`, `clip`, `edge`, `frames` and settings as transition application,
 /// so a drag preview shows the exact range that release will commit.
 pub fn preview_transition(s: &Session, p: &Value, kind: TrackKind) -> Result<(TrackId, Transition)> {
-    let eff_id = str_p(p, "effect")
-        .map(str::to_string)
-        .unwrap_or_else(|| if kind == TrackKind::Video { s.state.default_video_transition.clone() } else { s.state.default_audio_transition.clone() });
+    // Jianying numbering of the transition resource rides on the transition's effect instance, and
+    // is validated up front so a bad or unmapped `resourceId` never edits the project.
+    let (resource_id, effect_id) = resource_meta_p(p, "transition")?;
+    // `effect` wins when both are given; with only a `resourceId`, the verified map stands in.
+    let eff_id = match str_p(p, "effect") {
+        Some(e) => e.to_string(),
+        None => match resource_id.as_deref() {
+            // Audio transitions are not mapped yet: say so rather than fall back to the default.
+            Some(rid) if kind == TrackKind::Audio => return Err(bad("transition", crate::resource_map::audio_unmapped_message(rid))),
+            Some(rid) => match crate::resource_map::engine_transition_for(rid) {
+                Some(engine) => engine.to_string(),
+                None => return Err(bad("transition", crate::resource_map::unmapped_transition_message(rid))),
+            },
+            None if kind == TrackKind::Video => s.state.default_video_transition.clone(),
+            None => s.state.default_audio_transition.clone(),
+        },
+    };
     let ekind = if kind == TrackKind::Video { filmcraft_project::EffectKind::VideoTransition } else { filmcraft_project::EffectKind::AudioTransition };
     let def = filmcraft_project::vtransition::find_transition(&eff_id, ekind).ok_or_else(|| bad("transition", format!("unknown transition `{eff_id}`")))?;
     let mut instance = def.instance();
-    // Jianying numbering of the transition resource rides on the transition's effect instance
-    let (resource_id, effect_id) = resource_meta_p(p, "transition")?;
     instance.resource_id = resource_id;
     instance.effect_id = effect_id;
     if let Some(params) = p.get("params") {

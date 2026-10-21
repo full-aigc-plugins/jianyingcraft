@@ -620,7 +620,9 @@
 - [x] **资源编号进入工程（2026-10-22 完成一半）**：`effects.apply` / `sequence.applyVideoTransition` 已接受可选
       `resourceId` / `effectId`（19 位数字串按字符串保存、去空白、拒绝裸数字/空串），写进 `EffectInstance` 并持久化到 `.fcproj`，
       `sequence.inspect` 在有效果/转场时回显；旧工程不带这两个键仍可读，不传时序列化里完全不出现。测试：engine `resource_ids_tests` 5 条。
-- [ ] **仍未完成**：`.fcproj` 里的 `resourceId` 还没有在**导出剪映草稿**时写回（本仓库当前不产出剪映草稿，只产出 `.fcproj` 与 FCPXML）；
-      要么新增剪映草稿导出器（把 metadata 写进 draft_content 的 `resource_id`/`effect_id`），要么建立
-      `resource_id → 引擎效果名` 映射表（先覆盖转场/滤镜/常用特效）。
-      ② 建立 `resource_id → 引擎效果名` 的映射表（先覆盖转场/滤镜/常用特效）。
+- [x] **编号→引擎效果映射（2026-10-22 起步）**：`resourceId` 单独可执行——`effects.apply` / `sequence.applyVideoTransition` 缺 `effect` 时
+      按 `crates/engine/src/resource_map.rs` 的**人工核对子集**解析（当前 5 条：叠化→cross_dissolve、闪白→dip_to_white、闪黑→dip_to_black、
+      推近→push、翻页→page_turn），未映射编号明确报错并提示「已映射 5 条」，音频过渡报「暂无映射」；测试 6 条（含表行必须能在
+      `vtransition::find_transition` 查到）。文档：`docs/action-plan-mapping.md`。
+- [ ] **仍未完成**：① 映射只覆盖 5 条转场，滤镜/特效/音频尚无；② `.fcproj` 的 `resourceId` 尚未在**导出剪映草稿**时写回
+      （本仓库目前不产剪映草稿）；③ 映射语义未经真实素材成片比对。

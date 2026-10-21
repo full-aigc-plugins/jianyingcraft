@@ -45,6 +45,7 @@ pub mod proxies;
 pub mod quick_short_video;
 pub mod relink;
 pub mod remix;
+pub mod resource_map;
 pub mod scene_detect;
 pub mod scopes;
 pub mod sequence_extras;
@@ -1296,6 +1297,8 @@ mod relink_tests;
 mod remix_tests;
 #[cfg(test)]
 mod resource_ids_tests;
+#[cfg(test)]
+mod resource_map_tests;
 #[cfg(test)]
 mod ripple_delete_tests;
 #[cfg(test)]

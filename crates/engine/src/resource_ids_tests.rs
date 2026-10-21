@@ -2,6 +2,10 @@
 //! and `sequence.applyVideoTransition` take `resourceId` / `effectId`, `sequence.inspect` reports
 //! them, and a save/reopen keeps them. Without the parameters neither key appears anywhere, and a
 //! number, an empty or a blank string is refused before anything is applied.
+//!
+//! These tests pass an explicit `effect` beside the number (the number is then metadata, whatever it
+//! is). A `resourceId` *alone* must be a hand-verified number from [`crate::resource_map`]; see
+//! `resource_map_tests.rs` for that path and for what an unmapped number does.
 
 use serde_json::{Value, json};
 
@@ -89,7 +93,12 @@ fn an_applied_effect_carries_the_jianying_resource_ids_into_inspect() {
 fn an_applied_transition_carries_the_jianying_resource_ids_into_inspect() {
     let mut s = demo();
     let clip = s.active_sequence().unwrap().video_tracks[0].items[1].id;
-    s.execute("sequence.applyVideoTransition", json!({"clip": clip.0, "edge": "out", "frames": 6, "resourceId": RESOURCE_ID, "effectId": EFFECT_ID})).unwrap();
+    // the id is metadata here: with an explicit `effect` the number need not be in the verified map
+    s.execute(
+        "sequence.applyVideoTransition",
+        json!({"clip": clip.0, "edge": "out", "frames": 6, "effect": "cross_dissolve", "resourceId": RESOURCE_ID, "effectId": EFFECT_ID}),
+    )
+    .unwrap();
 
     let js = s.execute("sequence.inspect", json!({})).unwrap();
     let x = numbered_transition(&js, RESOURCE_ID);
@@ -104,7 +113,11 @@ fn the_ids_survive_a_save_and_reopen() {
     let mut s = demo();
     let clip = s.active_sequence().unwrap().video_tracks[0].items[1].id;
     s.execute("effects.apply", json!({"clips": [clip.0], "effect": "gaussian_blur", "resourceId": RESOURCE_ID})).unwrap();
-    s.execute("sequence.applyVideoTransition", json!({"clip": clip.0, "edge": "out", "frames": 6, "resourceId": RESOURCE_ID, "effectId": EFFECT_ID})).unwrap();
+    s.execute(
+        "sequence.applyVideoTransition",
+        json!({"clip": clip.0, "edge": "out", "frames": 6, "effect": "cross_dissolve", "resourceId": RESOURCE_ID, "effectId": EFFECT_ID}),
+    )
+    .unwrap();
     s.execute("file.saveAs", json!({"path": path})).unwrap();
 
     let mut t = Session::default();
