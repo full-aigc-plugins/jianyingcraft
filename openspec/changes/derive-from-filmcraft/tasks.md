@@ -550,7 +550,14 @@
       `jianyingcraft-scenario-playbooks` 2 这三个交互型技能共 14 个，全部命中 701 条命令目录）。
       证据：`docs/runbooks/evidence/SKILL_COMMAND_IDS_20261020.json`。
       **不证明**：这三个技能的操作步骤被端到端执行过——它们是给人看的操作说明。*
-- [ ] ZCode / Codex / Kimi 实机验收（安装 + MCP 调用 + 画面三段证据）。**Codex 已部分完成**（2026-10-20）：
+- [x] Codex / Kimi 实机验收（安装 + MCP 调用 + 画面三段证据）已完成；ZCode 单独列在下面。原始记录（Codex）：
+
+      **Kimi 实机验收完成（2026-10-22）**：本机 Kimi Code CLI **0.27.0**（`C:\Users\hnxyh\.kimi-code\bin\kimi.exe`），
+      `kimi --version` 输出 `0.27.0`。插件仓新增项目级 MCP 配置 `.kimi-code/mcp.json`，注册
+      `jianyingcraft-editor` → `node ui/dist/adapter.mjs`；`kimi -p "…"`（非交互）实际列出 **17 个 MCP 工具**
+      （14 公开 + 3 `panel_*`），并调用 `command_run sequence.inspect` 返回 `{"audio":[…],"video":[…]}`（会话
+      `session_bbaf4039-3153-4d2d-9bdc-ad0bf6e54ce4`）。画面证据：`jianyingcraft-plugin/runtime/panel-evidence/editor-page.png`
+      （「引擎已加载 / 面板桥就绪 · 701 命令」）。证据：`docs/runbooks/evidence/host-acceptance/KIMI_20261022.json`。
       本机 `npm i -g @openai/codex` → codex-cli 0.163.0；`node ui/build.mjs` 产出 `ui/dist`；
       `codex mcp add jianyingcraft-editor -- node ui/dist/adapter.mjs` 成功，`codex mcp get` 回报
       enabled/stdio/command 一致。直接对同一 adapter 说 MCP：`initialize` 返回
@@ -585,6 +592,9 @@
       `new URL('../', import.meta.url)` 从 `/TOKEN/connect.js` 推出了根目录。改为 `'./'` 后
       `poll` 应带 token。**修完后的复测脚本本身崩了**（adapter 调用出现
       `__wbindgen_malloc` 异常），因此浏览器级结论仍未取得，留待下一轮用干净脚本复测。
+- [ ] **ZCode 实机验收仍未完成**：本机无 `zcode` 可执行（`Get-Command zcode` 为空）；需要安装真实 ZCode 宿主后
+      按 `docs/runbooks/three-host-install.md` 注册 `jianyingcraft-editor` MCP、跑 `command_run`、截三张画面证据。不得用占位 npm 包代替。
+
 > **2026-10-19 决议（已被后续突破，保留为历史）**：浏览器面板接线**暂停**。已定位并修复两处真实缺陷
 > （`dist` 缺 `ui/engine` 回退、`connect.js` 的 token 前缀），但"命令在页面 wasm 里执行"
 > 缺少可复现的验证，且连续多轮的探测脚本出现无法解释的异常。该线程需要 Playwright trace / CDP

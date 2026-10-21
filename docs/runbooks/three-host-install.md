@@ -436,3 +436,24 @@ Kimi 专属：
   那需要维护者复核三份证据后再更新。
 - **不证明宿主内嵌面板与浏览器打开等价**。如果只是在浏览器里打开 `editorUrl`，
   要在 `notes` 写明；真正的宿主内嵌验收需要 MCP Apps/宿主面板里的截图。
+
+## 8. Kimi Code CLI（2026-10-22 实测通过）
+
+```powershell
+# 1) 安装/确认（Moonshot 官方 Kimi Code CLI，不是 npm 上的同名占位包）
+kimi --version        # 0.27.0
+# 2) 插件仓里放项目级 MCP 配置：jianyingcraft-plugin/.kimi-code/mcp.json
+#    {"mcpServers":{"jianyingcraft-editor":{"command":"node","args":["ui/dist/adapter.mjs"]}}}
+# 3) 从插件仓根目录做一次非交互调用
+cd jianyingcraft-plugin
+kimi -p "你接入了 jianyingcraft-editor MCP。列出全部工具名，并调用 command_run 执行 sequence.inspect。"
+```
+
+实测结果：列出 **17 个工具**，`command_run sequence.inspect` 返回演示工程的
+`{"audio":[…],"video":[…]}`；会话 `session_bbaf4039-3153-4d2d-9bdc-ad0bf6e54ce4`。
+`-p` 不能与 `--yolo`/`--auto` 同用（CLI 会直接报错），非交互模式下按提示逐条允许即可。
+
+画面证据由 `node --test tests/panel-live.test.mjs tests/panel.test.mjs`（`CHROME_PATH` 指向 Chrome）
+生成到 `runtime/panel-evidence/editor-page.png`，显示「引擎已加载 / 面板桥就绪 · 701 命令」。
+注意：这是 headless Chrome 打开的面板页，不是 Kimi 自带的 webview（Kimi CLI 没有 GUI）。
+证据文件：`docs/runbooks/evidence/host-acceptance/KIMI_20261022.json`。

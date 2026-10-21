@@ -1,0 +1,50 @@
+{
+  "schema": "jianyingcraft-host-acceptance/kimi/v1",
+  "observed_at": "2026-10-22",
+  "host": {
+    "name": "kimi",
+    "product": "Kimi Code CLI (Moonshot)",
+    "cli_version": "0.27.0",
+    "executable": "C:\\Users\\hnxyh\\.kimi-code\\bin\\kimi.exe",
+    "install_check": "kimi --version -> 0.27.0"
+  },
+  "plugin": {
+    "dir": "jianyingcraft-plugin",
+    "adapter": "ui/dist/adapter.mjs",
+    "tools": 17,
+    "public_tools": 14,
+    "panel_tools": 3
+  },
+  "mcp_registration": {
+    "file": "jianyingcraft-plugin/.kimi-code/mcp.json",
+    "servers": {
+      "jianyingcraft-editor": {
+        "command": "node",
+        "args": ["ui/dist/adapter.mjs"]
+      }
+    },
+    "note": "Kimi reads the project-local .kimi-code/mcp.json from the current working directory."
+  },
+  "live_call": {
+    "invocation": "kimi -p \"你接入了 jianyingcraft-editor MCP …\" (cwd=jianyingcraft-plugin)",
+    "session": "session_bbaf4039-3153-4d2d-9bdc-ad0bf6e54ce4",
+    "tools_listed": [
+      "panel_download", "panel_poll", "panel_reply", "command_list", "command_run",
+      "editor_status", "engine_cli_list", "engine_cli_run", "engine_diagnose",
+      "inspect", "list_files", "open_browser_editor", "open_editor", "open_file",
+      "save_file", "save_project", "screenshot"
+    ],
+    "command": "sequence.inspect",
+    "result_excerpt": "{\"audio\":[{\"enabled\":true,\"id\":18,\"items\":[{\"clip\":30,\"duration\":1260755496000,\"durationFrames\":119,\"effects\":[{\"effect\":\"volume\",\"enabled\":true,\"masks\":0,\"params\":{\"bypass\":{\"keyframes\":0,\"value\":\"Bo",
+    "host_reply": "两件事都完成了。工具共 17 个；command_run sequence.inspect 返回上述 JSON。"
+  },
+  "screen_evidence": {
+    "path": "jianyingcraft-plugin/runtime/panel-evidence/editor-page.png",
+    "shows": "JianyingCraft / 引擎已加载 / 面板桥就绪 · 701 命令",
+    "captured_by": "node --test tests/panel-live.test.mjs tests/panel.test.mjs (CHROME_PATH=Chrome, headless)"
+  },
+  "gaps": [
+    "The panel screenshot is headless Chrome, not Kimi's own embedded viewer (Kimi CLI has no GUI webview).",
+    "The served wasm engine reports 701 commands while the Rust catalogue is 703; the plugin wasm build predates the two newest commands."
+  ]
+}
