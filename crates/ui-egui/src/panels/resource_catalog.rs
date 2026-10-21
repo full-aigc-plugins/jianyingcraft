@@ -17,13 +17,16 @@
 //! 不在规则内的条目会落到「其他」。分类与数量在目录加载时计算一次，随目录缓存；数量为 0 的分类
 //! 不画出来。
 //!
-//! 交互只做选中与过滤：点分类只筛当前 Tab 的那一类，和搜索、免费/会员 chips 叠加；点卡片写
-//! `app.ui.status`（名称 + resource_id + 提示写进 action plan），不执行任何副作用。双击/回车留给
-//! 后续任务。
+//! 交互只做选中、过滤与「复制 action」：点分类只筛当前 Tab 的那一类，和搜索、免费/会员 chips
+//! 叠加；点卡片写 `app.ui.status`（名称 + resource_id + 提示写进 action plan），不执行任何副作用。
+//! 面板底部固定 44 px 详情条（网格区相应缩短）显示选中资源的名称、完整编号、会员/免费与时长，右侧
+//! 「复制 action」按钮把 `{"action":…,"resource_id":…,"resource_name":…}` 写进剪贴板，给智能体
+//! 直接粘进 action plan；复制本身仍然不改工程。双击/回车应用资源留给后续任务。
 //!
 //! 自动化 id：`resource.search` / `resource.category.<slug>` / `resource.chip.<all|free|vip>` /
 //! `resource.count` / `resource.grid` / `resource.card.<resource_id>` / `resource.empty` /
-//! `resource.note`。
+//! `resource.note` / `resource.detail` / `resource.detail.name` / `resource.detail.id` /
+//! `resource.detail.meta` / `resource.copyAction`。
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -43,6 +46,13 @@ const COLUMNS: usize = 6;
 const CARD_GAP: f32 = 6.0;
 /// 名称 + 编号两行文字区的高度。
 const LABEL_HEIGHT: f32 = 27.0;
+/// 面板底部固定详情条的高度；网格区（与左侧分类列）相应缩短。
+const DETAIL_HEIGHT: f32 = 44.0;
+/// 详情条右侧「复制 action」按钮的尺寸（对照剪映详情条右侧按钮）。
+const COPY_WIDTH: f32 = 68.0;
+const COPY_HEIGHT: f32 = 26.0;
+/// 没有选中资源时详情条的提示。
+const DETAIL_HINT: &str = "选一条资源，查看编号与 action 片段";
 /// 左侧分类列宽度（对照剪映截图）与行高。
 const CATEGORY_WIDTH: f32 = 96.0;
 const CATEGORY_ROW_HEIGHT: f32 = 26.0;
@@ -215,6 +225,24 @@ impl ResourceTab {
         }
     }
 
+    /// 「复制 action」片段里的 action 名，按 Tab 映射到智能体 action plan 的动词：
+    /// 转场 `add_transition`、滤镜 `apply_filter`、特效 `add_effect`、贴纸 `add_sticker`、
+    /// 文本 `add_text_animation`、音频 `add_audio`。
+    ///
+    /// 字幕 Tab 读的是 `fonts.json`（字体/字幕样式），不在上面六项映射里；这里用
+    /// `apply_text_style` 表示「套用字幕样式」，而不是误写成文本动画。
+    fn action(self) -> &'static str {
+        match self {
+            Self::Transitions => "add_transition",
+            Self::Filters => "apply_filter",
+            Self::Effects => "add_effect",
+            Self::Sticker => "add_sticker",
+            Self::Text => "add_text_animation",
+            Self::Captions => "apply_text_style",
+            Self::Audio => "add_audio",
+        }
+    }
+
     /// 这个资源类型的分类规则表。**关键词归类只是浏览辅助，不是剪映官方分类**：官方目录 JSON
     /// 没有分类字段，规则只按名称子串命中，命中顺序从左到右，都未命中落到最后的「其他」。
     fn category_rules(self) -> &'static [CategoryRule] {
@@ -249,12 +277,14 @@ impl ResourceFilter {
     }
 }
 
-/// 一条资源目录条目。只保留浏览需要的字段：名称、编号、是否会员、关键词归类 slug。
+/// 一条资源目录条目。只保留浏览需要的字段：名称、编号、是否会员、可选时长、关键词归类 slug。
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ResourceEntry {
     name: String,
     resource_id: String,
     vip: bool,
+    /// 目录里的 `duration_us`（微秒）；缺失、非数字或 0 时按「没有时长」处理。
+    duration_us: Option<u64>,
     /// 加载时由 [`classify`] 写入的分类 slug；匹配不到规则时为 `other`。
     category: &'static str,
 }
@@ -334,8 +364,15 @@ fn parse_entry(value: &Value) -> Option<ResourceEntry> {
         _ => return None,
     };
     let vip = value.get("vip").and_then(Value::as_bool).unwrap_or(false);
+    // 时长是可选的浏览信息：数字或数字字符串都接受，其余（缺失、0、坏字符串）当作没有。
+    let duration_us = match value.get("duration_us") {
+        Some(Value::Number(us)) => us.as_u64(),
+        Some(Value::String(us)) => us.trim().parse::<u64>().ok(),
+        _ => None,
+    }
+    .filter(|us| *us > 0);
     // 分类在 [`build_catalog`] 里统一写入；这里先留空，避免解析和归类两件事纠缠。
-    Some(ResourceEntry { name: name.to_string(), resource_id, vip, category: "" })
+    Some(ResourceEntry { name: name.to_string(), resource_id, vip, duration_us, category: "" })
 }
 
 /// 按规则表给名称归类：**大小写不敏感**，按规则顺序从左到右取第一个命中，都未命中落到
@@ -405,6 +442,11 @@ pub(crate) fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, tab: R
     let t = app.tokens;
     let pad = 8.0;
 
+    // ---- 底部固定 44 px 详情条：网格区与左侧分类列都到这里为止（详情条盖在面板底部）。
+    let detail_height = DETAIL_HEIGHT.min(rect.height());
+    let detail = Rect::from_min_max(pos2(rect.min.x, rect.max.y - detail_height), rect.max);
+    let detail_top = detail.min.y;
+
     // ---- 切换 Tab 时分类回到「全部」：记录上次画的是哪个 Tab，只在新 Tab 首次出现时重置。
     if app.ui.resource_category_tab.as_deref() != Some(tab.slug()) {
         app.ui.resource_category_tab = Some(tab.slug().to_string());
@@ -435,29 +477,36 @@ pub(crate) fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, tab: R
             .collect(),
         None => vec![(ALL_CATEGORY_SLUG, ALL_CATEGORY_LABEL, 0)],
     };
-    let cat_bottom = rect.max.y - 4.0;
-    for (index, (slug, label, count)) in category_rows.iter().enumerate() {
-        let row = Rect::from_min_size(pos2(cat_x, rect.min.y + 6.0 + index as f32 * CATEGORY_ROW_HEIGHT), vec2(CATEGORY_WIDTH, CATEGORY_ROW_HEIGHT));
-        if row.max.y > cat_bottom {
-            break;
-        }
-        let selected = if *slug == ALL_CATEGORY_SLUG { app.ui.resource_category.is_none() } else { app.ui.resource_category.as_deref() == Some(*slug) };
-        let response = ui.interact(row, egui::Id::new(("resource-category", tab.slug(), *slug)), Sense::click());
-        if selected {
-            ui.painter().rect_filled(row, 0.0, t.row_selected);
-            ui.painter().rect_filled(Rect::from_min_size(row.min, vec2(2.0, row.height())), 0.0, t.accent);
-        } else if response.hovered() {
-            ui.painter().rect_filled(row, 0.0, t.hover);
-        }
-        let text_color = if selected { t.text } else { t.text_dim };
-        ui.painter().text(pos2(row.min.x + 10.0, row.center().y), Align2::LEFT_CENTER, label, Tokens::ui(11.0), text_color);
-        if *count > 0 {
-            ui.painter().text(pos2(row.max.x - 8.0, row.center().y), Align2::RIGHT_CENTER, count.to_string(), Tokens::ui(9.0), t.text_faint);
-        }
-        app.auto.add(&format!("resource.category.{slug}"), row, label);
-        if response.clicked() {
-            app.ui.resource_category = if *slug == ALL_CATEGORY_SLUG { None } else { Some((*slug).to_string()) };
-        }
+    let cat_bottom = detail_top - 4.0;
+    // 分类列在详情条上方独立滚动：Compact 抽屉只有 ~200 px 高，7 个分类放不下时不能丢分类。
+    let cat_area = Rect::from_min_max(pos2(cat_x, rect.min.y + 6.0), pos2(cat_x + CATEGORY_WIDTH, cat_bottom));
+    if cat_area.height() >= CATEGORY_ROW_HEIGHT {
+        let mut cat_ui = ui.new_child(egui::UiBuilder::new().max_rect(cat_area).id_salt(("resource-categories", tab.slug())));
+        cat_ui.set_clip_rect(cat_area.intersect(ui.clip_rect()));
+        egui::ScrollArea::vertical().id_salt(("resource-category-scroll", tab.slug())).auto_shrink([false, false]).show(&mut cat_ui, |ui| {
+            // 行高 26 px 是版式约定（对照截图）；不叠加 egui 的默认行距。
+            ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+            for (slug, label, count) in &category_rows {
+                let (row, response) = ui.allocate_exact_size(vec2(CATEGORY_WIDTH, CATEGORY_ROW_HEIGHT), Sense::click());
+                let selected = if *slug == ALL_CATEGORY_SLUG { app.ui.resource_category.is_none() } else { app.ui.resource_category.as_deref() == Some(*slug) };
+                if selected {
+                    ui.painter().rect_filled(row, 0.0, t.row_selected);
+                    ui.painter().rect_filled(Rect::from_min_size(row.min, vec2(2.0, row.height())), 0.0, t.accent);
+                } else if response.hovered() {
+                    ui.painter().rect_filled(row, 0.0, t.hover);
+                }
+                let text_color = if selected { t.text } else { t.text_dim };
+                ui.painter().text(pos2(row.min.x + 10.0, row.center().y), Align2::LEFT_CENTER, *label, Tokens::ui(11.0), text_color);
+                if *count > 0 {
+                    // 右侧留出滚动条的位置，计数不被竖条盖住。
+                    ui.painter().text(pos2(row.max.x - 14.0, row.center().y), Align2::RIGHT_CENTER, count.to_string(), Tokens::ui(9.0), t.text_faint);
+                }
+                app.auto.add(&format!("resource.category.{slug}"), row, label);
+                if response.clicked() {
+                    app.ui.resource_category = if *slug == ALL_CATEGORY_SLUG { None } else { Some((*slug).to_string()) };
+                }
+            }
+        });
     }
 
     // ---- 搜索框（22 px，右侧通栏）
@@ -514,7 +563,7 @@ pub(crate) fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, tab: R
 
     // ---- 可选的说明行（贴纸复用特效目录）
     if let Some(note) = tab.note()
-        && body_top + 12.0 < rect.max.y
+        && body_top + 12.0 < detail_top
     {
         let note_rect = Rect::from_min_size(pos2(content_x, body_top), vec2(content_w, 12.0));
         ui.painter().text(pos2(content_x, body_top + 6.0), Align2::LEFT_CENTER, note, Tokens::ui(9.0), t.text_faint);
@@ -522,7 +571,8 @@ pub(crate) fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, tab: R
         body_top += 14.0;
     }
 
-    if body_top + 8.0 >= rect.max.y {
+    if body_top + 8.0 >= detail_top {
+        show_detail(app, ui, detail, tab, catalog, &t);
         return;
     }
 
@@ -533,16 +583,17 @@ pub(crate) fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, tab: R
         Ok(_) => None,
     };
     if let Some(message) = empty {
-        let area = Rect::from_min_max(pos2(content_x, body_top), pos2(content_right, rect.max.y));
+        let area = Rect::from_min_max(pos2(content_x, body_top), pos2(content_right, detail_top));
         app.auto.add("resource.empty", area, &message);
         let galley = ui.painter().layout(message, Tokens::ui(11.0), t.text_dim, area.width());
         let y = (area.center().y - galley.size().y / 2.0).max(area.min.y);
         ui.painter().galley(pos2(area.min.x + 4.0, y), galley, t.text_dim);
+        show_detail(app, ui, detail, tab, catalog, &t);
         return;
     }
 
-    // ---- 网格（6 列方形卡片，可滚动；只占右侧内容区）
-    let body = Rect::from_min_max(pos2(content_x, body_top), pos2(content_right, rect.max.y));
+    // ---- 网格（6 列方形卡片，可滚动；只占右侧内容区，底部让给详情条）
+    let body = Rect::from_min_max(pos2(content_x, body_top), pos2(content_right, detail_top));
     let mut content = ui.new_child(egui::UiBuilder::new().max_rect(body).id_salt(("resource-body", tab.slug())));
     content.set_clip_rect(body.intersect(ui.clip_rect()));
     let selected = app.ui.resource_selection.clone();
@@ -572,6 +623,79 @@ pub(crate) fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, tab: R
     if let Some((name, resource_id)) = picked {
         app.ui.resource_selection = Some(resource_id.clone());
         app.ui.status = format!("已选{}「{name}」· {resource_id}；把它写进 action plan 即可", tab.label());
+    }
+    show_detail(app, ui, detail, tab, catalog, &t);
+}
+
+/// 面板底部 44 px 详情条：选中资源的名称（11 px 白）、完整 `resource_id`（10 px 等宽灰）、
+/// `会员`/`免费` 标签与可选时长，右侧 68×26 的「复制 action」按钮（accent 底）。
+///
+/// 点按钮把 `{"action":…,"resource_id":…,"resource_name":…}` 写进剪贴板，并在状态栏回显
+/// `已复制 action 片段：<action> <resource_id>`；不执行任何编辑。没有选中、或选中的编号不在
+/// 当前目录里（例如切了 Tab）时只显示提示——详情条不猜名称。
+fn show_detail(app: &mut FilmcraftApp, ui: &egui::Ui, detail: Rect, tab: ResourceTab, catalog: Option<&Catalog>, t: &Tokens) {
+    let pad = 8.0;
+    ui.painter().rect_filled(detail, 0.0, t.app_bg);
+    ui.painter().hline(detail.x_range(), detail.min.y, Stroke::new(1.0, t.separator));
+
+    // 右侧按钮位置固定；左边文字区的可用宽度到它（或会员标签）为止。
+    let button = Rect::from_min_size(pos2(detail.max.x - pad - COPY_WIDTH, detail.center().y - COPY_HEIGHT / 2.0), vec2(COPY_WIDTH, COPY_HEIGHT));
+    let selection = app.ui.resource_selection.clone();
+    let entry = selection.as_deref().and_then(|selected| catalog.and_then(|catalog| catalog.entries.iter().find(|entry| entry.resource_id == selected)));
+
+    let response = ui.interact(button, egui::Id::new(("resource-copy-action", tab.slug())), Sense::click());
+    let armed = entry.is_some();
+    let button_bg = match (armed, response.hovered()) {
+        (true, true) => t.accent_hover,
+        (true, false) => t.accent,
+        (false, _) => t.hover,
+    };
+    ui.painter().rect_filled(button, 6.0, button_bg);
+    ui.painter().text(button.center(), Align2::CENTER_CENTER, "复制 action", Tokens::ui(11.0), if armed { Color32::WHITE } else { t.text_faint });
+    app.auto.add("resource.copyAction", button, "复制 action");
+
+    let Some(entry) = entry else {
+        ui.painter().text(pos2(detail.min.x + pad, detail.center().y), Align2::LEFT_CENTER, DETAIL_HINT, Tokens::ui(11.0), t.text_dim);
+        app.auto.add("resource.detail", detail, DETAIL_HINT);
+        return;
+    };
+
+    // 会员/免费标签；有 duration_us 时并排显示秒数（如 1.5s）。
+    let mut meta = if entry.vip { "会员".to_string() } else { "免费".to_string() };
+    if let Some(duration_us) = entry.duration_us {
+        meta.push_str(" · ");
+        meta.push_str(&seconds_label(duration_us));
+    }
+    let meta_w = (ui.painter().layout_no_wrap(meta.clone(), Tokens::ui(9.5), t.text_dim).size().x + 12.0).max(28.0);
+    let meta_rect = Rect::from_min_size(pos2(button.min.x - pad - meta_w, detail.min.y + 13.0 - 8.0), vec2(meta_w, 16.0));
+    if entry.vip {
+        ui.painter().rect_filled(meta_rect, 8.0, Color32::from_rgb(0x4a, 0x36, 0x1c));
+        ui.painter().text(meta_rect.center(), Align2::CENTER_CENTER, &meta, Tokens::ui(9.5), Color32::from_rgb(0xf2, 0xd0, 0x8c));
+    } else {
+        ui.painter().rect_filled(meta_rect, 8.0, t.hover);
+        ui.painter().rect_stroke(meta_rect, 8.0, Stroke::new(1.0, t.separator), StrokeKind::Inside);
+        ui.painter().text(meta_rect.center(), Align2::CENTER_CENTER, &meta, Tokens::ui(9.5), t.text_dim);
+    }
+    app.auto.add("resource.detail.meta", meta_rect, &meta);
+
+    // 名称 11 px 白字（放不下就省略）、完整编号 10 px 等宽灰字。
+    let text_left = detail.min.x + pad;
+    let name_right = (meta_rect.min.x - 6.0).max(text_left + 1.0);
+    let name = elide(ui, &entry.name, 11.0, name_right - text_left);
+    let name_rect = Rect::from_min_max(pos2(text_left, detail.min.y + 5.0), pos2(name_right, detail.min.y + 21.0));
+    ui.painter().text(pos2(text_left, detail.min.y + 13.0), Align2::LEFT_CENTER, &name, Tokens::ui(11.0), Color32::WHITE);
+    app.auto.add("resource.detail.name", name_rect, &entry.name);
+
+    let id_right = (button.min.x - pad).max(text_left + 1.0);
+    let id_rect = Rect::from_min_max(pos2(text_left, detail.min.y + 22.0), pos2(id_right, detail.max.y - 1.0));
+    ui.painter().text(pos2(text_left, detail.min.y + 30.0), Align2::LEFT_CENTER, &entry.resource_id, Tokens::mono(10.0), t.text_dim);
+    app.auto.add("resource.detail.id", id_rect, &entry.resource_id);
+    app.auto.add("resource.detail", detail, &entry.name);
+
+    if response.clicked() {
+        // 只写剪贴板与状态栏：复制 action 片段给智能体，不改工程。
+        ui.ctx().copy_text(action_fragment(tab, entry));
+        app.ui.status = format!("已复制 action 片段：{} {}", tab.action(), entry.resource_id);
     }
 }
 
@@ -653,6 +777,24 @@ fn last_chars(text: &str, n: usize) -> String {
     chars[start..].iter().collect()
 }
 
+/// 时长（微秒）→ 秒数文本，保留一位小数（`1_500_000` → `1.5s`）。用整数十分位计算，
+/// 不经过浮点，四舍五入行为稳定。
+fn seconds_label(duration_us: u64) -> String {
+    let tenths = duration_us.saturating_add(50_000) / 100_000;
+    format!("{}.{}s", tenths / 10, tenths % 10)
+}
+
+/// 「复制 action」写进剪贴板的 JSON 片段，形如
+/// `{"action":"add_transition","resource_id":"7049667406656014","resource_name":"3D空间"}`。
+fn action_fragment(tab: ResourceTab, entry: &ResourceEntry) -> String {
+    serde_json::json!({
+        "action": tab.action(),
+        "resource_id": &entry.resource_id,
+        "resource_name": &entry.name,
+    })
+    .to_string()
+}
+
 /// 单行省略：放不下就逐个字符回退并补 `…`。
 fn elide(ui: &egui::Ui, text: &str, size: f32, max_w: f32) -> String {
     let font = Tokens::ui(size);
@@ -672,7 +814,7 @@ fn elide(ui: &egui::Ui, text: &str, size: f32, max_w: f32) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ResourceTab, build_catalog, classify, hash64, last_chars, parse_entry};
+    use super::{ResourceTab, action_fragment, build_catalog, classify, hash64, last_chars, parse_entry, seconds_label};
     use serde_json::json;
 
     #[test]
@@ -700,6 +842,41 @@ mod tests {
         let numeric = parse_entry(&json!({"name": "x", "resource_id": 42, "vip": true})).expect("numeric ids are accepted");
         assert_eq!(numeric.resource_id, "42");
         assert!(numeric.vip);
+    }
+
+    #[test]
+    fn durations_are_optional_and_render_as_seconds() {
+        assert_eq!(seconds_label(1_500_000), "1.5s");
+        assert_eq!(seconds_label(2_000_000), "2.0s");
+        assert_eq!(seconds_label(0), "0.0s");
+        let with_duration = parse_entry(&json!({"name": "x", "resource_id": 1, "duration_us": 1_500_000})).expect("numeric duration");
+        assert_eq!(with_duration.duration_us, Some(1_500_000));
+        let string_duration = parse_entry(&json!({"name": "x", "resource_id": 1, "duration_us": "2500000"})).expect("string duration");
+        assert_eq!(string_duration.duration_us, Some(2_500_000));
+        // 缺失、0、坏字符串都只是「没有时长」，不是错误。
+        for value in [
+            json!({"name": "x", "resource_id": 1}),
+            json!({"name": "x", "resource_id": 1, "duration_us": 0}),
+            json!({"name": "x", "resource_id": 1, "duration_us": "oops"}),
+        ] {
+            assert!(parse_entry(&value).expect("entry without duration").duration_us.is_none(), "{value}");
+        }
+    }
+
+    #[test]
+    fn action_fragments_follow_the_tab_and_carry_name_and_id() {
+        let entry = parse_entry(&json!({"name": "3D空间", "resource_id": "7049667406656014"})).expect("fixture entry");
+        assert_eq!(ResourceTab::Transitions.action(), "add_transition");
+        assert_eq!(ResourceTab::Filters.action(), "apply_filter");
+        assert_eq!(ResourceTab::Effects.action(), "add_effect");
+        assert_eq!(ResourceTab::Sticker.action(), "add_sticker");
+        assert_eq!(ResourceTab::Text.action(), "add_text_animation");
+        assert_eq!(ResourceTab::Audio.action(), "add_audio");
+        assert_eq!(
+            action_fragment(ResourceTab::Transitions, &entry),
+            r#"{"action":"add_transition","resource_id":"7049667406656014","resource_name":"3D空间"}"#
+        );
+        assert_eq!(action_fragment(ResourceTab::Effects, &entry), r#"{"action":"add_effect","resource_id":"7049667406656014","resource_name":"3D空间"}"#);
     }
 
     #[test]

@@ -6,6 +6,8 @@
 //! - 切换一级 Tab 时分类回到「全部」，规则表也换成新 Tab 的规则；
 //! - 6 列网格的卡片数量与过滤结果一致；
 //! - 点卡片只把「名称 + resource_id」写进状态栏，不执行副作用；
+//! - 底部 44 px 详情条显示选中资源的名称 / 完整编号 / 会员标签 / 时长，右侧「复制 action」
+//!   把 `{"action":…,"resource_id":…,"resource_name":…}` 写进剪贴板并在状态栏回显；
 //! - 目录不存在时出现可操作的空态（提示设置 `JIANYINGCRAFT_CATALOGS`），不崩溃。
 //!
 //! 环境变量是**进程级**的，而 Rust 2024 里 `std::env::set_var` 是 `unsafe`（workspace 的
@@ -111,7 +113,7 @@ fn write_catalog(dir: &Path) {
     std::fs::create_dir_all(dir).expect("temp catalogs dir");
     // 六条转场，每条命中规则表里的一个不同分类（「叠化 / 幻灯片 / 运镜 / 模糊 / 故障 / 光效」）。
     let transitions = json!([
-        {"name": "叠化", "resource_id": DISSOLVE_ID, "vip": false, "effect_id": "2917279"},
+        {"name": "叠化", "resource_id": DISSOLVE_ID, "vip": false, "effect_id": "2917279", "duration_us": 1_500_000},
         {"name": "上下翻页", "resource_id": SLIDE_ID, "vip": false, "effect_id": "2917280"},
         {"name": "推近", "resource_id": MOTION_ID, "vip": false, "effect_id": "2917281"},
         {"name": "模糊", "resource_id": BLUR_ID, "vip": false, "effect_id": "2917282"},
@@ -192,6 +194,10 @@ fn catalog_scenario() {
         assert!(!d.ids(id).is_empty(), "{id} is not drawn in the resource tab");
     }
 
+    // 未选中时详情条给提示；「复制 action」按钮已经就位（未选中时不可用）。
+    assert_eq!(d.label("resource.detail"), "选一条资源，查看编号与 action 片段");
+    assert!(!d.ids("resource.copyAction").is_empty(), "the detail bar draws its copy button before a selection");
+
     // 点分类「叠化」：只保留那一条，右侧计数跟着变。
     d.click("resource.category.dissolve");
     assert_eq!(d.cards(), vec![format!("resource.card.{DISSOLVE_ID}")], "the dissolve category keeps only its own entry");
@@ -237,6 +243,37 @@ fn catalog_scenario() {
     assert!(status.contains(DISSOLVE_ID), "the status line carries the resource id: {status}");
     assert!(status.contains("叠化"), "the status line carries the resource name: {status}");
     assert!(status.contains("转场"), "the status line names the resource kind: {status}");
+
+    // 底部详情条：固定 44 px、贴住面板底边、留在面板内，显示名称 / 完整编号 / 免费 / 1.5s。
+    let detail = d.rect("resource.detail");
+    let panel = d.rect("panel.Effects");
+    assert!((detail[3] - 44.0).abs() < 0.01, "the detail bar is 44 px high: {detail:?}");
+    assert!((detail[1] + detail[3] - (panel[1] + panel[3])).abs() < 0.01, "the detail bar is pinned to the panel bottom: {detail:?} vs panel {panel:?}");
+    assert!(
+        detail[0] >= panel[0] - 0.01 && detail[0] + detail[2] <= panel[0] + panel[2] + 0.01 && detail[1] >= panel[1] - 0.01,
+        "the detail bar stays inside the panel: {detail:?} vs panel {panel:?}"
+    );
+    assert_eq!(d.label("resource.detail.name"), "叠化", "the detail bar shows the selected name");
+    assert_eq!(d.label("resource.detail.id"), DISSOLVE_ID, "the detail bar shows the full resource id");
+    let meta = d.label("resource.detail.meta");
+    assert!(meta.contains("免费"), "the detail bar marks a non-VIP resource: {meta}");
+    assert!(meta.contains("1.5s"), "the detail bar renders duration_us as seconds: {meta}");
+    let copy = d.rect("resource.copyAction");
+    assert!((copy[2] - 68.0).abs() < 0.01, "the copy button is 68 px wide: {copy:?}");
+    assert!((copy[3] - 26.0).abs() < 0.01, "the copy button is 26 px high: {copy:?}");
+    assert!(
+        copy[1] >= detail[1] - 0.01 && copy[1] + copy[3] <= detail[1] + detail[3] + 0.01 && copy[0] + copy[2] <= detail[0] + detail[2] + 0.01,
+        "the copy button sits in the detail bar's right edge: {copy:?} vs {detail:?}"
+    );
+
+    // 点「复制 action」：action 片段写进剪贴板，状态栏回显 action 名与完整编号。
+    d.click("resource.copyAction");
+    let copied = d.inspect();
+    let copied_status = copied["ui"]["status"].as_str().unwrap_or_default();
+    assert!(copied_status.contains("已复制 action 片段"), "the status reports the copied fragment: {copied_status}");
+    assert!(copied_status.contains("add_transition"), "the status names the transition action: {copied_status}");
+    assert!(copied_status.contains(DISSOLVE_ID), "the status carries the full resource id: {copied_status}");
+    assert_eq!(copied["ui"]["resource_selection"], json!(DISSOLVE_ID), "copying keeps the card selected");
 
     // 切到「特效」：分类规则表换成特效表，分类选中重置为「全部」，网格读特效目录。
     d.click("resource.category.dissolve");

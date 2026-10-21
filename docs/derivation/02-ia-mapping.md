@@ -269,7 +269,9 @@ flowchart LR
   属于后续任务。
 
 自动化 id：`resource.search`、`resource.category.<slug>`、`resource.chip.<all|free|vip>`、
-`resource.count`、`resource.grid`、`resource.card.<resource_id>`、`resource.empty`、`resource.note`。
+`resource.count`、`resource.grid`、`resource.card.<resource_id>`、`resource.empty`、`resource.note`、
+`resource.detail`、`resource.detail.name`、`resource.detail.id`、`resource.detail.meta`、
+`resource.copyAction`。
 
 #### 8.2.1 分类列：关键词归类（浏览辅助，不是官方分类）
 
@@ -304,13 +306,20 @@ flowchart LR
 - 单击卡片：选中（1 px 强调色描边），并把「名称 + resource_id」写进状态栏，例如
   `已选转场「3D空间」· 7049979667406656014；把它写进 action plan 即可`。**不执行任何副作用**；
   双击/回车应用资源留给后续任务。
+- 面板底部固定 **44 px 详情条**（网格区相应缩短）：选中后显示名称（11 px 白）、完整
+  `resource_id`（10 px 等宽灰）、`会员`/`免费` 标签，目录条目有 `duration_us` 时显示秒数
+  （如 `1.5s`）；右侧 68×26 的「复制 action」按钮把
+  `{"action":"add_transition","resource_id":"…","resource_name":"…"}` 写进剪贴板，并在状态栏回显
+  `已复制 action 片段：add_transition 7049979667406656014`——**复制 action 片段给智能体用**，
+  粘进 action plan 即可。未选中时提示「选一条资源，查看编号与 action 片段」。复制本身不改工程。
 - 目录不存在、JSON 损坏或没有可用条目：画出可操作的空态，明确提示设置
   `JIANYINGCRAFT_CATALOGS` 指向 `jianyingcraft-plugin/catalogs`（或把 `catalogs/` 放到工作目录），
   不 panic、不阻塞其它面板；分类列此时只保留「全部」。
 - 过滤结果为空（目录本身正常）：提示换关键词/分类，或点「全部」。
 
 回归测试：`crates/ui-egui/tests/resource_catalog_ui.rs`（临时目录 + 6 条转场 + 4 条特效，覆盖
-分类列、空分类隐藏、分类筛选、搜索/chips 叠加、切 Tab 重置、点选状态栏、目录消失后的空态）。
+分类列、空分类隐藏、分类筛选、搜索/chips 叠加、切 Tab 重置、点选状态栏、底部详情条与「复制
+action」状态回显、目录消失后的空态）。
 
 ### 8.4 剩余缺口
 
