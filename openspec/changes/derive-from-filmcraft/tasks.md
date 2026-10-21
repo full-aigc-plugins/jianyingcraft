@@ -633,7 +633,7 @@
       且选中变化时 `ProjectPanelUi::reveal` 在“点击 bin 清空选择”那一刻被重置为 None，行滚不进可见区。
       修复：`engine.execute project.select` 每次设置 reveal；`show()` 只在选择非空时覆盖它；主列表对 reveal 行调用 `scroll_to_rect(Center)`。
       调试前矩形 `[5, 923, 454.25, 3]` → 修复后 `[5, 802, 454.25, 24]`，右键菜单出现 `editSubclip`/`convertToMaster`。
-      `clip_dialogs_ui` **11 passed**、`project_panel_ui` 24、`layout_ui` 29、`ia_acceptance_ui` 9 全绿。
+      `clip_dialogs_ui` **11 passed**、`project_panel_ui` 24、`layout_ui` 29、`ia_acceptance_ui` 9 全绿；**全量 UI 套件 91 个 target 全绿**（lib 237 passed），`UI=0`。
 - [ ] `clip_dialogs_ui::subclip_in_the_source_monitor_and_project_menu` 失败：在该用例里右键工程条目**不会弹出菜单**。
       调试证据：窗口 1600×980，`project.item.48` 的自动矩形是 `[5, 923, 454.25, 3]`——行被裁到 3 px 高、而且 x=5 说明它画在一个几乎移出屏幕的工程面板实例里（正常应在 x≈101、y≈418），
       点击中心落在被裁区域外；同一条目在手动控制通道里（先展开 Footage、右键子剪辑）菜单正常出现
