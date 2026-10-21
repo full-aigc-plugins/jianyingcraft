@@ -583,21 +583,53 @@ fn compact_tab_bar_disables_unimplemented_modules() {
     }
 }
 
-/// 剪映专业版工作区：左栏竖向 rail 八个入口都在，可用的（素材）点了真换面板。
+/// 剪映专业版工作区：左栏 rail 是「导入 + 素材 + 工程里的真实素材夹 + 我的 / AI 占位」，
+/// 素材夹点了真把 Project 面板切进该文件夹；没有数据的子草稿 / 云素材 / 官方 / 即梦不再出现。
 #[test]
 fn jianying_workspace_has_the_left_rail() {
     let mut d = Driver::new(1280.0, 1024.0);
     d.ok("ui.set", json!({"workspace": "Jianying"}));
     d.frames(4);
+    let project = d.ok("engine.execute", json!({"command": "project.inspect", "params": {}}));
+    let bins: Vec<(u64, String)> = project["root"]["children"]
+        .as_array()
+        .expect("root children")
+        .iter()
+        .filter(|child| child.get("children").is_some())
+        .filter_map(|bin| Some((bin.get("id")?.as_u64()?, bin.get("name")?.as_str()?.to_string())))
+        .collect();
+    assert!(!bins.is_empty(), "the demo project should have material bins: {project}");
+
     let rail = d.ok("ui.elements", json!({"prefix": "jy.rail."}));
     let ids: Vec<String> = rail.as_array().expect("elements").iter().filter_map(|element| element["id"].as_str().map(str::to_string)).collect();
-    for want in ["jy.rail.import", "jy.rail.media", "jy.rail.subdraft", "jy.rail.mine", "jy.rail.ai", "jy.rail.cloud", "jy.rail.official", "jy.rail.dreamina"] {
+    for want in ["jy.rail.import", "jy.rail.media", "jy.rail.mine", "jy.rail.ai"] {
         assert!(ids.iter().any(|id| id == want), "the left rail is missing {want}: {ids:?}");
     }
+    for (bin, name) in &bins {
+        let id = format!("jy.rail.bin.{bin}");
+        assert!(ids.iter().any(|want| want == &id), "the left rail is missing the {name} bin row {id}: {ids:?}");
+        let row = d.ok("ui.elements", json!({"prefix": id}));
+        let rect = row.as_array().and_then(|list| list.first()).map(|element| element["rect"].clone()).expect("the bin row has a rect");
+        assert_eq!(rect[2].as_f64().unwrap_or(0.0), 72.0, "a rail bin row spans the 72 px rail: {rect}");
+        assert_eq!(rect[3].as_f64().unwrap_or(0.0), 30.0, "a rail bin row is 30 px high: {rect}");
+    }
+    for gone in ["jy.rail.subdraft", "jy.rail.cloud", "jy.rail.official", "jy.rail.dreamina"] {
+        assert!(!ids.iter().any(|id| id == gone), "the dataless {gone} entry should be gone: {ids:?}");
+    }
+
     d.ok("ui.click", json!({"id": "jy.rail.media"}));
     d.frames(3);
-    let project = d.ok("ui.elements", json!({"prefix": "panel.Project"}));
-    assert!(project.as_array().is_some_and(|list| !list.is_empty()), "the media rail entry should show the Project panel: {project}");
+    let project_panel = d.ok("ui.elements", json!({"prefix": "panel.Project"}));
+    assert!(project_panel.as_array().is_some_and(|list| !list.is_empty()), "the media rail entry should show the Project panel: {project_panel}");
+
+    let (footage, footage_name) = bins.first().expect("first bin").clone();
+    d.ok("ui.click", json!({"id": format!("jy.rail.bin.{footage}")}));
+    d.frames(3);
+    let info = d.ok("ui.inspect", json!({}));
+    assert_eq!(info["ui"]["project_panel"]["bin"], json!(footage), "clicking a rail bin navigates the Project panel into it: {info}");
+    let crumb = d.ok("ui.elements", json!({"prefix": "project.breadcrumb"}));
+    let crumb = crumb.as_array().and_then(|list| list.first()).and_then(|element| element["label"].as_str()).unwrap_or("");
+    assert!(crumb.ends_with(&format!("/ {footage_name}")), "the Project panel shows the clicked bin, got {crumb:?}");
     d.snapshot("wide-left-rail");
 }
 

@@ -1,7 +1,7 @@
 //! JianyingCraft's panel chrome and document tabs over the shared docking transactions.
 
 use craft_ui::docking::{Action, DropTarget, Placement, Zone, resolve_drop};
-use egui::{Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
+use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use serde_json::{Value, json};
 
 use crate::dock::{self, DockAction, DockNode, Group, PanelKind};
@@ -41,6 +41,29 @@ fn popover_top_and_height(anchor: Rect, desired_height: f32, bounds: Rect, gap: 
         let height = desired.min(above);
         (anchor.min.y - gap - height, height)
     }
+}
+
+/// 把 rail 里的素材夹名按 `char` 边界收缩到 `max_w` 以内，末尾补省略号。
+///
+/// 素材夹名是用户数据（可以任意长），直接画会压到右侧数量上；按字节切又会切坏 UTF-8，
+/// 所以逐个字符回退并实测宽度。行内文本很短，代价可以忽略。
+fn fit_rail_label(text: &str, width_of: impl Fn(&str) -> f32, max_w: f32) -> String {
+    if max_w <= 0.0 {
+        return String::new();
+    }
+    if width_of(text) <= max_w {
+        return text.to_owned();
+    }
+    let mut out = text.to_owned();
+    while !out.is_empty() {
+        // `pop` 按 `char` 去掉一个完整字符，不会切在 UTF-8 中间。
+        out.pop();
+        let candidate = format!("{out}…");
+        if width_of(&candidate) <= max_w {
+            return candidate;
+        }
+    }
+    String::new()
 }
 
 pub(crate) fn route(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, params: &Value) -> Option<Result<Value, String>> {
@@ -842,11 +865,11 @@ impl FilmcraftApp {
             ("jy.tool.freeze", "定格", Icon::Camera, "clip.frameHold", json!({}), true),
             ("jy.tool.reverse", "倒放", Icon::Loop, "clip.speedDuration", json!({"reverse": true}), true),
         ];
-        // 对照截图的像素：按钮 36×30、图标 22 px、左内边距 12 px；组内间距 4 px、组间 8 px，
+        // 对照截图的像素：按钮 38×30、图标 24 px、左内边距 12 px；组内间距 4 px、组间 8 px，
         // 分隔线落在组间空隙正中，所以线两侧各 4 px，视觉上正好是「一组 ｜ 一组」。
-        const BUTTON_W: f32 = 36.0;
+        const BUTTON_W: f32 = 38.0;
         const BUTTON_H: f32 = 30.0;
-        const ICON_SIDE: f32 = 22.0;
+        const ICON_SIDE: f32 = 24.0;
         const LEFT_PAD: f32 = 12.0;
         const BUTTON_GAP: f32 = 4.0;
         const GROUP_GAP: f32 = 8.0;
@@ -1118,30 +1141,44 @@ impl FilmcraftApp {
     /// 13 px 小图标，行尾留白；当前项在**最左侧**有一条 2 px 强调色高亮条（截图里选中的「热门」就是
     /// 青色文字 + 左侧细条，没有胶囊底色）。
     ///
-    /// 本仓库有的入口可点（导入 / 素材），其余（子草稿 / 我的 / AI / 云素材 / 官方 / 即梦）没有实现，
-    /// 压暗且不可点——不摆假入口。`jy.rail.*` 的自动化 id 与选中值（`ui.jianying_rail` 存标签文本）
-    /// 全部保持原契约。
+    /// 本仓库不接云：顶部保留「导入 / 素材」两个真实入口，下面直接列出工程根目录里的**本地素材夹**
+    /// （`app.session.project.root.children` 里的 `BinEntry::Bin`）——文件夹图标、名称、右侧数量，
+    /// 点一行就用 `panels::project::navigate` 把 Project 面板切进该文件夹，高亮跟随 Project 面板
+    /// 当前显示的 bin（`panels::project::view_of`）。素材夹之后再留一条分隔线和「我的 / AI」两个
+    /// 灰显占位；没有数据的子草稿 / 云素材 / 官方 / 即梦不再画出来。
+    ///
+    /// `jy.rail.import` / `jy.rail.media` / `jy.rail.mine` / `jy.rail.ai` 的 id 与选中值
+    /// （`ui.jianying_rail` 存标签文本）保持原契约；每个素材夹另有 `jy.rail.bin.<binId>`。
     fn jianying_rail(&mut self, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
         ui.painter().rect_filled(rect, 0.0, t.header_bg);
         ui.painter()
             .line_segment([egui::pos2(rect.max.x, rect.min.y), egui::pos2(rect.max.x, rect.max.y)], egui::Stroke::new(1.0, t.text_dim.gamma_multiply(0.35)));
-        let entries: [(&str, &str, Icon, Option<PanelKind>, Option<&str>); 8] = [
-            ("jy.rail.import", "导入", Icon::Import, None, Some("file.import")),
-            ("jy.rail.media", "素材", Icon::Film, Some(PanelKind::Project), None),
-            ("jy.rail.subdraft", "子草稿", Icon::Sequence, None, None),
-            ("jy.rail.mine", "我的", Icon::Home, None, None),
-            ("jy.rail.ai", "AI", Icon::Sparkle, None, None),
-            ("jy.rail.cloud", "云素材", Icon::Network, None, None),
-            ("jy.rail.official", "官方", Icon::Star, None, None),
-            ("jy.rail.dreamina", "即梦", Icon::Grid, None, None),
-        ];
+        let entries: [(&str, &str, Icon, Option<PanelKind>, Option<&str>); 2] =
+            [("jy.rail.import", "导入", Icon::Import, None, Some("file.import")), ("jy.rail.media", "素材", Icon::Film, Some(PanelKind::Project), None)];
         // 截图像素：行高 30 px、文字 12 px、小图标 13 px、左侧缩进 12 px。
         const ROW_HEIGHT: f32 = 30.0;
         const ICON_SIDE: f32 = 13.0;
         const LABEL_SIZE: f32 = 12.0;
+        const BIN_LABEL_SIZE: f32 = 11.0;
+        const COUNT_SIZE: f32 = 10.0;
         const INSET_X: f32 = 12.0;
         let mut y = rect.min.y + 6.0;
         let mut clicked: Option<(&str, Option<PanelKind>, Option<&str>)> = None;
+        let mut clicked_bin: Option<(u64, String)> = None;
+        // Project 面板当前显示的文件夹：rail 的素材夹高亮以它为准，而不是各自记一份选中态。
+        let current_bin = panels::project::view_of(self, panels::project::shown_inst(self)).bin.0;
+        // 工程根目录里的本地素材夹；只列 `BinEntry::Bin`，根目录里的散素材不占 rail 行。
+        let bins: Vec<(u64, String, usize)> = self
+            .session
+            .project
+            .root
+            .children
+            .iter()
+            .filter_map(|entry| match entry {
+                filmcraft_project::BinEntry::Bin(bin) => Some((bin.id.0, bin.name.clone(), bin.children.len())),
+                filmcraft_project::BinEntry::Item(_) => None,
+            })
+            .collect();
         for (id, label, icon, panel, command) in entries {
             if y + ROW_HEIGHT > rect.max.y {
                 break;
@@ -1189,14 +1226,81 @@ impl FilmcraftApp {
             }
             y += ROW_HEIGHT;
         }
+        // 真实素材夹：文件夹图标 + 名称（11 px，过长省略）+ 右侧数量（10 px 灰字）。
+        for (bin_id, name, count) in bins {
+            if y + ROW_HEIGHT > rect.max.y {
+                break;
+            }
+            let row = Rect::from_min_size(egui::pos2(rect.min.x, y), egui::vec2(rect.width(), ROW_HEIGHT));
+            let pill = Rect::from_min_max(egui::pos2(row.min.x + 3.0, row.min.y + 2.0), egui::pos2(row.max.x - 3.0, row.max.y - 2.0));
+            let response = ui.interact(row, egui::Id::new(("jy.rail.bin", bin_id)), Sense::click()).on_hover_text(&name);
+            let active = current_bin == bin_id;
+            if active {
+                ui.painter().rect_filled(pill, 4.0, t.row_selected);
+                let bar = Rect::from_min_size(egui::pos2(row.min.x + 1.0, row.min.y + 3.0), egui::vec2(2.0, ROW_HEIGHT - 6.0));
+                ui.painter().rect_filled(bar, 1.0, t.accent);
+            } else if response.hovered() {
+                ui.painter().rect_filled(pill, 4.0, t.hover);
+            }
+            let label_color = if active { Color32::WHITE } else { t.text };
+            let icon_color = if active { t.accent } else { t.icon };
+            let icon_rect = Rect::from_center_size(egui::pos2(row.min.x + INSET_X + ICON_SIDE / 2.0, row.center().y), egui::vec2(ICON_SIDE, ICON_SIDE));
+            icons::paint(ui.painter(), icon_rect, Icon::Folder, icon_color);
+            // 数量靠右；名称给数量让出 3 px，再按字符边界截断并补省略号。
+            let count_galley = ui.painter().layout_no_wrap(count.to_string(), Tokens::ui(COUNT_SIZE), t.text_dim);
+            let count_x = row.max.x - 6.0 - count_galley.size().x;
+            ui.painter().galley(egui::pos2(count_x, row.center().y - count_galley.size().y / 2.0), count_galley, t.text_dim);
+            let text_x = icon_rect.max.x + 4.0;
+            let max_w = (count_x - 3.0 - text_x).max(0.0);
+            let font = Tokens::ui(BIN_LABEL_SIZE);
+            let fitted = fit_rail_label(&name, |s| ui.painter().layout_no_wrap(s.to_owned(), font.clone(), label_color).size().x, max_w);
+            ui.painter().with_clip_rect(pill).text(egui::pos2(text_x, row.center().y), Align2::LEFT_CENTER, fitted, font, label_color);
+            self.auto.add(&format!("jy.rail.bin.{bin_id}"), row, &name);
+            if response.clicked() {
+                clicked_bin = Some((bin_id, name.clone()));
+            }
+            y += ROW_HEIGHT;
+        }
+        // 素材夹与占位入口之间的一条分隔线（同 rail 里其他细线的颜色）。
+        if y + 10.0 < rect.max.y {
+            y += 4.0;
+            ui.painter()
+                .line_segment([egui::pos2(rect.min.x + 8.0, y), egui::pos2(rect.max.x - 8.0, y)], egui::Stroke::new(1.0, t.text_dim.gamma_multiply(0.35)));
+            y += 5.0;
+        }
+        // 「我的 / AI」保留为灰显占位：没有数据，不摆可点的假入口。
+        let placeholders: [(&str, &str, Icon); 2] = [("jy.rail.mine", "我的", Icon::Home), ("jy.rail.ai", "AI", Icon::Sparkle)];
+        for (id, label, icon) in placeholders {
+            if y + ROW_HEIGHT > rect.max.y {
+                break;
+            }
+            let row = Rect::from_min_size(egui::pos2(rect.min.x, y), egui::vec2(rect.width(), ROW_HEIGHT));
+            let dim = t.text_dim.gamma_multiply(0.7);
+            let icon_rect = Rect::from_center_size(egui::pos2(row.min.x + INSET_X + ICON_SIDE / 2.0, row.center().y), egui::vec2(ICON_SIDE, ICON_SIDE));
+            icons::paint(ui.painter(), icon_rect, icon, dim);
+            let galley = ui.painter().layout_no_wrap(label.to_string(), Tokens::ui(LABEL_SIZE), dim);
+            let text_pos = egui::pos2(icon_rect.max.x + 7.0, row.center().y - galley.size().y / 2.0);
+            ui.painter().with_clip_rect(row).galley(text_pos, galley, dim);
+            self.auto.add(id, row, label);
+            y += ROW_HEIGHT;
+        }
         if let Some((label, panel, command)) = clicked {
             self.ui.jianying_rail = Some(label.to_string());
             if let Some(panel) = panel {
                 self.show_panel(panel);
+                // 「素材」是工程总览：回到 Project 面板的顶层（tab 则回到该 tab 的根 bin）。
+                let inst = panels::project::shown_inst(self);
+                panels::project::navigate(self, inst, None);
             } else if let Some(command) = command {
                 let ctx = ui.ctx().clone();
                 let _ = crate::menus::invoke(self, &ctx, command, json!({}));
             }
+        }
+        if let Some((bin, name)) = clicked_bin {
+            self.ui.jianying_rail = Some(name);
+            self.show_panel(PanelKind::Project);
+            let inst = panels::project::shown_inst(self);
+            panels::project::navigate(self, inst, Some(bin));
         }
     }
 
@@ -1222,7 +1326,8 @@ impl FilmcraftApp {
         // 对照截图的窄列文字分类：72 px 宽（行高 30 px，见 `jianying_rail`），比旧版 56 px 略宽，
         // 刚好放下「12 px 图标 + 3 个汉字」。窗口过窄时按比例收窄，绝不挤掉 dock 内容。
         let body = if jianying && body.width() > 520.0 {
-            let rail_width = 72.0_f32.min(body.width() * 0.14);
+            // 96px 才放得下「Footage 6」这类真实素材夹名。
+            let rail_width = 96.0_f32.min(body.width() * 0.18);
             let rail = Rect::from_min_size(body.min, egui::vec2(rail_width, body.height()));
             self.jianying_rail(ui, rail, &t);
             Rect::from_min_max(egui::pos2(body.min.x + rail_width, body.min.y), body.max)
