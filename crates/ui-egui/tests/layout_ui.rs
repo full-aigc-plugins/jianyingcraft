@@ -610,7 +610,7 @@ fn jianying_workspace_has_the_left_rail() {
         assert!(ids.iter().any(|want| want == &id), "the left rail is missing the {name} bin row {id}: {ids:?}");
         let row = d.ok("ui.elements", json!({"prefix": id}));
         let rect = row.as_array().and_then(|list| list.first()).map(|element| element["rect"].clone()).expect("the bin row has a rect");
-        assert_eq!(rect[2].as_f64().unwrap_or(0.0), 72.0, "a rail bin row spans the 72 px rail: {rect}");
+        assert_eq!(rect[2].as_f64().unwrap_or(0.0), 96.0, "a rail bin row spans the 96 px rail: {rect}");
         assert_eq!(rect[3].as_f64().unwrap_or(0.0), 30.0, "a rail bin row is 30 px high: {rect}");
     }
     for gone in ["jy.rail.subdraft", "jy.rail.cloud", "jy.rail.official", "jy.rail.dreamina"] {
