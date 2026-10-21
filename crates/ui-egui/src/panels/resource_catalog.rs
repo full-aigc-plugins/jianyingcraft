@@ -1,4 +1,4 @@
-//! 剪映式资源 Tab 的浏览态：顶部搜索、`全部 / 免费 / 会员` chips、6 列密集资源网格。
+//! 剪映式资源 Tab 的浏览态：左侧分类列、顶部搜索、`全部 / 免费 / 会员` chips、6 列密集资源网格。
 //!
 //! 数据来自插件仓的 `jianyingcraft-plugin/catalogs/*.json`（`name` / `resource_id` / `vip`），
 //! **运行时**读取，不 `include_str!`：官方素材（缩略图、音频、字体）不随本仓库分发，目录也可能
@@ -12,11 +12,18 @@
 //! 目录或 JSON 缺失、损坏都只是**可操作的空态**：告诉用户设置 `JIANYINGCRAFT_CATALOGS`，绝不
 //! panic。缩略图是按 `resource_id` 哈希生成的渐变占位（首字居中），因为官方缩略图不在仓库里。
 //!
-//! 交互只做选中：点卡片写 `app.ui.status`（名称 + resource_id + 提示写进 action plan），不执行
-//! 任何副作用。双击/回车留给后续任务。
+//! **分类列是关键词归类，只作浏览辅助，不是剪映官方分类。** 官方目录 JSON 没有分类字段；左侧
+//! 列按资源名称是否包含规则表里的关键词归类（规则见 [`ResourceTab::category_rules`]），因此名称
+//! 不在规则内的条目会落到「其他」。分类与数量在目录加载时计算一次，随目录缓存；数量为 0 的分类
+//! 不画出来。
 //!
-//! 自动化 id：`resource.search` / `resource.chip.<all|free|vip>` / `resource.count` /
-//! `resource.grid` / `resource.card.<resource_id>` / `resource.empty` / `resource.note`。
+//! 交互只做选中与过滤：点分类只筛当前 Tab 的那一类，和搜索、免费/会员 chips 叠加；点卡片写
+//! `app.ui.status`（名称 + resource_id + 提示写进 action plan），不执行任何副作用。双击/回车留给
+//! 后续任务。
+//!
+//! 自动化 id：`resource.search` / `resource.category.<slug>` / `resource.chip.<all|free|vip>` /
+//! `resource.count` / `resource.grid` / `resource.card.<resource_id>` / `resource.empty` /
+//! `resource.note`。
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -36,9 +43,17 @@ const COLUMNS: usize = 6;
 const CARD_GAP: f32 = 6.0;
 /// 名称 + 编号两行文字区的高度。
 const LABEL_HEIGHT: f32 = 27.0;
+/// 左侧分类列宽度（对照剪映截图）与行高。
+const CATEGORY_WIDTH: f32 = 96.0;
+const CATEGORY_ROW_HEIGHT: f32 = 26.0;
+/// 分类列与右侧搜索/网格之间的空隙。
+const CATEGORY_GAP: f32 = 8.0;
+/// 「全部」不是关键词规则，单独占一行。
+const ALL_CATEGORY_SLUG: &str = "all";
+const ALL_CATEGORY_LABEL: &str = "全部";
 
 /// 资源 Tab：剪映一级 Tab 里用资源目录驱动的那些。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum ResourceTab {
     /// 转场 → `transitions.json`
     Transitions,
@@ -55,6 +70,73 @@ pub(crate) enum ResourceTab {
     /// 音频 → `audio_scene_effects.json`
     Audio,
 }
+
+/// 一条关键词归类规则。`keywords` 按名称做**大小写不敏感**的子串匹配，命中顺序就是规则表顺序；
+/// 最后一条规则的关键词为空，充当「其他」兜底。
+#[derive(Clone, Copy, Debug)]
+struct CategoryRule {
+    /// 自动化 id 与过滤状态使用的 ASCII slug。
+    slug: &'static str,
+    /// 分类列显示的中文名。
+    label: &'static str,
+    /// 小写关键词（含中文）。
+    keywords: &'static [&'static str],
+}
+
+const TRANSITION_CATEGORY_RULES: &[CategoryRule] = &[
+    CategoryRule { slug: "dissolve", label: "叠化", keywords: &["叠化", "溶解", "渐隐"] },
+    CategoryRule { slug: "slide", label: "幻灯片", keywords: &["翻页", "幻灯片", "百叶窗"] },
+    CategoryRule { slug: "motion", label: "运镜", keywords: &["推", "拉", "旋转", "缩放", "移", "摇", "晃动"] },
+    CategoryRule { slug: "blur", label: "模糊", keywords: &["模糊", "虚化"] },
+    CategoryRule { slug: "glitch", label: "故障", keywords: &["故障", "雪花", "闪屏", "噪点"] },
+    CategoryRule { slug: "light", label: "光效", keywords: &["光", "闪白", "曝光"] },
+    CategoryRule { slug: "space", label: "空间", keywords: &["3d", "空间", "立体"] },
+    CategoryRule { slug: "split", label: "分割", keywords: &["分割", "切割", "切开", "分屏"] },
+    CategoryRule { slug: "shake", label: "抖动", keywords: &["抖动", "震动", "摇晃", "晃动"] },
+    CategoryRule { slug: "other", label: "其他", keywords: &[] },
+];
+
+const FILTER_CATEGORY_RULES: &[CategoryRule] = &[
+    CategoryRule { slug: "portrait", label: "人像", keywords: &["人像", "美颜", "肤色", "冷白"] },
+    CategoryRule { slug: "landscape", label: "风景", keywords: &["风景", "天空", "海", "山", "日落"] },
+    CategoryRule { slug: "food", label: "美食", keywords: &["美食", "食物", "甜品"] },
+    CategoryRule { slug: "film", label: "胶片", keywords: &["胶片", "复古", "电影"] },
+    CategoryRule { slug: "mono", label: "黑白", keywords: &["黑白", "去色"] },
+    CategoryRule { slug: "night", label: "夜景", keywords: &["夜", "霓虹", "暗"] },
+    CategoryRule { slug: "other", label: "其他", keywords: &[] },
+];
+
+const EFFECT_CATEGORY_RULES: &[CategoryRule] = &[
+    CategoryRule { slug: "border", label: "边框", keywords: &["边框", "画框"] },
+    CategoryRule { slug: "glitch", label: "故障", keywords: &["故障", "闪", "噪"] },
+    CategoryRule { slug: "light", label: "光效", keywords: &["光", "发光", "星河"] },
+    CategoryRule { slug: "comic", label: "漫画", keywords: &["漫画", "动漫", "手绘"] },
+    CategoryRule { slug: "particle", label: "粒子", keywords: &["粒子", "烟花", "花瓣"] },
+    CategoryRule { slug: "other", label: "其他", keywords: &[] },
+];
+
+const STICKER_CATEGORY_RULES: &[CategoryRule] = &[
+    CategoryRule { slug: "emoji", label: "表情", keywords: &["表情", "emoji", "笑脸"] },
+    CategoryRule { slug: "arrow", label: "箭头", keywords: &["箭头", "指向"] },
+    CategoryRule { slug: "shape", label: "形状", keywords: &["圆", "方", "线", "框"] },
+    CategoryRule { slug: "festival", label: "节日", keywords: &["节日", "新年", "圣诞"] },
+    CategoryRule { slug: "other", label: "其他", keywords: &[] },
+];
+
+const TEXT_CATEGORY_RULES: &[CategoryRule] = &[
+    CategoryRule { slug: "enter", label: "入场", keywords: &["入场", "进入"] },
+    CategoryRule { slug: "exit", label: "出场", keywords: &["出场", "退出"] },
+    CategoryRule { slug: "loop", label: "循环", keywords: &["循环", "强调"] },
+    CategoryRule { slug: "other", label: "其他", keywords: &[] },
+];
+
+const AUDIO_CATEGORY_RULES: &[CategoryRule] = &[
+    CategoryRule { slug: "ambience", label: "环境", keywords: &["雨", "风", "海", "城市"] },
+    CategoryRule { slug: "animal", label: "动物", keywords: &["鸟", "猫", "狗"] },
+    CategoryRule { slug: "voice", label: "人声", keywords: &["人", "笑", "喊", "呼吸"] },
+    CategoryRule { slug: "music", label: "音乐", keywords: &["乐", "鼓", "吉它", "钢琴"] },
+    CategoryRule { slug: "other", label: "其他", keywords: &[] },
+];
 
 impl ResourceTab {
     /// 一级 Tab slug → 资源 Tab。
@@ -132,6 +214,19 @@ impl ResourceTab {
             Self::Audio => "audio",
         }
     }
+
+    /// 这个资源类型的分类规则表。**关键词归类只是浏览辅助，不是剪映官方分类**：官方目录 JSON
+    /// 没有分类字段，规则只按名称子串命中，命中顺序从左到右，都未命中落到最后的「其他」。
+    fn category_rules(self) -> &'static [CategoryRule] {
+        match self {
+            Self::Transitions => TRANSITION_CATEGORY_RULES,
+            Self::Filters => FILTER_CATEGORY_RULES,
+            Self::Effects => EFFECT_CATEGORY_RULES,
+            Self::Sticker => STICKER_CATEGORY_RULES,
+            Self::Text | Self::Captions => TEXT_CATEGORY_RULES,
+            Self::Audio => AUDIO_CATEGORY_RULES,
+        }
+    }
 }
 
 /// `全部 / 免费 / 会员` chips 的当前选择，随 `UiState` 持久化。
@@ -154,20 +249,39 @@ impl ResourceFilter {
     }
 }
 
-/// 一条资源目录条目。只保留浏览需要的字段：名称、编号、是否会员。
+/// 一条资源目录条目。只保留浏览需要的字段：名称、编号、是否会员、关键词归类 slug。
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ResourceEntry {
     name: String,
     resource_id: String,
     vip: bool,
+    /// 加载时由 [`classify`] 写入的分类 slug；匹配不到规则时为 `other`。
+    category: &'static str,
 }
 
-/// 缓存：(stamp, 条目)。按**路径**做键，测试换临时目录、用户换 `JIANYINGCRAFT_CATALOGS`
-/// 都会自然命中各自的一份；读取失败不缓存，目录稍后出现即可恢复。
+/// 一个分类的缓存计数。数量 0 的分类不进入界面。
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CategoryCount {
+    slug: &'static str,
+    label: &'static str,
+    count: usize,
+}
+
+/// 一次加载的结果：条目、每个分类的计数、总条数。分类与数量只在加载时算一次，随后随目录缓存。
+#[derive(Clone, Debug)]
+struct Catalog {
+    entries: Vec<ResourceEntry>,
+    categories: Vec<CategoryCount>,
+    total: usize,
+}
+
+/// 缓存：(stamp, catalog)。按**路径 + Tab** 做键：`Effects` 与 `Sticker` 共用同一个
+/// `video_scene_effects.json`，但两张规则表不同，不能共用归类结果。测试换临时目录、用户换
+/// `JIANYINGCRAFT_CATALOGS` 都会自然命中各自的一份；读取失败不缓存，目录稍后出现即可恢复。
 /// `stamp` 为 `None` 表示文件已经不存在：此时**不查缓存**，让下一次读取重新报错，目录被删掉
 /// 后不会继续画旧列表。
 type Stamp = Option<(u64, Option<std::time::SystemTime>)>;
-type Cache = RwLock<HashMap<PathBuf, (Stamp, Arc<Vec<ResourceEntry>>)>>;
+type Cache = RwLock<HashMap<(PathBuf, ResourceTab), (Stamp, Arc<Catalog>)>>;
 
 fn cache() -> &'static Cache {
     static CACHE: OnceLock<Cache> = OnceLock::new();
@@ -220,20 +334,52 @@ fn parse_entry(value: &Value) -> Option<ResourceEntry> {
         _ => return None,
     };
     let vip = value.get("vip").and_then(Value::as_bool).unwrap_or(false);
-    Some(ResourceEntry { name: name.to_string(), resource_id, vip })
+    // 分类在 [`build_catalog`] 里统一写入；这里先留空，避免解析和归类两件事纠缠。
+    Some(ResourceEntry { name: name.to_string(), resource_id, vip, category: "" })
+}
+
+/// 按规则表给名称归类：**大小写不敏感**，按规则顺序从左到右取第一个命中，都未命中落到
+/// 最后一条「其他」。返回分类 slug。
+fn classify(rules: &[CategoryRule], name: &str) -> &'static str {
+    let lower = name.to_lowercase();
+    for rule in rules {
+        if rule.keywords.iter().any(|keyword| lower.contains(keyword)) {
+            return rule.slug;
+        }
+    }
+    // 规则表最后一条是无关键词的「其他」；即使表为空也返回一个稳定 slug，绝不索引越界。
+    rules.last().map_or("other", |rule| rule.slug)
+}
+
+/// 把解析出的条目按 Tab 的规则归类，并一次性算出每个分类的计数。
+fn build_catalog(tab: ResourceTab, mut entries: Vec<ResourceEntry>) -> Catalog {
+    let rules = tab.category_rules();
+    let mut counts = vec![0usize; rules.len()];
+    for entry in &mut entries {
+        entry.category = classify(rules, &entry.name);
+        if let Some(index) = rules.iter().position(|rule| rule.slug == entry.category)
+            && let Some(count) = counts.get_mut(index)
+        {
+            *count = count.saturating_add(1);
+        }
+    }
+    let categories = rules.iter().zip(counts).map(|(rule, count)| CategoryCount { slug: rule.slug, label: rule.label, count }).collect();
+    let total = entries.len();
+    Catalog { entries, categories, total }
 }
 
 /// 读一个 Tab 的目录（带 mtime 缓存）。任何失败都变成可读的错误字符串，由调用方画成空态。
-fn load(tab: ResourceTab) -> Result<Arc<Vec<ResourceEntry>>, String> {
+fn load(tab: ResourceTab) -> Result<Arc<Catalog>, String> {
     let path = catalogs_dir().join(tab.file());
     let stamp: Stamp = std::fs::metadata(&path).ok().map(|m| (m.len(), m.modified().ok()));
+    let key = (path.clone(), tab);
     {
         let guard = cache().read().unwrap_or_else(PoisonError::into_inner);
         if let Some(current) = stamp
-            && let Some((Some(cached), entries)) = guard.get(&path)
+            && let Some((Some(cached), catalog)) = guard.get(&key)
             && *cached == current
         {
-            return Ok(Arc::clone(entries));
+            return Ok(Arc::clone(catalog));
         }
     }
     let text = std::fs::read_to_string(&path).map_err(|e| format!("读取 {} 失败：{e}", path.display()))?;
@@ -243,50 +389,105 @@ fn load(tab: ResourceTab) -> Result<Arc<Vec<ResourceEntry>>, String> {
     if entries.is_empty() {
         return Err(format!("{} 里没有可用条目（需要 name 与 resource_id）", path.display()));
     }
-    let entries = Arc::new(entries);
+    let catalog = Arc::new(build_catalog(tab, entries));
     {
         let mut guard = cache().write().unwrap_or_else(PoisonError::into_inner);
-        guard.insert(path, (stamp, Arc::clone(&entries)));
+        guard.insert(key, (stamp, Arc::clone(&catalog)));
     }
-    Ok(entries)
+    Ok(catalog)
 }
 
-/// 画这个资源 Tab：搜索框、chips、密集网格（或可操作的空态）。
+/// 画这个资源 Tab：左侧分类列、搜索框、chips、密集网格（或可操作的空态）。
 pub(crate) fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, tab: ResourceTab) {
     if rect.width() < 40.0 || rect.height() < 40.0 {
         return;
     }
     let t = app.tokens;
     let pad = 8.0;
-    let inner_w = (rect.width() - 2.0 * pad).max(1.0);
-    let x0 = rect.min.x + pad;
 
-    // ---- 搜索框（22 px，通栏）
-    let search = Rect::from_min_size(pos2(x0, rect.min.y + 6.0), vec2(inner_w, 22.0));
+    // ---- 切换 Tab 时分类回到「全部」：记录上次画的是哪个 Tab，只在新 Tab 首次出现时重置。
+    if app.ui.resource_category_tab.as_deref() != Some(tab.slug()) {
+        app.ui.resource_category_tab = Some(tab.slug().to_string());
+        app.ui.resource_category = None;
+    }
+
+    // ---- 布局：[分类列 96 px][右侧搜索/chips/网格]
+    let cat_x = rect.min.x + pad;
+    let content_x = cat_x + CATEGORY_WIDTH + CATEGORY_GAP;
+    let content_right = rect.max.x - pad;
+    let content_w = (content_right - content_x).max(1.0);
+
+    let loaded = load(tab);
+    let catalog = loaded.as_ref().ok().map(|catalog| catalog.as_ref());
+
+    // 目录换掉后，原先选中的分类可能已经空了/不存在：回到「全部」，避免卡在看不见的分类里。
+    if let Some(selected) = app.ui.resource_category.as_deref() {
+        let still_available = catalog.is_some_and(|catalog| catalog.categories.iter().any(|category| category.slug == selected && category.count > 0));
+        if !still_available {
+            app.ui.resource_category = None;
+        }
+    }
+
+    // ---- 左侧分类列：「全部」+ 数量大于 0 的关键词分类（空分类不列）
+    let category_rows: Vec<(&'static str, &'static str, usize)> = match catalog {
+        Some(catalog) => std::iter::once((ALL_CATEGORY_SLUG, ALL_CATEGORY_LABEL, catalog.total))
+            .chain(catalog.categories.iter().filter(|category| category.count > 0).map(|category| (category.slug, category.label, category.count)))
+            .collect(),
+        None => vec![(ALL_CATEGORY_SLUG, ALL_CATEGORY_LABEL, 0)],
+    };
+    let cat_bottom = rect.max.y - 4.0;
+    for (index, (slug, label, count)) in category_rows.iter().enumerate() {
+        let row = Rect::from_min_size(pos2(cat_x, rect.min.y + 6.0 + index as f32 * CATEGORY_ROW_HEIGHT), vec2(CATEGORY_WIDTH, CATEGORY_ROW_HEIGHT));
+        if row.max.y > cat_bottom {
+            break;
+        }
+        let selected = if *slug == ALL_CATEGORY_SLUG { app.ui.resource_category.is_none() } else { app.ui.resource_category.as_deref() == Some(*slug) };
+        let response = ui.interact(row, egui::Id::new(("resource-category", tab.slug(), *slug)), Sense::click());
+        if selected {
+            ui.painter().rect_filled(row, 0.0, t.row_selected);
+            ui.painter().rect_filled(Rect::from_min_size(row.min, vec2(2.0, row.height())), 0.0, t.accent);
+        } else if response.hovered() {
+            ui.painter().rect_filled(row, 0.0, t.hover);
+        }
+        let text_color = if selected { t.text } else { t.text_dim };
+        ui.painter().text(pos2(row.min.x + 10.0, row.center().y), Align2::LEFT_CENTER, label, Tokens::ui(11.0), text_color);
+        if *count > 0 {
+            ui.painter().text(pos2(row.max.x - 8.0, row.center().y), Align2::RIGHT_CENTER, count.to_string(), Tokens::ui(9.0), t.text_faint);
+        }
+        app.auto.add(&format!("resource.category.{slug}"), row, label);
+        if response.clicked() {
+            app.ui.resource_category = if *slug == ALL_CATEGORY_SLUG { None } else { Some((*slug).to_string()) };
+        }
+    }
+
+    // ---- 搜索框（22 px，右侧通栏）
+    let search = Rect::from_min_size(pos2(content_x, rect.min.y + 6.0), vec2(content_w, 22.0));
     let mut field = ui.new_child(egui::UiBuilder::new().max_rect(search).id_salt(("resource-search", tab.slug())));
     let mut query = app.ui.resource_search.clone();
     crate::widgets::search_field(&mut field, &mut query, "搜索名称/编号", search.width(), &t);
     app.ui.resource_search = query;
     app.auto.add("resource.search", search, "搜索名称/编号");
 
-    // ---- 数据：加载失败先记下错误，仍然画搜索框让用户能清词/换 Tab 后重试
-    let loaded = load(tab);
+    // ---- 数据：加载失败先记下错误，仍然画搜索框与分类列让用户能清词/换 Tab 后重试
     let needle = app.ui.resource_search.trim().to_lowercase();
     let filter = app.ui.resource_filter;
+    let selected_category = app.ui.resource_category.clone();
     let mut filtered: Vec<&ResourceEntry> = Vec::new();
     let mut total = 0usize;
-    if let Ok(entries) = &loaded {
-        total = entries.len();
-        filtered = entries
+    if let Some(catalog) = catalog {
+        total = catalog.total;
+        filtered = catalog
+            .entries
             .iter()
+            .filter(|entry| selected_category.as_deref().is_none_or(|slug| entry.category == slug))
             .filter(|entry| filter.accepts(entry))
             .filter(|entry| needle.is_empty() || entry.name.to_lowercase().contains(&needle) || entry.resource_id.contains(&needle))
             .collect();
     }
 
-    // ---- chips：全部 / 免费 / 会员；右侧「N 条」
+    // ---- chips：全部 / 免费 / 会员；右侧「N 条」= 分类 + 搜索 + chips 叠加后的条数
     let chips_y = search.max.y + 6.0;
-    let mut x = x0;
+    let mut x = content_x;
     for (key, label, value) in [("all", "全部", ResourceFilter::All), ("free", "免费", ResourceFilter::Free), ("vip", "会员", ResourceFilter::Vip)] {
         let chip = Rect::from_min_size(pos2(x, chips_y), vec2(46.0, 20.0));
         let on = app.ui.resource_filter == value;
@@ -305,9 +506,9 @@ pub(crate) fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, tab: R
         x += chip.width() + 4.0;
     }
     let count_label = format!("{} 条", filtered.len());
-    let count_left = (rect.max.x - pad - 64.0).max(x + 4.0).min(rect.max.x - pad - 4.0);
-    let count_rect = Rect::from_min_max(pos2(count_left, chips_y), pos2(rect.max.x - pad, chips_y + 20.0));
-    ui.painter().text(pos2(rect.max.x - pad, chips_y + 10.0), Align2::RIGHT_CENTER, &count_label, Tokens::ui(10.5), t.text_dim);
+    let count_left = (content_right - 64.0).max(x + 4.0).min(content_right - 4.0);
+    let count_rect = Rect::from_min_max(pos2(count_left, chips_y), pos2(content_right, chips_y + 20.0));
+    ui.painter().text(pos2(content_right, chips_y + 10.0), Align2::RIGHT_CENTER, &count_label, Tokens::ui(10.5), t.text_dim);
     app.auto.add("resource.count", count_rect, &count_label);
     let mut body_top = chips_y + 24.0;
 
@@ -315,8 +516,8 @@ pub(crate) fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, tab: R
     if let Some(note) = tab.note()
         && body_top + 12.0 < rect.max.y
     {
-        let note_rect = Rect::from_min_size(pos2(x0, body_top), vec2(inner_w, 12.0));
-        ui.painter().text(pos2(x0, body_top + 6.0), Align2::LEFT_CENTER, note, Tokens::ui(9.0), t.text_faint);
+        let note_rect = Rect::from_min_size(pos2(content_x, body_top), vec2(content_w, 12.0));
+        ui.painter().text(pos2(content_x, body_top + 6.0), Align2::LEFT_CENTER, note, Tokens::ui(9.0), t.text_faint);
         app.auto.add("resource.note", note_rect, note);
         body_top += 14.0;
     }
@@ -328,11 +529,11 @@ pub(crate) fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, tab: R
     // ---- 空态：目录不可用 / 没有匹配项
     let empty = match &loaded {
         Err(error) => Some(format!("{error}\n请设置环境变量 JIANYINGCRAFT_CATALOGS 指向 jianyingcraft-plugin/catalogs，\n或把 catalogs/ 放到工作目录后重试。")),
-        Ok(_) if filtered.is_empty() && total > 0 => Some("没有匹配的资源；换个关键词，或点「全部」看整库。".to_string()),
+        Ok(_) if filtered.is_empty() && total > 0 => Some("没有匹配的资源；换个关键词或分类，或点「全部」看整库。".to_string()),
         Ok(_) => None,
     };
     if let Some(message) = empty {
-        let area = Rect::from_min_max(pos2(rect.min.x + pad, body_top), pos2(rect.max.x - pad, rect.max.y));
+        let area = Rect::from_min_max(pos2(content_x, body_top), pos2(content_right, rect.max.y));
         app.auto.add("resource.empty", area, &message);
         let galley = ui.painter().layout(message, Tokens::ui(11.0), t.text_dim, area.width());
         let y = (area.center().y - galley.size().y / 2.0).max(area.min.y);
@@ -340,8 +541,8 @@ pub(crate) fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, tab: R
         return;
     }
 
-    // ---- 网格（6 列方形卡片，可滚动）
-    let body = Rect::from_min_max(pos2(rect.min.x, body_top), rect.max);
+    // ---- 网格（6 列方形卡片，可滚动；只占右侧内容区）
+    let body = Rect::from_min_max(pos2(content_x, body_top), pos2(content_right, rect.max.y));
     let mut content = ui.new_child(egui::UiBuilder::new().max_rect(body).id_salt(("resource-body", tab.slug())));
     content.set_clip_rect(body.intersect(ui.clip_rect()));
     let selected = app.ui.resource_selection.clone();
@@ -471,7 +672,7 @@ fn elide(ui: &egui::Ui, text: &str, size: f32, max_w: f32) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ResourceTab, hash64, last_chars, parse_entry};
+    use super::{ResourceTab, build_catalog, classify, hash64, last_chars, parse_entry};
     use serde_json::json;
 
     #[test]
@@ -499,6 +700,67 @@ mod tests {
         let numeric = parse_entry(&json!({"name": "x", "resource_id": 42, "vip": true})).expect("numeric ids are accepted");
         assert_eq!(numeric.resource_id, "42");
         assert!(numeric.vip);
+    }
+
+    #[test]
+    fn keyword_classification_follows_the_rule_tables() {
+        let transitions = ResourceTab::Transitions.category_rules();
+        assert_eq!(classify(transitions, "叠化"), "dissolve");
+        assert_eq!(classify(transitions, "上下翻页"), "slide");
+        assert_eq!(classify(transitions, "推近"), "motion");
+        assert_eq!(classify(transitions, "模糊"), "blur");
+        assert_eq!(classify(transitions, "故障闪屏"), "glitch");
+        assert_eq!(classify(transitions, "星光"), "light");
+        assert_eq!(classify(transitions, "找不到规则的名字"), "other");
+
+        let filters = ResourceTab::Filters.category_rules();
+        assert_eq!(classify(filters, "冷白人像"), "portrait");
+        assert_eq!(classify(filters, "海边日落"), "landscape");
+        assert_eq!(classify(filters, "美食甜品"), "food");
+        assert_eq!(classify(filters, "复古胶片"), "film");
+        assert_eq!(classify(filters, "黑白去色"), "mono");
+        assert_eq!(classify(filters, "夜景霓虹"), "night");
+
+        let effects = ResourceTab::Effects.category_rules();
+        assert_eq!(classify(effects, "金色边框"), "border");
+        assert_eq!(classify(effects, "故障闪屏"), "glitch");
+        assert_eq!(classify(effects, "发光星河"), "light");
+        assert_eq!(classify(effects, "漫画手绘"), "comic");
+        assert_eq!(classify(effects, "烟花粒子"), "particle");
+
+        // 英文关键词与大小写：贴纸的 `emoji`。
+        let stickers = ResourceTab::Sticker.category_rules();
+        assert_eq!(classify(stickers, "Emoji 笑脸"), "emoji");
+        assert_eq!(classify(stickers, "节日圣诞"), "festival");
+
+        let text = ResourceTab::Text.category_rules();
+        assert_eq!(classify(text, "入场进入"), "enter");
+        assert_eq!(classify(text, "出场退出"), "exit");
+        assert_eq!(classify(text, "循环强调"), "loop");
+
+        let audio = ResourceTab::Audio.category_rules();
+        assert_eq!(classify(audio, "城市雨声"), "ambience");
+        assert_eq!(classify(audio, "猫狗鸟"), "animal");
+        assert_eq!(classify(audio, "笑声呼吸"), "voice");
+        assert_eq!(classify(audio, "吉它"), "music");
+        assert_eq!(classify(audio, "音乐鼓点"), "music");
+    }
+
+    #[test]
+    fn catalog_counts_categories_once_and_hides_empty_ones() {
+        let entries = ["叠化", "上下翻页", "推近", "模糊", "故障闪屏", "星光"]
+            .iter()
+            .enumerate()
+            .filter_map(|(index, name)| parse_entry(&json!({"name": name, "resource_id": index + 1})))
+            .collect();
+        let catalog = build_catalog(ResourceTab::Transitions, entries);
+        assert_eq!(catalog.total, 6);
+        let nonempty: Vec<_> = catalog.categories.iter().filter(|category| category.count > 0).map(|category| (category.slug, category.count)).collect();
+        assert_eq!(
+            nonempty,
+            vec![("dissolve", 1), ("slide", 1), ("motion", 1), ("blur", 1), ("glitch", 1), ("light", 1)],
+            "the six fixtures hit six different transition rules; `other` stays empty"
+        );
     }
 
     #[test]

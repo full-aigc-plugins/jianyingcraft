@@ -536,6 +536,12 @@ pub struct UiState {
     /// 资源 Tab 的 `全部 / 免费 / 会员` chips。
     #[serde(default)]
     pub resource_filter: crate::panels::resource_catalog::ResourceFilter,
+    /// 资源 Tab 左侧分类列选中的关键词分类 slug；`None` 表示「全部」。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_category: Option<String>,
+    /// 上次画资源分类列时的 Tab slug。切换 Tab 时据此把分类重置为「全部」。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_category_tab: Option<String>,
     /// 资源 Tab 里选中的 `resource_id`（只在状态栏回显，不执行任何动作）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource_selection: Option<String>,
@@ -1045,6 +1051,8 @@ impl Default for UiState {
             caption_search: String::new(),
             resource_search: String::new(),
             resource_filter: crate::panels::resource_catalog::ResourceFilter::default(),
+            resource_category: None,
+            resource_category_tab: None,
             resource_selection: None,
             transcript_sel: None,
             transcript_search: String::new(),
