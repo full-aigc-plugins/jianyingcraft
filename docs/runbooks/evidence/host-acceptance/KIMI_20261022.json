@@ -40,11 +40,10 @@
   },
   "screen_evidence": {
     "path": "jianyingcraft-plugin/runtime/panel-evidence/editor-page.png",
-    "shows": "JianyingCraft / 引擎已加载 / 面板桥就绪 · 701 命令",
+    "shows": "JianyingCraft / 引擎已加载 / 面板桥就绪 · 703 命令",
     "captured_by": "node --test tests/panel-live.test.mjs tests/panel.test.mjs (CHROME_PATH=Chrome, headless)"
   },
   "gaps": [
-    "The panel screenshot is headless Chrome, not Kimi's own embedded viewer (Kimi CLI has no GUI webview).",
-    "The served wasm engine reports 701 commands while the Rust catalogue is 703; the plugin wasm build predates the two newest commands."
+    "The panel screenshot is headless Chrome, not Kimi's own embedded viewer (Kimi CLI has no GUI webview)."
   ]
 }

@@ -454,6 +454,6 @@ kimi -p "你接入了 jianyingcraft-editor MCP。列出全部工具名，并调�
 `-p` 不能与 `--yolo`/`--auto` 同用（CLI 会直接报错），非交互模式下按提示逐条允许即可。
 
 画面证据由 `node --test tests/panel-live.test.mjs tests/panel.test.mjs`（`CHROME_PATH` 指向 Chrome）
-生成到 `runtime/panel-evidence/editor-page.png`，显示「引擎已加载 / 面板桥就绪 · 701 命令」。
+生成到 `runtime/panel-evidence/editor-page.png`，显示「引擎已加载 / 面板桥就绪 · 703 命令」。
 注意：这是 headless Chrome 打开的面板页，不是 Kimi 自带的 webview（Kimi CLI 没有 GUI）。
 证据文件：`docs/runbooks/evidence/host-acceptance/KIMI_20261022.json`。

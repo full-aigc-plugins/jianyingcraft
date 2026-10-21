@@ -617,6 +617,10 @@
 
 - [x] **7 个资源技能**（插件仓 `skills/jianyingcraft-resource-{audio,text,sticker,effect,transition,caption,filter}`）+ `catalogs/`（16 份 JSON，来源 pyJianYingDraft Apache-2.0）：每个技能含字段含义、≥8 行真实名称的使用场景、20 条「名称+resource_id+vip」清单、查询命令 `node catalogs/query.mjs <category>`，并明确"不要凭记忆编造编号"。
 - [x] **Action Plan 规范**：插件仓 `docs/action-plan.md` 定义 `jianyingcraft-action-plan/v1`（每个 action 写明资源编号、目标、时间、时长、参数），含 8 个 action 的示例并逐条映射到 `command_run`；`ui/tests/catalogs.test.mjs` 9 条通过（目录完整性、sha256、技能引用、查询器、示例可解析）。
-- [ ] **已知缺口（下一步）**：可见引擎的 `sequence.applyVideoTransition` / `effects.apply` 吃的是引擎自己的效果名，**不认识剪映 `resource_id`**；目前"编号负责选型、引擎命令负责画面"，精确落 19 位编号只能走宿主侧 jianying-cli 写剪映草稿。要真正做到"同一套理论、UI 与 CLI 等价"，需要二者之一：
-      ① 引擎的项目格式增加 `resourceId`/`effectId` 元数据并在导出剪映草稿时写回；
+- [x] **资源编号进入工程（2026-10-22 完成一半）**：`effects.apply` / `sequence.applyVideoTransition` 已接受可选
+      `resourceId` / `effectId`（19 位数字串按字符串保存、去空白、拒绝裸数字/空串），写进 `EffectInstance` 并持久化到 `.fcproj`，
+      `sequence.inspect` 在有效果/转场时回显；旧工程不带这两个键仍可读，不传时序列化里完全不出现。测试：engine `resource_ids_tests` 5 条。
+- [ ] **仍未完成**：`.fcproj` 里的 `resourceId` 还没有在**导出剪映草稿**时写回（本仓库当前不产出剪映草稿，只产出 `.fcproj` 与 FCPXML）；
+      要么新增剪映草稿导出器（把 metadata 写进 draft_content 的 `resource_id`/`effect_id`），要么建立
+      `resource_id → 引擎效果名` 映射表（先覆盖转场/滤镜/常用特效）。
       ② 建立 `resource_id → 引擎效果名` 的映射表（先覆盖转场/滤镜/常用特效）。
