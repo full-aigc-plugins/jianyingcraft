@@ -131,7 +131,7 @@ wasm 侧薄绑定在 `apps/filmcraft-web/src/host.rs`，导出 `craft_read` / `c
 把 `bridge::catalog()`（`craft_catalog` 在 wasm 里的同一份实现）的命令 id 集合与
 `Session::default().execute("command.list")` 的 id 集合逐项比较，并同时断言
 `filmcraft_engine::command_specs()` 与 `command.list` 同源。三方任一漂移都会红，不再依赖
-"catalog = 702" 这种只查数量的抽查。
+"catalog = 703" 这种只查数量的抽查。
 
 **T2 实现（2026-10-19）**：`crates/ui-egui/tests/bridge_ui.rs::bridge_results_match_headless_for_representative_commands`
 拿 12 条静态查询命令分别走面板桥与 headless `Session`，断言结果 JSON 深度相等。两处有意排除：
@@ -216,14 +216,14 @@ wasm 侧薄绑定在 `apps/filmcraft-web/src/host.rs`，导出 `craft_read` / `c
 
 | 调用 | 结果 |
 |---|---|
-| `craft_catalog()` | `commands` = **702**（与 `filmcraft-cli commands` 一致） |
+| `craft_catalog()` | `commands` = **703**（与 `filmcraft-cli commands` 一致） |
 | `craft_submit({id:"t-1",command:"file.newBin"})` | `true` |
 | `craft_take_reply()` | `{"id":"t-1","ok":false,"error":{"code":"command_failed","message":"JianyingCraft is not running yet"}}` |
 | `craft_idle()` | `true` |
 | `craft_submit("not json")` | `false` |
 
 > **2026-10-20 变更**：新增 engine 命令 `file.newShortVideo`（File ▸ New ▸ Short Video，默认
-> 1080×1920 / 30 fps、`seconds`=15）后，命令目录为 **702**。
+> 1080×1920 / 30 fps、`seconds`=15）后，命令目录为 **703**。
 
 **未做**：在真实运行中的 App（浏览器/面板）里执行命令；面板 JS 仍走原型通道 `_panel_*`。
 
@@ -235,7 +235,7 @@ wasm 侧薄绑定在 `apps/filmcraft-web/src/host.rs`，导出 `craft_read` / `c
 | 测试 | 覆盖 |
 |---|---|
 | `ui/tests/editor-boot.test.mjs`（8 条） | 合法请求转发、四类畸形载荷在进引擎前被拒、队列满不是静默丢弃、回复解析、坏回复转错误信封、`run()` 成功/超时 |
-| `ui/tests/editor-wasm.test.mjs`（跨仓） | 直接加载派生引擎的 node 版 wasm：catalog=**702**、submit 受理、失败回包 `command_failed`、`idle()`、畸形载荷被拒 |
+| `ui/tests/editor-wasm.test.mjs`（跨仓） | 直接加载派生引擎的 node 版 wasm：catalog=**703**、submit 受理、失败回包 `command_failed`、`idle()`、畸形载荷被拒 |
 
 跨仓测试用环境变量开关：设置 `JIANYINGCRAFT_WASM_JS` 时执行，未设置时 **skip**（不会把"没构建"报告成通过）。
 
@@ -279,11 +279,11 @@ totalBytes: 40,969,658`；随后 `--check` → `drift: []`。`ui/engine/` 已在
 编辑器面板页 → 等 wasm 初始化 → 读页面上的状态徽标。实测输出：
 
 ```json
-{"exit":0,"engineReady":true,"bridgeReady":true,"commands":702}
+{"exit":0,"engineReady":true,"bridgeReady":true,"commands":703}
 ```
 
-页面显示"引擎已加载 / 面板桥就绪 · 702 命令"，说明 `craft_*` 在**真实浏览器的 WebAssembly
-实例**里可用，且目录与 CLI 同源（702）。无 `CHROME_PATH` 时脚本打印 skipped 并退出 0——不把
+页面显示"引擎已加载 / 面板桥就绪 · 703 命令"，说明 `craft_*` 在**真实浏览器的 WebAssembly
+实例**里可用，且目录与 CLI 同源（703）。无 `CHROME_PATH` 时脚本打印 skipped 并退出 0——不把
 "没装浏览器"报告成通过。
 
 **边界**：eframe 主界面（`/app/index.html`）在无 GPU 的 headless Chromium 里停在

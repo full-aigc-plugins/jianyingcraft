@@ -148,7 +148,7 @@ pub(crate) type ShellTab = (&'static str, &'static str, &'static str, Option<Pan
 /// 顶栏只横排前 [`SHELL_PRIMARY_COUNT`] 个主 Tab（剪辑/素材、字幕/文本、音频），其余 10 个收进
 /// 「更多」溢出菜单——它们仍然可点、可自动化，只是不再全部挤在顶栏里
 /// （`docs/derivation/02-ia-mapping.md` §7.7：13 Tab 收敛为 3 个主 Tab + "更多"溢出菜单）。
-pub(crate) static SHELL_TABS: [ShellTab; 13] = [
+pub(crate) static SHELL_TABS: [ShellTab; 9] = [
     ("素材", "cut", "jy.tab.cut", Some(PanelKind::Project)),
     ("文本", "captions", "jy.tab.captions", Some(PanelKind::Text)),
     ("音频", "audio", "jy.tab.audio", Some(PanelKind::AudioTrackMixer)),
@@ -156,12 +156,8 @@ pub(crate) static SHELL_TABS: [ShellTab; 13] = [
     ("特效", "effects", "jy.tab.effects", Some(PanelKind::Effects)),
     ("转场", "transitions", "jy.tab.transitions", Some(PanelKind::Effects)),
     ("字幕", "subtitle", "jy.tab.subtitle", Some(PanelKind::Text)),
-    ("智能包装", "smart", "jy.tab.smart", None),
     ("滤镜", "filters", "jy.tab.filters", Some(PanelKind::LumetriColor)),
     ("调节", "adjust", "jy.tab.adjust", Some(PanelKind::LumetriColor)),
-    ("模板", "templates", "jy.tab.templates", None),
-    ("数字人", "avatar", "jy.tab.avatar", None),
-    ("插件", "plugins", "jy.tab.plugins", None),
 ];
 
 /// 顶栏直排的主 Tab 数量：前 3 个（剪辑/素材、字幕/文本、音频）。
@@ -172,8 +168,7 @@ pub(crate) fn shell_primary_tabs() -> &'static [ShellTab] {
     &SHELL_TABS[..SHELL_PRIMARY_COUNT]
 }
 
-/// 「更多」溢出菜单里的 10 个 Tab（贴纸 / 特效 / 转场 / 字幕 / 智能包装 / 滤镜 / 调节 /
-/// 模板 / 数字人 / 插件），顺序即菜单顺序。
+/// 「更多」溢出菜单里的 6 个 Tab（贴纸 / 特效 / 转场 / 字幕 / 滤镜 / 调节），顺序即菜单顺序。
 pub(crate) fn shell_overflow_tabs() -> &'static [ShellTab] {
     &SHELL_TABS[SHELL_PRIMARY_COUNT..]
 }
@@ -938,7 +933,7 @@ impl FilmcraftApp {
             return;
         }
         // 图标一律复用 `icons.rs` 的自绘线性图标（16×16 坐标系），不引入第三方图标资产。
-        let tabs: [(&str, &str, Icon, Option<PanelKind>); 13] = [
+        let tabs: [(&str, &str, Icon, Option<PanelKind>); 9] = [
             ("素材", "media", Icon::Film, Some(PanelKind::Project)),
             ("音频", "audio", Icon::Audio, Some(PanelKind::Project)),
             ("文本", "text", Icon::Type, Some(PanelKind::Text)),
@@ -946,12 +941,8 @@ impl FilmcraftApp {
             ("特效", "effects", Icon::Fx, Some(PanelKind::Effects)),
             ("转场", "transitions", Icon::Rolling, Some(PanelKind::Effects)),
             ("字幕", "captions", Icon::Captions, Some(PanelKind::Text)),
-            ("智能包装", "smart", Icon::Sparkle, None),
             ("滤镜", "filters", Icon::Ellipse, Some(PanelKind::LumetriColor)),
             ("调节", "adjust", Icon::Adjust, Some(PanelKind::LumetriColor)),
-            ("模板", "templates", Icon::Folder, None),
-            ("数字人", "avatar", Icon::Image, None),
-            ("插件", "plugins", Icon::Grid, None),
         ];
         let mut chosen: Option<(String, PanelKind)> = None;
         let mut x = rect.min.x;
@@ -1259,29 +1250,6 @@ impl FilmcraftApp {
             if response.clicked() {
                 clicked_bin = Some((bin_id, name.clone()));
             }
-            y += ROW_HEIGHT;
-        }
-        // 素材夹与占位入口之间的一条分隔线（同 rail 里其他细线的颜色）。
-        if y + 10.0 < rect.max.y {
-            y += 4.0;
-            ui.painter()
-                .line_segment([egui::pos2(rect.min.x + 8.0, y), egui::pos2(rect.max.x - 8.0, y)], egui::Stroke::new(1.0, t.text_dim.gamma_multiply(0.35)));
-            y += 5.0;
-        }
-        // 「我的 / AI」保留为灰显占位：没有数据，不摆可点的假入口。
-        let placeholders: [(&str, &str, Icon); 2] = [("jy.rail.mine", "我的", Icon::Home), ("jy.rail.ai", "AI", Icon::Sparkle)];
-        for (id, label, icon) in placeholders {
-            if y + ROW_HEIGHT > rect.max.y {
-                break;
-            }
-            let row = Rect::from_min_size(egui::pos2(rect.min.x, y), egui::vec2(rect.width(), ROW_HEIGHT));
-            let dim = t.text_dim.gamma_multiply(0.7);
-            let icon_rect = Rect::from_center_size(egui::pos2(row.min.x + INSET_X + ICON_SIDE / 2.0, row.center().y), egui::vec2(ICON_SIDE, ICON_SIDE));
-            icons::paint(ui.painter(), icon_rect, icon, dim);
-            let galley = ui.painter().layout_no_wrap(label.to_string(), Tokens::ui(LABEL_SIZE), dim);
-            let text_pos = egui::pos2(icon_rect.max.x + 7.0, row.center().y - galley.size().y / 2.0);
-            ui.painter().with_clip_rect(row).galley(text_pos, galley, dim);
-            self.auto.add(id, row, label);
             y += ROW_HEIGHT;
         }
         if let Some((label, panel, command)) = clicked {

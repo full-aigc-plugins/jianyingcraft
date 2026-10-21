@@ -92,21 +92,10 @@ fn body_of(d: &mut Driver) -> [f64; 4] {
     [topbar[0], topbar[1], timeline[0] + timeline[2] - topbar[0], timeline[1] + timeline[3] - topbar[1]]
 }
 
-/// 「更多」溢出菜单里的 10 个一级 Tab（行 id 沿用顶栏的 `jy.tab.<slug>`）。
-const OVERFLOW_TAB_IDS: [&str; 10] = [
-    "jy.tab.sticker",
-    "jy.tab.effects",
-    "jy.tab.transitions",
-    "jy.tab.subtitle",
-    "jy.tab.smart",
-    "jy.tab.filters",
-    "jy.tab.adjust",
-    "jy.tab.templates",
-    "jy.tab.avatar",
-    "jy.tab.plugins",
-];
+/// 「更多」溢出菜单里的 6 个一级 Tab（行 id 沿用顶栏的 `jy.tab.<slug>`）。
+const OVERFLOW_TAB_IDS: [&str; 6] = ["jy.tab.sticker", "jy.tab.effects", "jy.tab.transitions", "jy.tab.subtitle", "jy.tab.filters", "jy.tab.adjust"];
 
-/// 矮窗口点开「更多」：弹层与它的 10 行入口都必须在窗口内、且不越过 body 的右 / 下边界；
+/// 矮窗口点开「更多」：弹层与它的 6 行入口都必须在窗口内、且不越过 body 的右 / 下边界；
 /// 窗口矮到连菜单下限都放不下时（390×160），弹层本身也必须收进 body。
 #[test]
 fn more_menu_stays_inside_the_body_in_a_short_window() {
@@ -135,14 +124,14 @@ fn more_menu_stays_inside_the_body_in_a_short_window() {
             seen.push(id.to_string());
             let rect = rect_of(&element);
             assert!(rect[2] <= window[2] + 0.5, "{width}x{height}: {id} is wider than the window: {rect:?}");
-            // 390×360 时 10 行整条放得下，行本身也不许越界；160 px 高时列表必须滚动，
+            // 390×360 时 6 行整条放得下，行本身也不许越界；160 px 高时列表必须滚动，
             // 行矩形是滚动内容（被 ScrollArea 裁掉），只校验弹层外壳。
             if height >= 360.0 {
                 assert_inside(rect, window, &format!("{width}x{height}: {id}"));
                 assert_inside(rect, body, &format!("{width}x{height}: {id}"));
             }
         }
-        assert_eq!(seen.len(), OVERFLOW_TAB_IDS.len(), "{width}x{height}: the 更多 menu should list all 10 overflow tabs: {seen:?}");
+        assert_eq!(seen.len(), OVERFLOW_TAB_IDS.len(), "{width}x{height}: the 更多 menu should list all 6 overflow tabs: {seen:?}");
     }
 }
 

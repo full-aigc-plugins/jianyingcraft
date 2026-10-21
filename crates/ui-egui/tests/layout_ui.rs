@@ -70,19 +70,8 @@ impl Driver {
     }
 }
 
-/// 顶栏「更多」溢出菜单里的 10 个一级 Tab（沿用收敛前的自动化 id）。
-const OVERFLOW_TAB_IDS: [&str; 10] = [
-    "jy.tab.sticker",
-    "jy.tab.effects",
-    "jy.tab.transitions",
-    "jy.tab.subtitle",
-    "jy.tab.smart",
-    "jy.tab.filters",
-    "jy.tab.adjust",
-    "jy.tab.templates",
-    "jy.tab.avatar",
-    "jy.tab.plugins",
-];
+/// 顶栏「更多」溢出菜单里的 6 个一级 Tab（云素材/官方/数字人/智能包装等已按产品决定移除）。
+const OVERFLOW_TAB_IDS: [&str; 6] = ["jy.tab.sticker", "jy.tab.effects", "jy.tab.transitions", "jy.tab.subtitle", "jy.tab.filters", "jy.tab.adjust"];
 
 /// `ui.elements {prefix:"jy.tab."}` 报出的 id（同时带出 `jy.tab.more` 与 `jy.tab.inspector`）。
 fn tab_ids(d: &mut Driver) -> Vec<String> {
@@ -535,7 +524,7 @@ fn compact_top_bar_has_the_export_button() {
     assert_eq!(info["ui"]["mode"], json!("Export"), "the export button should switch to Export mode");
 }
 
-/// 移动端顶栏是剪映式一级 Tab：只直排 3 个主 Tab + 「更多」，其余 10 个都在「更多」菜单里，
+/// 移动端顶栏是剪映式一级 Tab：只直排 3 个主 Tab + 「更多」，其余 6 个都在「更多」菜单里，
 /// 点"特效"真的换抽屉面板（openspec #233 / `02-ia-mapping.md` §7.7）。
 #[test]
 fn compact_top_bar_scrolls_through_the_jianying_tabs() {
@@ -562,10 +551,9 @@ fn compact_top_bar_scrolls_through_the_jianying_tabs() {
     d.snapshot("compact-tabs");
 }
 
-/// 移动端「更多」里的"模板 / 数字人 / 插件 / 智能包装"没有实现：照样列出来（不能悄悄消失），
-/// 但点了不打开任何面板、也不成为当前 Tab。
+/// 移动端「更多」里只剩真实可用的 6 个入口。
 #[test]
-fn compact_tab_bar_disables_unimplemented_modules() {
+fn compact_tab_bar_has_no_placeholder_modules() {
     let mut d = Driver::new(390.0, 884.0);
     d.frames(3);
     let before = d.ok("ui.inspect", json!({}));
@@ -573,17 +561,20 @@ fn compact_tab_bar_disables_unimplemented_modules() {
     d.ok("ui.click", json!({"id": "jy.tab.more"}));
     d.frames(3);
     let ids = tab_ids(&mut d);
-    for disabled in ["jy.tab.smart", "jy.tab.templates", "jy.tab.avatar", "jy.tab.plugins"] {
-        assert!(ids.iter().any(|id| id == disabled), "a disabled module must stay listed, not vanish: {ids:?}");
-        d.ok("ui.click", json!({"id": disabled}));
-        d.frames(3);
-        let after = d.ok("ui.inspect", json!({}));
-        assert!(after["ui"]["jy_drawer"].is_null(), "a disabled tab ({disabled}) must not open a drawer: {after}");
-        assert!(after["ui"]["jy_shell_slug"].is_null(), "a disabled tab ({disabled}) must not become the current tab: {after}");
+    for want in OVERFLOW_TAB_IDS {
+        assert!(ids.iter().any(|id| id == want), "the 更多 menu is missing {want}: {ids:?}");
     }
+    for gone in ["jy.tab.smart", "jy.tab.templates", "jy.tab.avatar", "jy.tab.plugins"] {
+        assert!(!ids.iter().any(|id| id == gone), "{gone} is a fake placeholder and should be gone: {ids:?}");
+    }
+    // 剩下的入口都真的能切过去（不再是灰显占位）。
+    d.ok("ui.click", json!({"id": "jy.tab.adjust"}));
+    d.frames(3);
+    let after = d.ok("ui.inspect", json!({}));
+    assert_eq!(after["ui"]["jy_shell_slug"], json!("adjust"), "clicking 调节 should select it: {after}");
 }
 
-/// 剪映专业版工作区：左栏 rail 是「导入 + 素材 + 工程里的真实素材夹 + 我的 / AI 占位」，
+/// 剪映专业版工作区：左栏 rail 是「导入 + 素材 + 工程里的真实素材夹」，
 /// 素材夹点了真把 Project 面板切进该文件夹；没有数据的子草稿 / 云素材 / 官方 / 即梦不再出现。
 #[test]
 fn jianying_workspace_has_the_left_rail() {
@@ -602,7 +593,7 @@ fn jianying_workspace_has_the_left_rail() {
 
     let rail = d.ok("ui.elements", json!({"prefix": "jy.rail."}));
     let ids: Vec<String> = rail.as_array().expect("elements").iter().filter_map(|element| element["id"].as_str().map(str::to_string)).collect();
-    for want in ["jy.rail.import", "jy.rail.media", "jy.rail.mine", "jy.rail.ai"] {
+    for want in ["jy.rail.import", "jy.rail.media"] {
         assert!(ids.iter().any(|id| id == want), "the left rail is missing {want}: {ids:?}");
     }
     for (bin, name) in &bins {
@@ -613,7 +604,7 @@ fn jianying_workspace_has_the_left_rail() {
         assert_eq!(rect[2].as_f64().unwrap_or(0.0), 96.0, "a rail bin row spans the 96 px rail: {rect}");
         assert_eq!(rect[3].as_f64().unwrap_or(0.0), 30.0, "a rail bin row is 30 px high: {rect}");
     }
-    for gone in ["jy.rail.subdraft", "jy.rail.cloud", "jy.rail.official", "jy.rail.dreamina"] {
+    for gone in ["jy.rail.subdraft", "jy.rail.cloud", "jy.rail.official", "jy.rail.dreamina", "jy.rail.mine", "jy.rail.ai"] {
         assert!(!ids.iter().any(|id| id == gone), "the dataless {gone} entry should be gone: {ids:?}");
     }
 
@@ -794,7 +785,7 @@ fn jianying_workspace_shows_the_tab_strip() {
     d.frames(4);
     let strip = d.ok("ui.elements", json!({"prefix": "jy.tabstrip."}));
     let count = strip.as_array().map_or(0, Vec::len);
-    assert!(count >= 12, "expected the JianYing tab strip, got {count}: {strip}");
+    assert_eq!(count, 9, "the JianYing tab strip is the 9 real tabs now: {strip}");
     // 有对应面板的 Tab 会真的把面板调出来。
     d.ok("ui.click", json!({"id": "jy.tabstrip.effects"}));
     d.frames(3);

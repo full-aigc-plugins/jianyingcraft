@@ -465,8 +465,9 @@ fn body(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View, actions
         navigate(app, v.inst, parent.map(|b| b.0));
     }
     // 文字让出右侧按钮的宽度，避免长文件夹名压到按钮上。
-    let text_l = (up.max.x + 8.0).min(import.min.x);
-    let text_r = (import.min.x - 8.0).max(text_l);
+    let jianying_btn = Rect::from_min_size(pos2((import.min.x - 72.0).max(title_row.min.x), import.min.y), vec2(64.0, IMPORT_H));
+    let text_l = (up.max.x + 8.0).min(jianying_btn.min.x);
+    let text_r = (jianying_btn.min.x - 8.0).max(text_l);
     let title_area = Rect::from_min_max(pos2(text_l, title_row.min.y), pos2(text_r, title_row.center().y));
     let crumb_area = Rect::from_min_max(pos2(text_l, title_row.center().y - 1.0), pos2(text_r, title_row.max.y));
     let fs = font(app);
@@ -488,6 +489,39 @@ fn body(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View, actions
     if import_resp.clicked() {
         // 走既有导入流程：`file.import` 无路径时由 `file_dialog` 调 `pick_files`，落到当前文件夹。
         actions.push(("file.import".into(), json!({"bin": v.bin.0})));
+    }
+    // 「剪映资源」：扫描本机剪映目录，把音频/图片/视频导进当前工程；贴纸/特效/文本等
+    // 不是本工程可用的媒体格式，只提示用户手动导入（不复制、不再分发官方资源）。
+    let jy_resp = ui.interact(jianying_btn, egui::Id::new((&pre, "import-jianying")), Sense::click()).on_hover_text("从本机剪映目录导入音频/图片/视频");
+    if jy_resp.hovered() {
+        ui.painter().rect_filled(jianying_btn, 6.0, t.hover);
+    }
+    ui.painter().rect_stroke(jianying_btn, 6.0, egui::Stroke::new(1.0, t.separator), egui::StrokeKind::Inside);
+    ui.painter().text(jianying_btn.center(), Align2::CENTER_CENTER, "剪映资源", Tokens::ui(11.5), t.text);
+    app.auto.add(&format!("{pre}.importJianying"), jianying_btn, "从剪映导入");
+    if jy_resp.clicked() {
+        let ctx = ui.ctx().clone();
+        match crate::menus::invoke(app, &ctx, "file.importJianyingResources", json!({"dryRun": true})) {
+            Ok(probe) => {
+                let scanned = probe["scanned"].as_u64().unwrap_or(0);
+                if scanned == 0 {
+                    app.ui.status = "没找到本机剪映资源目录；可在设置 JIANYINGCRAFT_JIANYING_ROOT 后重试".into();
+                } else {
+                    match crate::menus::invoke(app, &ctx, "file.importJianyingResources", json!({})) {
+                        Ok(done) => {
+                            let imported = done["imported"].as_array().map_or(0, Vec::len);
+                            let by = &done["byCategory"];
+                            app.ui.status = format!(
+                                "已从剪映目录导入 {imported} 个媒体文件（音频 {} / 图片 {} / 视频 {}）；文本/贴纸/特效/转场/字幕/滤镜请手动导入",
+                                by["audio"], by["image"], by["video"]
+                            );
+                        }
+                        Err(e) => app.ui.status = format!("剪映资源导入失败：{e}"),
+                    }
+                }
+            }
+            Err(e) => app.ui.status = format!("剪映资源扫描失败：{e}"),
+        }
     }
 
     // 剪映式搜索行：搜索框通栏（只留左右 padding），右侧内嵌一个圆形 Find 标。

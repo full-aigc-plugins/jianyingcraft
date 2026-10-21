@@ -1477,6 +1477,15 @@ fn build() -> Vec<CommandSpec> {
             Ok(out)
         }),
         cmd!(
+            "file.importJianyingResources",
+            "Jianying Resources…",
+            ["File", "Import From"],
+            None,
+            r#"{"root":str?,"dryRun":bool=false,"categories":[str]?}"#,
+            always,
+            crate::jianying_resources::run
+        ),
+        cmd!(
             "file.exportInterchange",
             "Export Interchange",
             [],
