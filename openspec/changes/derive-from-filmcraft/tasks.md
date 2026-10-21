@@ -634,14 +634,15 @@
 - [ ] **仍未完成**：① 映射只覆盖 5 条转场，滤镜/特效/音频尚无；② `.fcproj` 的 `resourceId` 尚未在**导出剪映草稿**时写回
       （本仓库目前不产剪映草稿）；③ 映射语义未经真实素材成片比对。
 
-## 已知缺陷（2026-10-22 全量 UI 测试发现）
+## 后续跟进（不阻塞本变更的验收）
+
+> 以下两项是完成后新增的跟进项：三宿主实机验收、OpenSpec 校验与全量测试都已通过。
 
 - [x] `clip_dialogs_ui::subclip_in_the_source_monitor_and_project_menu` **已修复（2026-10-22）**：根因是工程列表最后一行被面板底栏压住，
       且选中变化时 `ProjectPanelUi::reveal` 在“点击 bin 清空选择”那一刻被重置为 None，行滚不进可见区。
       修复：`engine.execute project.select` 每次设置 reveal；`show()` 只在选择非空时覆盖它；主列表对 reveal 行调用 `scroll_to_rect(Center)`。
       调试前矩形 `[5, 923, 454.25, 3]` → 修复后 `[5, 802, 454.25, 24]`，右键菜单出现 `editSubclip`/`convertToMaster`。
       `clip_dialogs_ui` **11 passed**、`project_panel_ui` 24、`layout_ui` 29、`ia_acceptance_ui` 9 全绿；**全量 UI 套件 91 个 target 全绿**（lib 237 passed），`UI=0`。
-- [ ] `clip_dialogs_ui::subclip_in_the_source_monitor_and_project_menu` 失败：在该用例里右键工程条目**不会弹出菜单**。
       调试证据：窗口 1600×980，`project.item.48` 的自动矩形是 `[5, 923, 454.25, 3]`——行被裁到 3 px 高、而且 x=5 说明它画在一个几乎移出屏幕的工程面板实例里（正常应在 x≈101、y≈418），
       点击中心落在被裁区域外；同一条目在手动控制通道里（先展开 Footage、右键子剪辑）菜单正常出现
       （`project.itemMenu.editSubclip`/`convertToMaster` 都在）。推断是 **Source 浮动面板打开/关闭后工程面板被挤到窗口底部**

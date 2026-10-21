@@ -1,2 +1,4 @@
 # 三宿主验收证据  每个宿主三样东西，缺一不可：  | 文件 | 内容 | |---|---| | `<host>-<YYYYMMDD>.json` | `jianyingcraft-host-acceptance/v1` 记录；`result` 只能是 `passed` / `failed` / `blocked` | | `<host>-install-<YYYYMMDD>.png` | 宿主插件列表/管理页，能看清 `jianyingcraft 0.1.0` | | `<host>-panel-<YYYYMMDD>.png` | `screenshot` 工具返回的面板 PNG（证明可见编辑器真的在跑） | | `<host>-window-<YYYYMMDD>.png` | 宿主窗口 + 面板同框；能看清宿主名称/版本 |  `<host>` 用 `codex` / `zcode` / `kimi`。截图从宿主机截取后复制到这里； 提交前检查不含账号、令牌、个人路径或未授权的素材。  步骤见 [`../../three-host-install.md`](../../three-host-install.md)。 
 - KIMI_20261022.json — Kimi Code CLI 0.27.0：17 个 MCP 工具、command_run sequence.inspect 真实返回、面板截图。
+
+- `ZCODE_20261022.json` — ZCode 3.16.2.8769 / CLI 0.17.0：本地 marketplace 安装、14 个 MCP 工具、外部 Chrome 挂载面板后 `sequence.inspect` 真实返回；截图 `zcode-panel.png`。
