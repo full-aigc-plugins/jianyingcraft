@@ -96,6 +96,14 @@ pub struct ProjectPanelUi {
     pub rename: Option<Rename>,
     pub dialog: Option<ProjectDialog>,
     pub hover: Option<Hover>,
+    /// An item the panel should scroll into view once. Set when the selection changes from outside
+    /// the panel (a command, a menu or the control channel) so a row that is below the fold becomes
+    /// clickable instead of silently staying clipped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reveal: Option<u64>,
+    /// The selection the panel saw last, used to detect the change that asks for a reveal.
+    #[serde(default, skip)]
+    pub seen_selection: Vec<u64>,
 }
 
 /// Which panel instance a view belongs to.
@@ -279,6 +287,13 @@ pub fn select_all_command(app: &FilmcraftApp) -> (String, Value) {
 
 pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let mut actions: Actions = Vec::new();
+    // Selecting from outside the panel (a command, the control channel, a menu) should bring the
+    // row into view: remember the newest selected item once, the list consumes it when it draws.
+    let selection: Vec<u64> = app.session.state.project_selection.iter().map(|i| i.0).collect();
+    if selection != app.ui.project_panel.seen_selection {
+        app.ui.project_panel.reveal = selection.last().copied();
+        app.ui.project_panel.seen_selection = selection;
+    }
     let mut rect = rect;
     // bin tabs docked in the Project panel
     let docked: Vec<usize> = app.ui.project_panel.tabs.iter().enumerate().filter(|(_, t)| !t.floating).map(|(k, _)| k).collect();

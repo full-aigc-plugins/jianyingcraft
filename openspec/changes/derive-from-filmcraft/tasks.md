@@ -630,7 +630,7 @@
 ## 已知缺陷（2026-10-22 全量 UI 测试发现）
 
 - [ ] `clip_dialogs_ui::subclip_in_the_source_monitor_and_project_menu` 失败：在该用例里右键工程条目**不会弹出菜单**。
-      调试证据：窗口 1600×980，`project.item.48` 的自动矩形是 `[5, 923, 454.25, 3]`——行被裁到 3 px 高、贴着窗口底边，
+      调试证据：窗口 1600×980，`project.item.48` 的自动矩形是 `[5, 923, 454.25, 3]`——行被裁到 3 px 高、而且 x=5 说明它画在一个几乎移出屏幕的工程面板实例里（正常应在 x≈101、y≈418），
       点击中心落在被裁区域外；同一条目在手动控制通道里（先展开 Footage、右键子剪辑）菜单正常出现
       （`project.itemMenu.editSubclip`/`convertToMaster` 都在）。推断是 **Source 浮动面板打开/关闭后工程面板被挤到窗口底部**
-      导致用例的点击失效，而非菜单逻辑本身。修复方向：工程面板按窗口高度重新分配（或 `project.select` 时把选中行滚入可见区）。
+      导致用例的点击失效，而非菜单逻辑本身。已加「选中即滚入可见区」（`ProjectPanelUi::reveal`，选中变化时对列表行/卡片 `scroll_to_rect`），但该用例的面板本身只有 3 px 可见，滚不进去；仍需查 `ui.panel.show Project` 在 Source 打开后的停靠行为。
