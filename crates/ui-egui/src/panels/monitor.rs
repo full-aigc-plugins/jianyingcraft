@@ -25,14 +25,51 @@ pub enum Which {
     Program,
 }
 
+/// Heights of a monitor's rows under the picture, and the gap that keeps them apart: tight enough
+/// that the picture ends against the preview controls and the transport strip hugs the panel floor.
+const ROW_GAP: f32 = 2.0;
+const TIMECODE_ROW_H: f32 = 26.0;
+const SETTINGS_ROW_H: f32 = 24.0;
+const SOURCE_DRAG_ROW_H: f32 = 26.0;
+const SCRUB_ROW_H: f32 = 22.0;
+const ZOOM_ROW_H: f32 = 13.0;
+const TRANSPORT_ROW_H: f32 = 32.0;
+
+/// The rows below a monitor's picture, measured from the bottom edge of its panel up.
+///
+/// The transport row keeps the bottom edge (its buttons sit 2 pt inside it) and the timecode readout
+/// sits directly above it, so the strip under the picture reads as one block instead of leaving a
+/// gap above the transport controls. The view settings wrap onto their own row at compact widths,
+/// and the scrub and zoom bars sit above it, nearest the picture.
+struct ControlRows {
+    video_bottom: f32,
+    scrub_y: f32,
+    zoom_y: f32,
+    settings_y: f32,
+    drag_y: f32,
+    timecode_y: f32,
+    transport: Rect,
+}
+
+fn control_rows(rect: Rect, stacked: bool, source_drag: bool) -> ControlRows {
+    let transport = Rect::from_min_size(pos2(rect.min.x, rect.max.y - TRANSPORT_ROW_H), vec2(rect.width(), TRANSPORT_ROW_H));
+    let timecode_y = transport.min.y - ROW_GAP - TIMECODE_ROW_H;
+    let drag_y = if source_drag { timecode_y - ROW_GAP - SOURCE_DRAG_ROW_H } else { timecode_y };
+    let settings_y = if stacked { drag_y - ROW_GAP - SETTINGS_ROW_H } else { timecode_y };
+    let zoom_y = (if stacked { settings_y } else { timecode_y }) - ROW_GAP - ZOOM_ROW_H;
+    let scrub_y = zoom_y - ROW_GAP - SCRUB_ROW_H;
+    // A panel shorter than its rows would otherwise hand the picture an inverted rect.
+    let video_bottom = (scrub_y - ROW_GAP).max(rect.min.y + 4.0);
+    ControlRows { video_bottom, scrub_y, zoom_y, settings_y, drag_y, timecode_y, transport }
+}
+
 pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which) {
     let t = app.tokens;
     let ctx = ui.ctx().clone();
     let stacked_controls = rect.width() < 540.0;
     let separate_source_drag = which == Which::Source && stacked_controls && rect.width() < 310.0;
-    let source_drag_h = if separate_source_drag { 26.0 } else { 0.0 };
-    let controls_h = 28.0 + 24.0 + 15.0 + 36.0 + if stacked_controls { 26.0 } else { 0.0 } + source_drag_h;
-    let video_area = Rect::from_min_max(rect.min + vec2(4.0, 4.0), pos2(rect.max.x - 4.0, rect.max.y - controls_h));
+    let rows = control_rows(rect, stacked_controls, separate_source_drag);
+    let video_area = Rect::from_min_max(rect.min + vec2(4.0, 4.0), pos2(rect.max.x - 4.0, rows.video_bottom));
     // the Source monitor's time ruler starts at `origin` (a subclip restricted to its range)
     let mut origin = Tick::ZERO;
     let (target, frame_size, rate, time, duration, drop_frame, mark_in, mark_out, name) = match which {
@@ -321,7 +358,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
     }
 
     // ---- controls row: timecode | zoom | res | wrench | duration
-    let row1 = Rect::from_min_size(pos2(rect.min.x + 14.0, rect.max.y - controls_h + 2.0), vec2(rect.width() - 28.0, 26.0));
+    let row1 = Rect::from_min_size(pos2(rect.min.x + 14.0, rows.timecode_y), vec2(rect.width() - 28.0, TIMECODE_ROW_H));
     let tc = format_time(time, rate, drop_frame, TimeDisplay::Timecode, 48000);
     let tc_rect = Rect::from_min_size(row1.min, vec2(110.0, row1.height()));
     let min = if which == Which::Program { Tick::ZERO } else { origin };
@@ -339,7 +376,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
     let dur_tc = format_time(mark_out.map(|o| o + rate.frame_duration()).unwrap_or(duration) - range_start, rate, drop_frame, TimeDisplay::Timecode, 48000);
     ui.painter().text(pos2(row1.max.x, row1.center().y), Align2::RIGHT_CENTER, &dur_tc, Tokens::timecode(), t.text_dim);
     // At compact widths, timecodes and view settings need separate rows.
-    let settings_y = row1.min.y + if stacked_controls { 26.0 } else { 0.0 };
+    let settings_y = rows.settings_y;
     let zoom_x = if stacked_controls && which == Which::Source && !separate_source_drag {
         row1.min.x
     } else if stacked_controls {
@@ -368,7 +405,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
         crate::panels::source_drag::controls(app, ui, Rect::from_min_max(pos2(zr.max.x + 6.0, settings_y), pos2(rr.min.x - 6.0, settings_y + 24.0)));
     }
     if separate_source_drag {
-        crate::panels::source_drag::controls(app, ui, Rect::from_min_size(pos2(row1.center().x - 52.0, settings_y + 26.0), vec2(104.0, 24.0)));
+        crate::panels::source_drag::controls(app, ui, Rect::from_min_size(pos2(row1.center().x - 52.0, rows.drag_y), vec2(104.0, 24.0)));
     }
     let rresp = crate::widgets::dropdown_text(ui, rr, crate::i18n::t(res.label()), &t, egui::Id::new((prefix, "res")));
     app.auto.add(&format!("{prefix}.resolution"), rr, "Select Playback Resolution");
@@ -435,15 +472,14 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
         }
     });
     // ---- mini timeline / scrub bar
-    let bar = Rect::from_min_size(pos2(rect.min.x + 14.0, settings_y + 28.0 + source_drag_h), vec2(rect.width() - 28.0, 22.0));
-    let zoom_bar = Rect::from_min_size(pos2(bar.min.x, bar.max.y + 2.0), vec2(bar.width(), 13.0));
+    let bar = Rect::from_min_size(pos2(rect.min.x + 14.0, rows.scrub_y), vec2(rect.width() - 28.0, SCRUB_ROW_H));
+    let zoom_bar = Rect::from_min_size(pos2(bar.min.x, rows.zoom_y), vec2(bar.width(), ZOOM_ROW_H));
     follow_playhead(app, which, origin, duration, time);
     time_zoom_bar(app, ui, zoom_bar, which, origin, duration, rate);
     mini_timeline(app, ui, bar, which, origin, time, duration, rate, mark_in, mark_out);
 
     // ---- transport buttons
-    let row3 = Rect::from_min_size(pos2(rect.min.x, zoom_bar.max.y + 4.0), vec2(rect.width(), 32.0));
-    transport(app, ui, row3, which);
+    transport(app, ui, rows.transport, which);
 }
 
 /// How many of a paused monitor's latest requests are remembered ([`asked_before`]): about a
@@ -895,8 +931,10 @@ fn set_transport_visible(hidden: &mut Vec<String>, command: &str, visible: bool)
     }
 }
 
-/// Width and height of a transport button.
+/// Width and height of a transport button, and how far it sits inside its row (the bottom inset is
+/// what keeps the strip's controls off the panel floor).
 const TRANSPORT_BUTTON: f32 = 28.0;
+const TRANSPORT_INSET: f32 = 2.0;
 
 fn transport(app: &mut FilmcraftApp, ui: &mut egui::Ui, row: Rect, which: Which) {
     let t = app.tokens;
@@ -1000,14 +1038,14 @@ fn transport(app: &mut FilmcraftApp, ui: &mut egui::Ui, row: Rect, which: Which)
     let mut x = row.center().x - 15.0 - total.max(TRANSPORT_BUTTON) / 2.0;
     for (index, _) in &fit.shown {
         let Some((icon, command, label)) = buttons.get(*index) else { continue };
-        let rect = Rect::from_min_size(pos2(x, row.min.y + 2.0), vec2(TRANSPORT_BUTTON, TRANSPORT_BUTTON));
+        let rect = Rect::from_min_size(pos2(x, row.min.y + TRANSPORT_INSET), vec2(TRANSPORT_BUTTON, TRANSPORT_BUTTON));
         if transport_button(app, ui, rect, prefix, *icon, command, label) {
             invoke_transport(app, ui.ctx(), which, command);
         }
         x += pitch;
     }
     if !fit.overflow.is_empty() {
-        let rect = Rect::from_min_size(pos2(x, row.min.y + 2.0), vec2(TRANSPORT_BUTTON, TRANSPORT_BUTTON));
+        let rect = Rect::from_min_size(pos2(x, row.min.y + TRANSPORT_INSET), vec2(TRANSPORT_BUTTON, TRANSPORT_BUTTON));
         let response = ui.interact(rect, egui::Id::new((prefix, "transport-more")), Sense::click()).on_hover_text(tl!("More transport controls"));
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tl!("More transport controls")));
         if response.hovered() {
@@ -1132,6 +1170,36 @@ mod tests {
 
     fn flat(w: usize, h: usize, rgba: [u8; 4]) -> Rgba {
         Rgba { w, h, px: rgba.iter().copied().cycle().take(w * h * 4).collect() }
+    }
+
+    #[test]
+    fn preview_rows_hug_the_transport_strip() {
+        for (stacked, source_drag) in [(false, false), (true, false), (true, true)] {
+            let rect = Rect::from_min_max(pos2(0.0, 0.0), pos2(531.0, 567.0));
+            let rows = control_rows(rect, stacked, source_drag);
+            let now = format!("stacked={stacked} source_drag={source_drag}");
+            // The transport row owns the panel floor, with its buttons 2 pt inside it.
+            assert!((rows.transport.max.y - rect.max.y).abs() < 0.01, "{now}");
+            let button_bottom = rows.transport.min.y + TRANSPORT_INSET + TRANSPORT_BUTTON;
+            assert!((rect.max.y - button_bottom - 2.0).abs() < 0.01, "{now}: the buttons' bottom inset");
+            // The timecode readout is the transport's neighbour, not a row away from it.
+            let timecode_to_transport = rows.transport.min.y - (rows.timecode_y + TIMECODE_ROW_H);
+            assert!((timecode_to_transport - ROW_GAP).abs() < 0.01 && timecode_to_transport <= 6.0, "{now}");
+            // What is left between the last preview row and the top of the buttons: one gap plus the
+            // buttons' inset.
+            let preview_to_buttons = rows.transport.min.y + TRANSPORT_INSET - (rows.timecode_y + TIMECODE_ROW_H);
+            assert!((preview_to_buttons - 4.0).abs() < 0.01, "{now}");
+            // The picture ends a single gap above the first preview row.
+            assert!((rows.scrub_y - ROW_GAP - rows.video_bottom).abs() < 0.01, "{now}");
+            // The rows stay ordered and never overlap.
+            assert!(rows.video_bottom <= rows.scrub_y && rows.scrub_y < rows.zoom_y, "{now}");
+            if stacked {
+                assert!(rows.zoom_y < rows.settings_y && rows.settings_y < rows.timecode_y, "{now}");
+                assert!(rows.drag_y <= rows.timecode_y, "{now}");
+            } else {
+                assert!((rows.settings_y - rows.timecode_y).abs() < 0.01, "{now}: one readout row");
+            }
+        }
     }
 
     #[test]

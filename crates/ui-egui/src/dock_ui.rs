@@ -842,22 +842,34 @@ impl FilmcraftApp {
             ("jy.tool.freeze", "定格", Icon::Camera, "clip.frameHold", json!({}), true),
             ("jy.tool.reverse", "倒放", Icon::Loop, "clip.speedDuration", json!({"reverse": true}), true),
         ];
-        let button_w = 34.0_f32;
-        let button_h = 28.0_f32.min(rect.height()).max(0.0);
-        let mut x = rect.min.x + 8.0;
+        // 对照截图的像素：按钮 36×30、图标 22 px、左内边距 12 px；组内间距 4 px、组间 8 px，
+        // 分隔线落在组间空隙正中，所以线两侧各 4 px，视觉上正好是「一组 ｜ 一组」。
+        const BUTTON_W: f32 = 36.0;
+        const BUTTON_H: f32 = 30.0;
+        const ICON_SIDE: f32 = 22.0;
+        const LEFT_PAD: f32 = 12.0;
+        const BUTTON_GAP: f32 = 4.0;
+        const GROUP_GAP: f32 = 8.0;
+        const DIVIDER_INSET: f32 = 5.0;
+        let button_h = BUTTON_H.min(rect.height()).max(0.0);
+        let mut x = rect.min.x + LEFT_PAD;
         let mut chosen: Option<(&str, serde_json::Value)> = None;
         let has_selection = !self.session.state.selection.is_empty();
         for (index, (id, label, icon, command, params, needs_selection)) in entries.iter().enumerate() {
-            // 两组细分隔线：撤销/重做 | 分割/删除 | 播放/定格/倒放。
-            if index == 2 || index == 4 {
-                let divider = Rect::from_center_size(pos2(x - 2.0, rect.center().y), egui::vec2(1.0, button_h * 0.55));
-                ui.painter().rect_filled(divider, 0.0, t.text_dim.gamma_multiply(0.3));
-            }
-            let cell = Rect::from_min_size(pos2(x, rect.center().y - button_h / 2.0), egui::vec2(button_w, button_h));
-            x = cell.max.x + 4.0;
-            if cell.max.x > rect.max.x - 2.0 {
+            if x + BUTTON_W > rect.max.x - 2.0 {
                 break;
             }
+            // 三条组间分隔线：撤销/重做 ｜ 分割/删除 ｜ 播放 ｜ 定格/倒放。
+            // 竖线 1 px，上下各留 5 px（相对按钮高），颜色走主题的 `separator`。
+            if index == 2 || index == 4 || index == 5 {
+                let divider_h = (button_h - DIVIDER_INSET * 2.0).max(1.0);
+                let divider = Rect::from_center_size(pos2(x - GROUP_GAP / 2.0, rect.center().y), egui::vec2(1.0, divider_h));
+                ui.painter().rect_filled(divider, 0.0, t.separator);
+            }
+            let cell = Rect::from_min_size(pos2(x, rect.center().y - button_h / 2.0), egui::vec2(BUTTON_W, button_h));
+            // 分组边界（撤销/重做、删除、播放之后）留 8 px，其余按钮之间 4 px。
+            let ends_group = index == 1 || index == 3 || index == 4;
+            x = cell.max.x + if ends_group { GROUP_GAP } else { BUTTON_GAP };
             // 按钮跟着命令的启用条件走，并且选区为空时删除/定格/倒放一律灰掉。
             let enabled =
                 (!needs_selection || has_selection) && filmcraft_engine::find_command(command).is_none_or(|spec| (spec.enabled)(&self.session).is_ok());
@@ -871,7 +883,7 @@ impl FilmcraftApp {
             let text = if playing { "暂停" } else { *label };
             let icon = if playing { Icon::Pause } else { *icon };
             let response = response.on_hover_text(text);
-            let icon_rect = Rect::from_center_size(cell.center(), vec2(16.0, 16.0).min(cell.size()));
+            let icon_rect = Rect::from_center_size(cell.center(), vec2(ICON_SIDE, ICON_SIDE).min(cell.size()));
             icons::paint(ui.painter(), icon_rect, icon, color);
             self.auto.add(id, cell, text);
             if enabled && response.clicked() {
