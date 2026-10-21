@@ -4,11 +4,17 @@
 //! JianyingCraft neither bundles nor redistributes any Jianying resource. The user already has
 //! these files locally, so this command only reads them: it walks the resource folders (the
 //! Windows locations below, the folders a user configured, or the `root` the caller names) to a
-//! bounded depth, classifies every file by its folder names and extension, and imports the three
-//! kinds that can become project media (audio, image, video) through the same import path as File
-//! ▸ Import. The other kinds — text, stickers, effects, transitions, captions, filters — are
-//! counted and reported only: they are template packages rather than media, so they need the
-//! user's own manual import or are not supported yet. They are never copied or rewritten.
+//! bounded depth, classifies every file by its folder names and extension, and imports what can
+//! become real project material:
+//!
+//! - audio / image / video files, through the same import path as File ▸ Import;
+//! - pictures a sticker folder holds — a sticker *is* a picture, so it becomes ordinary image
+//!   media; a sticker folder's `.json` packages are not pictures and stay counted only;
+//! - `.cube` / `.3dl` looks, through [`crate::color`]'s `lut.import`, into the project LUT library.
+//!
+//! The other kinds — text, effects, transitions, captions, non-picture stickers and non-LUT filter
+//! files — are counted and reported only: they are template packages rather than media, so they
+//! need the user's own manual import or are not supported yet. They are never copied or rewritten.
 //!
 //! Safety: symbolic links are never followed (a link in the tree cannot pull files in from outside
 //! it), the walk is bounded ([`DEPTH_LIMIT`] folder levels, [`FILE_LIMIT`] files,
@@ -24,11 +30,15 @@
 //! without an error. `categories` limits the walk to the named categories (an empty list or none =
 //! every category).
 //!
-//! Result: `{"scanned": n, "imported": [itemId], "byCategory": {"audio": n, …}, "skipped":
-//! [{"path": str, "reason": str}], "root": str?, "roots": [str], "dryRun": bool, "truncated":
-//! bool, "unsupported": [{"category": str, "count": n, "message": str}], "warnings": [str]}`.
-//! `scanned` counts the files in the requested categories; `byCategory` always has one entry per
-//! category.
+//! Result: `{"scanned": n, "imported": [itemId], "luts": [lutId], "importedLuts": n, "byCategory":
+//! {"audio": n, …}, "skipped": [{"path": str, "reason": str}], "root": str?, "roots": [str],
+//! "dryRun": bool, "truncated": bool, "unsupported": [{"category": str, "count": n, "message":
+//! str}], "warnings": [str]}`. `imported` lists the project items the run added (stickers as
+//! pictures included); `luts` lists the LUT library ids the run resolved, `importedLuts` their
+//! number (a LUT whose text the project already has is reused, so its id is reported and the
+//! library does not grow). `scanned` counts the files in the requested categories; `byCategory`
+//! always has one entry per category, and `unsupported` counts only the files that were *not*
+//! imported (so `byCategory.sticker` can be 2 while `unsupported` reports 1).
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -107,10 +117,37 @@ impl Category {
         Self::ALL.into_iter().find(|c| c.key().eq_ignore_ascii_case(name))
     }
 
-    /// The categories a media import can hold; the others are only counted.
+    /// The categories whose files are project media (audio / image / video). Stickers are only
+    /// media when the file is a picture, and filters only become a LUT: see [`import_kind`].
     pub const fn importable(self) -> bool {
         matches!(self, Category::Audio | Category::Image | Category::Video)
     }
+}
+
+/// What one scanned file becomes: project media, a project LUT, or a report entry only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImportKind {
+    /// Imported as project media (audio / image / video, or a sticker that is a picture).
+    Media,
+    /// Imported into the project LUT library through `lut.import` (`.cube` / `.3dl`).
+    Lut,
+    /// Counted and reported in `unsupported`; never imported.
+    CountOnly,
+}
+
+/// How the file at `path`, classified as `category`, is used. A sticker folder holds a picture
+/// (import it as image media) beside `.json` packages (report only); a filter folder holds
+/// `.cube` / `.3dl` looks (import into the LUT library) beside everything else (report only).
+pub fn import_kind(category: Category, path: &Path) -> ImportKind {
+    let ext = extension(path);
+    if category == Category::Sticker {
+        // Stickers that are pictures go in as ordinary image media; `.json` / other packages don't.
+        return if media_family(&ext) == Some(Category::Image) { ImportKind::Media } else { ImportKind::CountOnly };
+    }
+    if category.importable() {
+        return ImportKind::Media;
+    }
+    if category == Category::Filter && LUT_EXTS.contains(&ext.as_str()) { ImportKind::Lut } else { ImportKind::CountOnly }
 }
 
 /// Audio formats Jianying downloads that our importer may not read yet: still audio, so the user
@@ -119,6 +156,8 @@ const AUDIO_EXTRAS: &[&str] = &["wma", "mka", "amr", "ape", "caf"];
 const CAPTION_EXTS: &[&str] = &["srt", "ass", "ssa", "vtt", "sbv", "lrc"];
 const TEXT_EXTS: &[&str] = &["txt", "rtf", "md", "doc", "docx", "pdf"];
 const FILTER_EXTS: &[&str] = &["cube", "lut", "3dl", "look"];
+/// The filter files `lut.import` can read (`filmcraft_color::LutFormat::from_path`).
+const LUT_EXTS: &[&str] = &["cube", "3dl"];
 
 /// Folder names (matched anywhere in a name, case-insensitive) and what they hold. Media hints
 /// come first so that `audio_effects` is audio; the nearest folder wins in [`dir_hint`].
@@ -208,10 +247,10 @@ fn non_media_ext(ext: &str) -> Option<Category> {
 }
 
 /// Classify `path` inside `root`: a media extension decides audio / image / video (a picture in a
-/// sticker folder is a sticker, though — stickers are pictures the project cannot use as media),
-/// and otherwise the nearest folder name decides, then a caption / text / filter extension. JSON
-/// and other packages are only recognised through their folder (`effect`, `transition`, `text`…),
-/// because a bare `.json` says nothing about what it is.
+/// sticker folder is classified as a sticker, though — [`import_kind`] then imports it as image
+/// media), and otherwise the nearest folder name decides, then a caption / text / filter extension.
+/// JSON and other packages are only recognised through their folder (`effect`, `transition`,
+/// `text`…), because a bare `.json` says nothing about what it is.
 pub fn classify(root: &Path, path: &Path) -> Category {
     let ext = extension(path);
     let hint = dir_hint(root, path);
@@ -252,8 +291,12 @@ pub struct Scan {
     pub looked_at: usize,
     pub truncated: bool,
     pub counts: BTreeMap<Category, usize>,
-    /// Media files to import, in walk order.
+    /// Files counted but not imported (the per-category part of `unsupported`).
+    pub counted_only: BTreeMap<Category, usize>,
+    /// Media files to import, in walk order (sticker pictures included).
     pub media: Vec<PathBuf>,
+    /// `.cube` / `.3dl` looks to import into the LUT library, in walk order.
+    pub luts: Vec<PathBuf>,
     pub skipped: Vec<Skipped>,
     pub warnings: Vec<String>,
 }
@@ -367,8 +410,10 @@ fn walk(root: &Path, dir: &Path, depth: usize, filter: &[Category], out: &mut Sc
             continue;
         }
         *out.counts.entry(category).or_insert(0) += 1;
-        if category.importable() {
-            out.media.push(path);
+        match import_kind(category, &path) {
+            ImportKind::Media => out.media.push(path),
+            ImportKind::Lut => out.luts.push(path),
+            ImportKind::CountOnly => *out.counted_only.entry(category).or_insert(0) += 1,
         }
     }
 }
@@ -477,6 +522,15 @@ fn import_media(s: &mut Session, path: &Path) -> Result<ItemId> {
     crate::commands::import_bytes(s, &p, bytes.into(), None).map_err(|e| EngineError::Other(format!("{p}: {e}")))
 }
 
+/// Import one look into the project LUT library through the command the LUT panel itself uses
+/// (`lut.import`). `lut.import` reuses an entry whose text the library already holds, so the id
+/// comes back either way and rescanning a folder never grows the library.
+fn import_lut(s: &mut Session, path: &Path) -> Result<String> {
+    let p = path.to_string_lossy().into_owned();
+    let r = s.execute("lut.import", json!({ "path": p })).map_err(|e| EngineError::Other(format!("{p}: {e}")))?;
+    r.get("id").and_then(Value::as_str).map(str::to_string).ok_or_else(|| EngineError::Other(format!("{p}: lut.import returned no id")))
+}
+
 /// `categories` param: the categories to walk; absent, null or empty means all.
 fn categories_p(p: &Value, cmd: &str) -> Result<Vec<Category>> {
     let Some(value) = p.get("categories") else { return Ok(Vec::new()) };
@@ -502,7 +556,8 @@ fn categories_p(p: &Value, cmd: &str) -> Result<Vec<Category>> {
     Ok(out)
 }
 
-/// `file.importJianyingResources`: scan the user's Jianying folders and import their media.
+/// `file.importJianyingResources`: scan the user's Jianying folders and import their media, their
+/// sticker pictures and their LUT looks.
 pub fn run(s: &mut Session, p: &Value) -> Result<Value> {
     let dry_run = bool_p(p, "dryRun").unwrap_or(false);
     let filter = categories_p(p, COMMAND)?;
@@ -533,6 +588,7 @@ pub fn run(s: &mut Session, p: &Value) -> Result<Value> {
     warnings.append(&mut found.warnings);
 
     let mut imported: Vec<u64> = Vec::new();
+    let mut luts: Vec<String> = Vec::new();
     let mut skipped = std::mem::take(&mut found.skipped);
     if !dry_run {
         let mut known = project_paths(&s.project);
@@ -546,6 +602,16 @@ pub fn run(s: &mut Session, p: &Value) -> Result<Value> {
                 Err(e) => skipped.push(Skipped { path: path.to_string_lossy().into_owned(), reason: e.to_string() }),
             }
         }
+        // Looks go into the LUT library, one at a time: a file `lut.import` refuses is reported
+        // and the rest still import. A LUT the library already holds comes back with its id, but
+        // is listed once per run.
+        for path in &found.luts {
+            match import_lut(s, path) {
+                Ok(id) if !luts.contains(&id) => luts.push(id),
+                Ok(_) => {}
+                Err(e) => skipped.push(Skipped { path: path.to_string_lossy().into_owned(), reason: e.to_string() }),
+            }
+        }
     }
 
     let scanned = found.scanned();
@@ -554,10 +620,12 @@ pub fn run(s: &mut Session, p: &Value) -> Result<Value> {
     for c in Category::ALL {
         let n = found.counts.get(&c).copied().unwrap_or(0);
         by_category.insert(c.key().to_string(), json!(n));
-        if n > 0 && !c.importable() {
+        // Only the files that were not imported are unsupported (a sticker folder's pictures are).
+        let only = found.counted_only.get(&c).copied().unwrap_or(0);
+        if only > 0 {
             unsupported.push(json!({
                 "category": c.key(),
-                "count": n,
+                "count": only,
                 "message": "这类资源需要用户手动导入/暂不支持自动导入",
             }));
         }
@@ -570,6 +638,8 @@ pub fn run(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({
         "scanned": scanned,
         "imported": imported,
+        "luts": luts,
+        "importedLuts": luts.len(),
         "byCategory": Value::Object(by_category),
         "skipped": skipped,
         "root": root,

@@ -600,6 +600,6 @@
 ## 产品决定（2026-10-22）：不造假入口，改为「一键导入本机剪映资源」
 
 - [x] **移除**与"智能体剪片"无关的入口：AI 编辑、云素材、官方素材、即梦、数字人、智能包装、模板商城、插件市场（rail 与顶栏都不再出现；顶栏一级 Tab 从 13 收到 **9** 个，`SHELL_TABS` 与顶栏数组同步）。
-- [x] **新增 `file.importJianyingResources`**（命令目录 703）：扫描本机剪映目录（`%LOCALAPPDATA%\JianyingPro\User Data`、`Resources`、`%APPDATA%\JianyingPro`，或 `JIANYINGCRAFT_JIANYING_ROOT`），按 audio/image/video/text/sticker/effect/transition/caption/filter 分类；**只导入**音频/图片/视频（用户自己的文件，不复制官方资源、不再分发），其余只统计并提示手动导入。安全：不跟随符号链接、深度≤4、≤20000 文件、单文件≤2GiB。
+- [x] **新增 `file.importJianyingResources`**（命令目录 703）：扫描本机剪映目录（`%LOCALAPPDATA%\JianyingPro\User Data`、`Resources`、`%APPDATA%\JianyingPro`，或 `JIANYINGCRAFT_JIANYING_ROOT`），按 audio/image/video/text/sticker/effect/transition/caption/filter 分类；**导入**音频/图片/视频 + 贴纸图片（作为叠加媒体）+ `.cube`/`.3dl` LUT（走 `lut.import`）；文本/特效/转场/字幕只统计并提示手动导入。不复制官方资源、不再分发。安全：不跟随符号链接、深度≤4、≤20000 文件、单文件≤2GiB。
 - [x] UI：素材库标题行新增「剪映资源」按钮（`project.importJianying`），一键扫描并导入，状态栏汇报"已导入 N 个媒体文件；其余类别请手动导入"。
 - [x] 测试：engine `jianying_resources` 8 条（dry-run 计数、导入、去重、缺目录、深度/大小上限、贴纸归类）；UI `layout_ui` 29、`shell_popover_ui` 2、`project_panel_ui` 24、`ia_acceptance_ui` 9 全绿。

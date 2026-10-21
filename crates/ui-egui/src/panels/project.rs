@@ -510,10 +510,11 @@ fn body(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View, actions
                     match crate::menus::invoke(app, &ctx, "file.importJianyingResources", json!({})) {
                         Ok(done) => {
                             let imported = done["imported"].as_array().map_or(0, Vec::len);
+                            let luts = done["luts"].as_array().map_or(0, Vec::len);
                             let by = &done["byCategory"];
                             app.ui.status = format!(
-                                "已从剪映目录导入 {imported} 个媒体文件（音频 {} / 图片 {} / 视频 {}）；文本/贴纸/特效/转场/字幕/滤镜请手动导入",
-                                by["audio"], by["image"], by["video"]
+                                "已从剪映目录导入 {imported} 个媒体文件（音频 {} / 图片 {} / 视频 {} / 贴纸 {}）与 {luts} 个 LUT；文本/特效/转场/字幕请手动导入",
+                                by["audio"], by["image"], by["video"], by["sticker"]
                             );
                         }
                         Err(e) => app.ui.status = format!("剪映资源导入失败：{e}"),
