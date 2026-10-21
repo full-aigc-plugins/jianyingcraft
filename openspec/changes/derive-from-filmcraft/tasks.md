@@ -592,8 +592,15 @@
       `new URL('../', import.meta.url)` 从 `/TOKEN/connect.js` 推出了根目录。改为 `'./'` 后
       `poll` 应带 token。**修完后的复测脚本本身崩了**（adapter 调用出现
       `__wbindgen_malloc` 异常），因此浏览器级结论仍未取得，留待下一轮用干净脚本复测。
-- [ ] **ZCode 实机验收仍未完成**：本机无 `zcode` 可执行（`Get-Command zcode` 为空）；需要安装真实 ZCode 宿主后
-      按 `docs/runbooks/three-host-install.md` 注册 `jianyingcraft-editor` MCP、跑 `command_run`、截三张画面证据。不得用占位 npm 包代替。
+- [x] **ZCode 实机验收完成（2026-10-22）**：真实宿主是 **ZCode 3.16.2.8769**（`D:\Program Files\ZCode\ZCode.exe`），
+      自带 CLI **0.17.0**（`resources\glm\zcode.cjs`）。通过本地 filesystem marketplace 安装插件
+      （`jianyingcraft@jianyingcraft-local`，manifest 校验通过）；`zcode -p` 列出 **14 个 MCP 工具**并实际调用
+      `open_editor` / `editor_status` / `command_run`。CLI 无头模式不会自己渲染 MCP Apps 面板，所以验收脚本先把
+      `editorUrl` 写入文件并 sleep，外部 Chrome 加载后 `ready=true`，`command_run sequence.inspect` 返回演示工程 JSON
+      （`{"audio":[{"id":18,…}]…`）。证据：`docs/runbooks/evidence/host-acceptance/ZCODE_20261022.json`、
+      截图 `_ref/zcode-panel-screen.png`（Chrome 里的面板 + ZCode 窗口）。
+- [ ] **ZCode 遗留缺陷**：面板 `screenshot` 工具在 ZCode 里报 `bridge queue is full`，且 MCP schema 没有 `path` 参数；
+      另：CLI 在纯 node 宿主上需要把 `resources\config\provider\zcode-builtin.json` 复制到 `D:\config\provider\`（打包路径怪癖，仅告警）。
 
 > **2026-10-19 决议（已被后续突破，保留为历史）**：浏览器面板接线**暂停**。已定位并修复两处真实缺陷
 > （`dist` 缺 `ui/engine` 回退、`connect.js` 的 token 前缀），但"命令在页面 wasm 里执行"

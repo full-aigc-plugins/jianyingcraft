@@ -457,3 +457,48 @@ kimi -p "你接入了 jianyingcraft-editor MCP。列出全部工具名，并调�
 生成到 `runtime/panel-evidence/editor-page.png`，显示「引擎已加载 / 面板桥就绪 · 703 命令」。
 注意：这是 headless Chrome 打开的面板页，不是 Kimi 自带的 webview（Kimi CLI 没有 GUI）。
 证据文件：`docs/runbooks/evidence/host-acceptance/KIMI_20261022.json`。
+## 9. ZCode（2026-10-22 实测通过）
+
+本机 ZCode 是**桌面应用**，同时带 CLI：
+
+```powershell
+# 桌面版 3.16.2.8769，CLI 0.17.0（在应用资源里）
+& 'D:\Program Files\ZCode\resources\glm\zcode.cjs' --version    # 0.17.0
+```
+
+1) 用一个本地 marketplace 指向插件仓（`source: filesystem` + `cachePath`，两者都要，否则报
+   `Bundled plugin cache directory missing`）：
+
+```jsonc
+// E:\workspaces\...\_zcode-marketplace\marketplace.json
+{"name":"jianyingcraft-local","plugins":[{"name":"jianyingcraft","version":"0.1.0",
+  "source":"filesystem",
+  "cachePath":"E:\\workspaces\\...\\jianyingcraft-plugin"}]}
+```
+
+```powershell
+zcode plugins marketplace add E:\workspaces\...\_zcode-marketplace
+zcode plugins install jianyingcraft@jianyingcraft-local -s user
+zcode plugins validate E:\workspaces\...\jianyingcraft-plugin   # Plugin manifest is valid
+```
+
+2) CLI 在纯 node 宿主上找不到内置 provider 配置（它会找 `D:\config\provider\zcode-builtin.json`），
+   复制一份即可（只影响 CLI 提示，不影响功能）：
+
+```powershell
+mkdir D:\config\provider
+copy 'D:\Program Files\ZCode\resources\config\provider\zcode-builtin.json' D:\config\provider\
+```
+
+3) 验收提示词（无头 CLI 不会自己渲染 MCP Apps 面板，必须外部浏览器挂载）：
+
+```powershell
+zcode -p "1) open_editor 拿 editorUrl；2) 写入 _ref\zcode-editor-url.txt；3) sleep 40；\
+4) 轮询 editor_status 直到 ready=true；5) command_run sequence.inspect 返回前 200 字符" --json
+```
+
+在 `sleep` 期间用外部 Chrome 打开 `editorUrl`，面板开始轮询后 `ready=true`，
+`sequence.inspect` 返回演示工程（642 帧、3 视频轨、3 音频轨、4 个 marker）。
+证据：`docs/runbooks/evidence/host-acceptance/ZCODE_20261022.json` 与 `zcode-panel.png`。
+
+遗留缺陷：面板 `screenshot` 工具在 ZCode 里报 `bridge queue is full`，且没有 `path` 参数。

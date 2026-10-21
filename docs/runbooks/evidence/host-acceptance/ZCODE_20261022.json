@@ -1,0 +1,40 @@
+{
+  "schema": "jianyingcraft-host-acceptance/zcode/v1",
+  "observed_at": "2026-10-22",
+  "host": {
+    "name": "zcode",
+    "desktop_version": "3.16.2.8769",
+    "desktop_exe": "D:\\Program Files\\ZCode\\ZCode.exe",
+    "cli_version": "0.17.0",
+    "cli_entry": "D:\\Program Files\\ZCode\\resources\\glm\\zcode.cjs"
+  },
+  "plugin": {
+    "installed_as": "jianyingcraft@jianyingcraft-local",
+    "marketplace": "local filesystem marketplace pointing at jianyingcraft-plugin",
+    "manifest": ".zcode-plugin/plugin.json",
+    "adapter": "ui/dist/adapter.mjs",
+    "tools": 14
+  },
+  "live_call": {
+    "session": "sess_d951d252-eb5b-42cc-ac1d-f42f925c5d18 / sess_d557fa13-d76d-4455-ad05-9b4e929ea43d",
+    "tools_listed": [
+      "open_editor", "open_browser_editor", "editor_status", "command_list",
+      "command_run", "inspect", "open_file", "save_project", "save_file",
+      "list_files", "screenshot", "engine_diagnose", "engine_cli_list", "engine_cli_run"
+    ],
+    "command": "sequence.inspect",
+    "result_excerpt": "{\"audio\":[{\"enabled\":true,\"id\":18,\"items\":[{\"clip\":30,\"duration\":1260755496000,\"durationFrames\":119,\"effects\":[{\"effect\":\"volume\",\"enabled\":true,\"masks\":0,\"params\":{\"bypass\":{\"keyframes\":0,\"value\":\"Bo",
+    "ready_after_browser": true,
+    "note": "ZCode's headless CLI does not render the MCP Apps panel, so open_editor alone never flips ready. The acceptance prompt writes the editorUrl to a file and sleeps; an external Chrome loads it; the panel then polls, ready becomes true, and command_run succeeds."
+  },
+  "screen_evidence": {
+    "path": "_ref/zcode-panel-screen.png",
+    "shows": "Chrome window running the jianyingcraft panel (Properties / Essential Graphics / Text docks and timeline) next to the ZCode desktop window",
+    "captured_by": "System.Windows.Forms screen capture on 2026-10-22"
+  },
+  "gaps": [
+    "The panel screenshot tool (screenshot) fails with 'bridge queue is full' inside ZCode, and its MCP schema has no path argument. Needs investigation.",
+    "The headless CLI needs an external browser to mount the panel; the desktop app may host it directly but that was not exercised.",
+    "ZCode CLI on a plain node host needs the bundled provider config copied to D:\\config\\provider\\zcode-builtin.json (packaging quirk, warn only)."
+  ]
+}
