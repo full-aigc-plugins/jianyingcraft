@@ -1197,7 +1197,7 @@ pub fn freeform_view(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, v: &
                 ui.painter().text(br.center(), Align2::CENTER_CENTER, format!("×{n}"), Tokens::ui(10.0), Color32::WHITE);
                 app.auto.add(&format!("{}.stack.{s}", v.prefix), br, &format!("Stack of {n}"));
             }
-            item_interactions(app, ui, v, &resp, ItemId(c.item), &kind, actions, false, true);
+            item_interactions(app, ui, v, &resp, ItemId(c.item), &kind, actions, false, false);
             // Escape puts the cards back and drops nothing until the button comes up (#580); egui
             // also ends the drag on Escape, so it arrives as a stop as often as during the drag
             let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
