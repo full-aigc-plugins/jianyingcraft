@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use super::timeline::Layout;
 use crate::FilmcraftApp;
 use crate::dock::PanelKind;
-use crate::icons::Icon;
+use crate::icons::{self, Icon};
 use crate::theme::Tokens;
 
 /// Height of one caption track row.
@@ -21,6 +21,42 @@ pub const ROW_H: f32 = 28.0;
 /// Caption block colours (fill, selected fill).
 const FILL: Color32 = Color32::from_rgb(0x6b, 0x4f, 0x8f);
 const FILL_SEL: Color32 = Color32::from_rgb(0x8c, 0x6c, 0xb4);
+
+// ---------------------------------------------------------------------------
+// 剪映式字幕轨头：与 `timeline.rs` 的 V1/A1 徽标同尺寸、同圆角、同字体
+// ---------------------------------------------------------------------------
+
+/// 字幕徽标尺寸（与视频/音频徽标一致）：26×18，左侧 4 px 圆角。
+const BADGE_W: f32 = 26.0;
+const BADGE_H: f32 = 18.0;
+/// 字幕徽标底色：沿用字幕块的紫色系（`#6a4b8f`）。关掉轨道输出时整体压暗。
+const JY_BADGE_CAPTION: Color32 = Color32::from_rgb(0x6a, 0x4b, 0x8f);
+/// 类型小字右侧给两个图标留的最小宽度：12 px 命中框 + 4 px 间距。
+const ICON_ROW_W: f32 = 2.0 * 12.0 + 4.0;
+
+/// 一行图标的命中框与间距：优先 12 px 框 + 4 px 间距（框内画 11 px 图标）；轨道头被拖窄时
+/// 逐级收窄到 11 px 框 / 4 px、11 px 框 / 3 px，最后才退到 10 px 框 / 2 px。
+/// `None` 表示连最窄的一档都放不下。
+fn icon_row(count: usize, space: f32) -> Option<(f32, f32)> {
+    if count == 0 {
+        return None;
+    }
+    let n = count as f32;
+    [(12.0f32, 4.0f32), (11.0, 4.0), (11.0, 3.0), (10.0, 2.0)].into_iter().find(|(b, g)| n * b + (n - 1.0) * g <= space)
+}
+
+/// 徽标右侧的图标按钮（照 `timeline.rs` 的 `jy_icon`）：`r` 是命中框，框内画比命中框小 1 px
+/// 的图标（12 px 框 → 11 px 图标），悬停铺 `hover`。
+fn badge_icon(ui: &mut egui::Ui, r: Rect, clip: Rect, icon: Icon, color: Color32, t: &Tokens, id: egui::Id) -> egui::Response {
+    let painter = ui.painter().with_clip_rect(clip);
+    let resp = ui.interact(r.intersect(clip), id, Sense::click());
+    if resp.hovered() {
+        painter.rect_filled(r, 2.0, t.hover);
+    }
+    let glyph = (r.width().min(r.height()) - 1.0).max(6.0);
+    icons::paint(&painter, Rect::from_center_size(r.center(), vec2(glyph, glyph)), icon, color);
+    resp
+}
 
 /// Row rects (full width incl. header) for each caption track, top first.
 pub fn rows(area: Rect, n: usize) -> Vec<Rect> {
@@ -76,20 +112,19 @@ pub fn paint(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, area: Re
         let lane = Rect::from_min_max(pos2(content.min.x, row.min.y), pos2(content.max.x, row.max.y));
         painter.rect_filled(lane, 0.0, t.caption_track_bg);
         painter.line_segment([pos2(row.min.x, row.max.y - 0.5), pos2(row.max.x, row.max.y - 0.5)], Stroke::new(1.0, t.tl_bg));
-        // header
+        // header：剪映式徽标（26×18、左 4 px 圆角、10 px 白字）、类型小字与右对齐的一行图标。
+        // 字幕行固定 28 px（低于 40 px 的两行门槛），因此沿用 V/A 矮行上的降级：只保留单行，
+        // 图标用 `icon_row` 逐级收窄，类型小字/轨名放不下就让位——绝不画到相邻行。
         let label = format!("C{}", i + 1);
         let hrect = Rect::from_min_max(row.min, pos2(row.min.x + hw, row.max.y));
+        // 活动轨道：这一轨里有选中的字幕（V/A 用源补丁或选中片段判定，字幕轨没有源补丁）。
+        let active = tr.captions.iter().any(|c| sel.contains(&c.id));
         // 与 `timeline.track.V1.header` 同名的自动化 id，便于断言字幕头与视频轨头等宽。
         app.auto.add(&format!("timeline.captionTrack.{label}.header"), hrect, &tr.name);
-        painter.rect_filled(hrect, 0.0, t.tl_header_bg);
-        painter.line_segment([pos2(hrect.min.x, hrect.max.y - 0.5), pos2(hrect.max.x, hrect.max.y - 0.5)], Stroke::new(1.0, t.separator));
-        let badge = Rect::from_min_size(pos2(hrect.min.x + 13.0, row.min.y + 3.0), vec2(24.0, ROW_H - 6.0));
-        painter.rect_filled(badge, 3.0, if tr.enabled { FILL } else { t.field_bg });
-        painter.text(badge.center(), Align2::CENTER_CENTER, &label, Tokens::semibold(10.5), Color32::WHITE);
-        app.auto.add(&format!("timeline.captionTrack.{label}"), badge, &tr.name);
+        // 先建 header 的响应，徽标悬停与右键菜单都复用它（图标按钮随后注册，压在最上层）。
+        let hresp = ui.interact(hrect, egui::Id::new(("cap-header", tr.id.0)), Sense::click());
         // right-click the header: delete this track or every empty caption track (registered
         // before the lock / eye toggles so those stay on top)
-        let hresp = ui.interact(hrect, egui::Id::new(("cap-header", tr.id.0)), Sense::click());
         hresp.context_menu(|ui| {
             for (key, text, cmd, p) in [
                 ("delete", tl!("Delete Caption Track"), "captions.deleteTrack", json!({"track": tr.id.0})),
@@ -104,45 +139,81 @@ pub fn paint(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, area: Re
                 }
             }
         });
-        let lock_r = Rect::from_center_size(pos2(hrect.min.x + 49.0, row.center().y), vec2(18.0, 18.0));
-        let lresp = crate::widgets::icon_toggle(
+        painter.rect_filled(hrect, 0.0, if active { t.row_selected } else { t.tl_header_bg });
+        painter.line_segment([pos2(hrect.min.x, hrect.max.y - 0.5), pos2(hrect.max.x, hrect.max.y - 0.5)], Stroke::new(1.0, t.separator));
+        // ---- 徽标：与 V/A 同尺寸、同圆角；字幕轨的紫色，关掉输出时压暗。
+        let badge = Rect::from_min_size(pos2(hrect.min.x + 2.0, row.center().y - BADGE_H / 2.0), vec2(BADGE_W, BADGE_H));
+        let round_left = egui::CornerRadius { nw: 4, ne: 0, sw: 4, se: 0 };
+        painter.rect_filled(badge, round_left, if tr.enabled { JY_BADGE_CAPTION } else { JY_BADGE_CAPTION.gamma_multiply(0.45) });
+        if hresp.hover_pos().is_some_and(|p| badge.contains(p)) {
+            painter.rect_filled(badge, round_left, Color32::from_rgba_unmultiplied(0xff, 0xff, 0xff, 0x1c));
+        }
+        // 活动轨道：徽标描 1 px 白边（行底已铺成 `row_selected`），与 V/A 一致。
+        if active {
+            painter.rect_stroke(badge, round_left, Stroke::new(1.0, Color32::WHITE), StrokeKind::Inside);
+        }
+        painter.text(badge.center(), Align2::CENTER_CENTER, &label, Tokens::semibold(10.0), Color32::WHITE);
+        // `timeline.captionTrack.C1` 是旧版徽标的只读别名，继续保留；新增 `timeline.track.C1.badge`
+        // 与 V/A 的命名习惯对齐。
+        app.auto.add(&format!("timeline.captionTrack.{label}"), badge, &tr.name);
+        app.auto.add(&format!("timeline.track.{label}.badge"), badge, &label);
+
+        // ---- 类型小字「字幕」：先给两个图标留足 28 px，余下的宽度才给文字；窄头自动省略。
+        let right = hrect.max.x - 3.0;
+        let kind_x = badge.max.x + 3.0;
+        // 复用已有词条（`Subtitle` → 中文「字幕」），不新增未翻译的字面量。
+        let kind_text = tl!("Subtitle");
+        let galley = painter.layout_no_wrap(kind_text.to_owned(), Tokens::ui(10.0), t.text_dim);
+        let kind_room = (right - ICON_ROW_W - 3.0 - kind_x).max(0.0);
+        let kind_w = galley.size().x.min(kind_room);
+        let show_kind = kind_w > 1.0;
+        let kind_r = Rect::from_min_size(pos2(kind_x, badge.min.y), vec2(if show_kind { kind_w } else { 0.0 }, BADGE_H));
+        if show_kind {
+            painter.with_clip_rect(kind_r).galley(pos2(kind_r.min.x, kind_r.center().y - galley.size().y / 2.0), galley, t.text_dim);
+        }
+
+        // ---- 右侧一行图标：锁 + 眼睛，11 px、右对齐（12 px 命中框 / 4 px 间距）。
+        let space = (right - kind_r.max.x - 3.0).max(0.0);
+        let (box_w, gap) = icon_row(2, space).unwrap_or((10.0, 1.0));
+        let x0 = (right - 2.0 * box_w - gap).max(badge.max.x + 2.0);
+        let slot = |i: usize| Rect::from_min_size(pos2(x0 + i as f32 * (box_w + gap), badge.center().y - box_w / 2.0), vec2(box_w, box_w));
+        let lock_r = slot(0);
+        let lresp = badge_icon(
             ui,
             lock_r,
+            hrect,
             if tr.locked { Icon::Lock } else { Icon::Unlock },
-            true,
+            if tr.locked { t.icon_active } else { t.text_dim },
             t,
             egui::Id::new(("cap-lock", tr.id.0)),
-            Some(if tr.locked { t.icon_active } else { t.text_dim }),
         );
         app.auto.add(&format!("timeline.captionTrack.{label}.locked"), lock_r, "Toggle Caption Track Lock");
         if lresp.clicked() {
             actions.push(("captions.setTrack".into(), json!({"track": tr.id.0, "locked": !tr.locked})));
         }
-        let eye_r = Rect::from_center_size(pos2(hrect.min.x + 73.0, row.center().y), vec2(18.0, 18.0));
-        let eresp = crate::widgets::icon_toggle(
+        let eye_r = slot(1);
+        let eresp = badge_icon(
             ui,
             eye_r,
+            hrect,
             if tr.enabled { Icon::Eye } else { Icon::EyeOff },
-            true,
+            if tr.enabled { t.text_dim } else { t.text_faint },
             t,
             egui::Id::new(("cap-eye", tr.id.0)),
-            Some(t.text_dim),
         );
         app.auto.add(&format!("timeline.captionTrack.{label}.enabled"), eye_r, "Toggle Caption Track Output");
         if eresp.clicked() {
             actions.push(("captions.setTrack".into(), json!({"track": tr.id.0, "enabled": !tr.enabled})));
         }
-        // 96 px 的紧凑头已被 badge/锁/眼睛占满，名字放不下就只留 badge（名称仍见 Text 面板的
-        // Captions 页）；宽头照旧在右侧列出“名称 · 格式”。
+
+        // 96 px 的紧凑头已被徽标/类型小字/锁/眼睛占满，名字放不下就只留徽标（名称仍见 Text
+        // 面板的 Captions 页）；宽头照旧在类型小字与图标之间列出“名称 · 格式”。
         if hw > super::timeline::COMPACT_HEADER_W {
             let name = format!("{} · {}", tr.name, crate::i18n::t(tr.format.label()));
-            painter.with_clip_rect(Rect::from_min_max(pos2(hrect.min.x + 86.0, row.min.y), pos2(hrect.max.x - 4.0, row.max.y))).text(
-                pos2(hrect.min.x + 90.0, row.center().y),
-                Align2::LEFT_CENTER,
-                name,
-                Tokens::ui(11.0),
-                t.text_dim,
-            );
+            let name_r = Rect::from_min_max(pos2(kind_r.max.x + 6.0, row.min.y), pos2(x0 - 3.0, row.max.y));
+            if name_r.width() >= 22.0 {
+                painter.with_clip_rect(name_r).text(pos2(name_r.min.x, row.center().y), Align2::LEFT_CENTER, name, Tokens::ui(11.0), t.text_dim);
+            }
         }
         // caption blocks
         let p = painter.with_clip_rect(lane);

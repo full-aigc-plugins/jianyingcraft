@@ -303,6 +303,12 @@ fn dragging_a_clip_near_the_primary_track_lands_on_it() {
 #[test]
 fn jianying_track_badges_sit_at_the_left_of_their_row() {
     let mut d = Driver::sized(egui::vec2(1280.0, 1024.0));
+    // 字幕轨头也统一成同一枚徽标：加一条 C1（并选中一条字幕，走活动行的白边/行底高亮），
+    // 和 V1/A1 并排断言。
+    d.exec("captions.newTrack", json!({"format": "Subtitle", "name": "C1"}));
+    let cap = d.exec("captions.add", json!({"track": "C1", "text": "Hi", "seconds": 1.0}))["caption"].as_u64().expect("a caption");
+    d.exec("captions.select", json!({"captions": [cap]}));
+    d.frames(4);
     for label in ["V1", "A1"] {
         let header = d.rect(&format!("timeline.track.{label}.header"));
         let badge = d.rect(&format!("timeline.track.{label}.badge"));
@@ -332,6 +338,25 @@ fn jianying_track_badges_sit_at_the_left_of_their_row() {
     // 视频轨在音频轨上方：V1 的徽标比 A1 高。
     let (v1, a1) = (d.rect("timeline.track.V1.badge"), d.rect("timeline.track.A1.badge"));
     assert!(v1[1] < a1[1], "V1 badge y {} must be above A1 badge y {}", v1[1], a1[1]);
+
+    // 字幕轨头：同为 26×18、贴头左 2 px 的徽标（C1），旧的 `timeline.captionTrack.C1`
+    // 只读别名保留同一个矩形；锁 / 眼睛是徽标右侧、与徽标同一条中心线的 11 px 图标。
+    let cheader = d.rect("timeline.captionTrack.C1.header");
+    let cbadge = d.rect("timeline.track.C1.badge");
+    eprintln!("1280x1024 C1: header = {cheader:?}, badge = {cbadge:?}");
+    assert!(cheader[2] > 0.0 && cheader[2] <= MAX_HEADER_W, "C1 header is {:.1} px wide", cheader[2]);
+    assert!((cbadge[2] - 26.0).abs() < 0.5, "C1 badge is {:.1} px wide, want 26", cbadge[2]);
+    assert!((cbadge[3] - 18.0).abs() < 0.5, "C1 badge is {:.1} px high, want 18", cbadge[3]);
+    assert!((cbadge[0] - cheader[0] - 2.0).abs() < 0.5, "C1 badge starts at x {:.1}, want the header's left + 2", cbadge[0]);
+    assert!(cbadge[1] >= cheader[1] - 0.5 && cbadge[1] + cbadge[3] <= cheader[1] + cheader[3] + 0.5, "C1 badge {cbadge:?} leaves its row {cheader:?}");
+    assert_eq!(cbadge, d.rect("timeline.captionTrack.C1"), "the legacy caption badge alias keeps the same rect");
+    for id in ["timeline.captionTrack.C1.locked", "timeline.captionTrack.C1.enabled"] {
+        let r = d.rect(id);
+        eprintln!("1280x1024 C1: {id} -> {r:?}");
+        assert!(r[0] >= cbadge[0] + cbadge[2], "{id} starts at x {:.1}, left of the C1 badge's right edge {:.1}", r[0], cbadge[0] + cbadge[2]);
+        assert!(r[1] >= cheader[1] - 0.5 && r[1] + r[3] <= cheader[1] + cheader[3] + 0.5, "{id} leaves its row: {r:?} vs {cheader:?}");
+        assert!((r[1] + r[3] / 2.0 - (cbadge[1] + cbadge[3] / 2.0)).abs() < 1.0, "{id} is not on the badge's centre line: {r:?} vs {cbadge:?}");
+    }
 
     if std::env::var_os("JY_HEADER_PNG").is_some() {
         d.frames(2);
