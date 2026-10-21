@@ -603,3 +603,10 @@
 - [x] **新增 `file.importJianyingResources`**（命令目录 703）：扫描本机剪映目录（`%LOCALAPPDATA%\JianyingPro\User Data`、`Resources`、`%APPDATA%\JianyingPro`，或 `JIANYINGCRAFT_JIANYING_ROOT`），按 audio/image/video/text/sticker/effect/transition/caption/filter 分类；**导入**音频/图片/视频 + 贴纸图片（作为叠加媒体）+ `.cube`/`.3dl` LUT（走 `lut.import`）；文本/特效/转场/字幕只统计并提示手动导入。不复制官方资源、不再分发。安全：不跟随符号链接、深度≤4、≤20000 文件、单文件≤2GiB。
 - [x] UI：素材库标题行新增「剪映资源」按钮（`project.importJianying`），一键扫描并导入，状态栏汇报"已导入 N 个媒体文件；其余类别请手动导入"。
 - [x] 测试：engine `jianying_resources` 8 条（dry-run 计数、导入、去重、缺目录、深度/大小上限、贴纸归类）；UI `layout_ui` 29、`shell_popover_ui` 2、`project_panel_ui` 24、`ia_acceptance_ui` 9 全绿。
+## 资源目录 → 技能 → action plan（2026-10-22）
+
+- [x] **7 个资源技能**（插件仓 `skills/jianyingcraft-resource-{audio,text,sticker,effect,transition,caption,filter}`）+ `catalogs/`（16 份 JSON，来源 pyJianYingDraft Apache-2.0）：每个技能含字段含义、≥8 行真实名称的使用场景、20 条「名称+resource_id+vip」清单、查询命令 `node catalogs/query.mjs <category>`，并明确"不要凭记忆编造编号"。
+- [x] **Action Plan 规范**：插件仓 `docs/action-plan.md` 定义 `jianyingcraft-action-plan/v1`（每个 action 写明资源编号、目标、时间、时长、参数），含 8 个 action 的示例并逐条映射到 `command_run`；`ui/tests/catalogs.test.mjs` 9 条通过（目录完整性、sha256、技能引用、查询器、示例可解析）。
+- [ ] **已知缺口（下一步）**：可见引擎的 `sequence.applyVideoTransition` / `effects.apply` 吃的是引擎自己的效果名，**不认识剪映 `resource_id`**；目前"编号负责选型、引擎命令负责画面"，精确落 19 位编号只能走宿主侧 jianying-cli 写剪映草稿。要真正做到"同一套理论、UI 与 CLI 等价"，需要二者之一：
+      ① 引擎的项目格式增加 `resourceId`/`effectId` 元数据并在导出剪映草稿时写回；
+      ② 建立 `resource_id → 引擎效果名` 的映射表（先覆盖转场/滤镜/常用特效）。
