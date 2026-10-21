@@ -412,9 +412,9 @@ fn picture_tab_fits_the_desktop_properties_panel() {
         let r = e["rect"].as_array().expect("an element rect");
         [r[0].as_f64().expect("x"), r[1].as_f64().expect("y"), r[2].as_f64().expect("w"), r[3].as_f64().expect("h")]
     };
-    // 面板就是验收尺寸：约 282 宽、566 高。
+    // 面板就是验收尺寸：约 277 宽（rail 加宽到 96 后右栏相应变窄）、566 高。
     let panel = d.rect("panel.Properties").expect("the Properties panel");
-    assert!((panel[2] - 282.0).abs() < 1.5, "the right-hand panel is 282 wide, got {panel:?}");
+    assert!((panel[2] - 276.6).abs() < 2.0, "the right-hand panel is ~276.6 wide, got {panel:?}");
     assert!((panel[3] - 566.0).abs() < 1.5, "the right-hand panel is 566 high, got {panel:?}");
     let bottom = panel[1] + panel[3];
 
