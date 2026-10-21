@@ -103,6 +103,13 @@ pub fn handle(app: &mut FilmcraftApp, ctx: &egui::Context, req: &ControlRequest)
         "engine.execute" | "ui.menu.invoke" => {
             let Some(id) = s("command").or(s("id")) else { return err("missing `command`") };
             let params = p.get("params").cloned().unwrap_or(json!({}));
+            // Selecting by command should also bring the row into view, even when the selection
+            // does not change (the panel cannot tell a repeated select from a fresh one).
+            if id == "project.select"
+                && let Some(last) = params.get("items").and_then(|v| v.as_array()).and_then(|a| a.last()).and_then(Value::as_u64)
+            {
+                app.ui.project_panel.reveal = Some(last);
+            }
             match crate::menus::invoke(app, ctx, id, params) {
                 Ok(v) => ok(v),
                 Err(e) => err(e),

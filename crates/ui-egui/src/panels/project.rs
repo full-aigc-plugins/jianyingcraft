@@ -291,7 +291,11 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     // row into view: remember the newest selected item once, the list consumes it when it draws.
     let selection: Vec<u64> = app.session.state.project_selection.iter().map(|i| i.0).collect();
     if selection != app.ui.project_panel.seen_selection {
-        app.ui.project_panel.reveal = selection.last().copied();
+        // A bin click clears the item selection; keep the pending reveal in that case so the item
+        // still scrolls into view once its bin is expanded again.
+        if let Some(last) = selection.last() {
+            app.ui.project_panel.reveal = Some(*last);
+        }
         app.ui.project_panel.seen_selection = selection;
     }
     let mut rect = rect;

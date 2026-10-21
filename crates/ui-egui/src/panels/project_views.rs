@@ -770,6 +770,9 @@ fn list_bin(app: &mut FilmcraftApp, ui: &mut egui::Ui, bin: &Bin, depth: usize, 
         let Some(it) = app.session.project.item(id).cloned() else { continue };
         let (r, resp) = ui.allocate_exact_size(vec2(lc.width, lc.row_h), Sense::click_and_drag());
         note_hit(ui, v, id, r);
+        if app.ui.project_panel.reveal.is_some() && app.ui.project_panel.reveal == Some(id.0) {
+            eprintln!("REVEAL HIT id={} inst={:?}", id.0, v.inst);
+        }
         if v.inst == Inst::Main && app.ui.project_panel.reveal == Some(id.0) {
             ui.scroll_to_rect(r, Some(egui::Align::Center));
             app.ui.project_panel.reveal = None;
