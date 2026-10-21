@@ -213,6 +213,79 @@ Wide 档的内置工作区 **`Jianying`** 已按剪映专业版补齐四件外�
 > 其次是**一键包装/模板**（P3 本地化），真正影响首屏可用性的只有
 > 左栏层级、右栏工程参数、底部工具条与空态四件事。
 
+## 8. 资源 Tab 的浏览态
+
+对照 13 张真实剪映截图（音频 / 文本 / 贴纸 / 特效 / 转场 / 滤镜 / 字幕 / 模板 / 导入），
+资源类 Tab 的首屏不是 Premiere 的效果树，而是**搜索 + 分类 chips + 密集资源网格**。
+`crates/ui-egui/src/panels/resource_catalog.rs` 实现这一浏览态，并在 `Jianying` 工作区
+接管对应面板（`dock_ui::panel_body` 分派，其它工作区/Tab 保持原逻辑）。
+
+### 8.1 数据：运行时读目录，不打包进二进制
+
+资源目录在插件仓 `jianyingcraft-plugin/catalogs/*.json`（条目字段 `name` / `resource_id` /
+`vip`）。程序**运行时**读取，不使用 `include_str!`：目录可以更新，也可以被用户放到任意位置。
+查找顺序（先命中先用）：
+
+```mermaid
+flowchart LR
+  A{"JIANYINGCRAFT_CATALOGS<br/>非空?"}
+  A -->|是| Z["读 &lt;目录&gt;/&lt;catalog&gt;.json"]
+  A -->|否| C["../jianyingcraft-plugin/catalogs<br/>（仓库根 = CARGO_MANIFEST_DIR 往上两级）"]
+  C --> D{"目录存在?"}
+  D -->|是| Z
+  D -->|否| E["catalogs<br/>（工作目录）"]
+  E --> Z
+  Z --> F{"读取 / 解析成功?"}
+  F -->|是| G["搜索 + chips + 6 列网格"]
+  F -->|否| H["可操作空态：提示设置 JIANYINGCRAFT_CATALOGS"]
+```
+
+| 剪映 Tab | 目录文件 | 接管的面板 |
+|---|---|---|
+| 转场 `transitions` | `transitions.json` | Effects |
+| 滤镜 `filters` | `filters.json` | Lumetri Color |
+| 特效 `effects` | `video_scene_effects.json` | Effects |
+| 贴纸 `sticker` | `video_scene_effects.json`（与场景特效共用目录，网格下方有说明） | Essential Graphics |
+| 文本 `text`（宽屏 Tab 行）/ `captions`（Compact 顶栏） | `text_animations_in.json` | Text |
+| 字幕 `captions`（宽屏 Tab 行）/ `subtitle`（Compact 顶栏） | `fonts.json` | Text |
+| 音频 `audio` | `audio_scene_effects.json` | 不接管：保留素材浏览器（音频 Tab 仍列工程音频素材） |
+
+每一类按（文件长度, mtime）缓存，切 Tab / 重绘不重复解析 500 KB 级 JSON；文件删除后缓存失效，
+下一次读取直接进入空态，不会继续画旧列表。
+
+### 8.2 界面（对照截图）
+
+- 顶部 22 px 通栏搜索框，占位「搜索名称/编号」，同时匹配名称与 `resource_id`（忽略大小写）。
+- 下一行 chips：`全部` / `免费` / `会员`（按 `vip` 过滤），右侧「N 条」随过滤结果更新。
+- 主体固定 **6 列方形卡片**，行距 6 px，可滚动；卡片 = 方形缩略图区 + 名称（11 px，单行省略）
+  + 编号后 6 位（9 px 灰字）+ 右上会员角标。
+- 缩略图是**按 `resource_id` 哈希生成的渐变占位**（首字居中）。官方缩略图/预览素材不随本仓库
+  分发（AGENTS.md §1：素材必须有授权与 sidecar），这里不伪造、不内嵌官方图片；接入真实缩略图
+  属于后续任务。
+
+自动化 id：`resource.search`、`resource.chip.<all|free|vip>`、`resource.count`、
+`resource.grid`、`resource.card.<resource_id>`、`resource.empty`、`resource.note`。
+
+### 8.3 交互与空态
+
+- 单击卡片：选中（1 px 强调色描边），并把「名称 + resource_id」写进状态栏，例如
+  `已选转场「3D空间」· 7049979667406656014；把它写进 action plan 即可`。**不执行任何副作用**；
+  双击/回车应用资源留给后续任务。
+- 目录不存在、JSON 损坏或没有可用条目：画出可操作的空态，明确提示设置
+  `JIANYINGCRAFT_CATALOGS` 指向 `jianyingcraft-plugin/catalogs`（或把 `catalogs/` 放到工作目录），
+  不 panic、不阻塞其它面板。
+- 过滤结果为空（目录本身正常）：提示换关键词或点「全部」。
+
+回归测试：`crates/ui-egui/tests/resource_catalog_ui.rs`（临时目录 + 2 免费 + 1 会员，覆盖搜索、
+chips、卡片数量、点选状态栏、目录消失后的空态）。
+
+### 8.4 剩余缺口
+
+- **真实缩略图/预览**：需要可授权的官方素材或自建缩略图流水线；当前只有哈希渐变占位。
+- **分类树/二级分类**：目录 JSON 里没有剪映的分类层级，"热门/收藏/我的"等云端分区也不做。
+- **下载与会员校验**：会员角标只用于浏览过滤；没有账号体系、授权或素材下载。
+- **应用到时间线**：选中只写状态栏；把资源写进 action plan / 拖到片段上仍是后续任务。
+
 
 
 

@@ -402,6 +402,8 @@ fn layer_instance(id: &str) -> EffectInstance {
         post_fader: false,
         essential: false,
         layer: None,
+        resource_id: None,
+        effect_id: None,
     })
 }
 

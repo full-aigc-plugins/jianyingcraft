@@ -39,6 +39,8 @@ impl LumetriPreset {
                 post_fader: false,
                 essential: false,
                 layer: None,
+                resource_id: None,
+                effect_id: None,
             },
         };
         for (k, v) in &self.params {

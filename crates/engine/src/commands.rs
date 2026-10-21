@@ -219,6 +219,30 @@ pub(crate) fn u64_p(p: &Value, k: &str) -> Option<u64> {
     p.get(k).and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|f| f as u64)))
 }
 
+/// The optional Jianying resource numbering of a new effect or transition: `(resourceId, effectId)`.
+///
+/// Both are strings on purpose — Jianying's material ids are 19-digit numbers that must keep their
+/// leading zeros, and they are metadata, not arithmetic. Absent or `null` means "picked by name, no
+/// Jianying numbering". A bare JSON number, an empty string or a whitespace-only string is a
+/// readable bad-parameter error naming the key (nothing is applied in that case).
+pub(crate) fn resource_meta_p(p: &Value, cmd: &str) -> Result<(Option<String>, Option<String>)> {
+    let one = |key: &str| -> Result<Option<String>> {
+        match p.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::String(s)) => {
+                let t = s.trim();
+                if t.is_empty() {
+                    Err(bad(cmd, format!("`{key}` is an empty string; leave it out to apply an effect without a Jianying resource id")))
+                } else {
+                    Ok(Some(t.to_string()))
+                }
+            }
+            Some(v) => Err(bad(cmd, format!("`{key}` must be a string (a Jianying 19-digit id in quotes), not {v}"))),
+        }
+    };
+    Ok((one("resourceId")?, one("effectId")?))
+}
+
 /// Typed dimensions/counts must not truncate, wrap or silently accept negative/fractional values.
 /// Integer-valued floats (`1920.0`, as JSON from many clients) are integers.
 pub(crate) fn checked_u32_p(p: &Value, key: &str, cmd: &str) -> Result<Option<u32>> {
@@ -2147,7 +2171,7 @@ fn build() -> Vec<CommandSpec> {
             "Apply Video Transition",
             ["Sequence"],
             Some("Cmd+D"),
-            r#"{"clip":id?,"effect":"cross_dissolve|Cross Dissolve|…"?,"frames":i64?,"edge":"in"|"out"?,"params":{param:value}?,"reverse":bool?}"#,
+            r#"{"clip":id?,"effect":"cross_dissolve|Cross Dissolve|…"?,"frames":i64?,"edge":"in"|"out"?,"params":{param:value}?,"reverse":bool?,"resourceId":str?,"effectId":str?}"#,
             has_seq,
             |s, p| apply_transition(s, p, TrackKind::Video)
         ),
@@ -2156,7 +2180,7 @@ fn build() -> Vec<CommandSpec> {
             "Apply Audio Transition",
             ["Sequence"],
             Some("Cmd+Shift+D"),
-            r#"{"clip":id?,"effect":"constant_power|Constant Power|…"?,"frames":i64?,"edge":"in"|"out"?,"params":{param:value}?,"reverse":bool?}"#,
+            r#"{"clip":id?,"effect":"constant_power|Constant Power|…"?,"frames":i64?,"edge":"in"|"out"?,"params":{param:value}?,"reverse":bool?,"resourceId":str?,"effectId":str?}"#,
             has_seq,
             |s, p| apply_transition(s, p, TrackKind::Audio)
         ),
@@ -2964,50 +2988,67 @@ fn build() -> Vec<CommandSpec> {
             Ok(Value::Null)
         }),
         // ================= Effects =================
-        cmd!("effects.apply", "Apply Effect", [], None, r#"{"clips":[id]?,"effect":"gaussian_blur|Gaussian Blur|…"}"#, has_seq, |s, p| {
-            let name = str_p(p, "effect").ok_or_else(|| bad("effects.apply", "need `effect`"))?;
-            let def = resolve_effect_name(s, p, name).ok_or_else(|| bad("effects.apply", format!("unknown effect `{name}`")))?;
-            if filmcraft_project::graphic::is_layer_id(def.id) {
-                return Err(bad("effects.apply", "graphic layers are added with graphics.newText / graphics.newShape"));
-            }
-            if matches!(def.kind, filmcraft_project::EffectKind::VideoTransition | filmcraft_project::EffectKind::AudioTransition) {
-                let mut q = p.clone();
-                q["effect"] = json!(def.id);
-                return apply_transition(s, &q, if def.kind == filmcraft_project::EffectKind::VideoTransition { TrackKind::Video } else { TrackKind::Audio });
-            }
-            let clips = clips_p(s, p);
-            if clips.is_empty() {
-                return Err(bad("effects.apply", "select clips first"));
-            }
-            let is_audio = def.kind == filmcraft_project::EffectKind::Audio;
-            // Audio effects belong on audio clips. A video clip in an A/V pair is retargeted to
-            // its linked audio so double-click / drop on the picture still applies Parametric EQ.
-            let clips = if is_audio { audio_effect_targets(s, &clips) } else { clips };
-            if clips.is_empty() {
-                return Err(bad("effects.apply", "audio effects need an audio clip (or a video clip with linked audio)"));
-            }
-            let (fw, fh) = s.active_sequence().map(|q| (q.settings.width, q.settings.height)).unwrap_or((1920, 1080));
-            let label = format!("Apply {}", def.name);
-            s.edit_sequence(&label, |q, _, _| {
-                let mut n = 0;
-                for t in q.all_tracks_mut() {
-                    if (t.kind == TrackKind::Audio) != is_audio {
-                        continue;
-                    }
-                    for i in t.items.iter_mut().filter(|i| clips.contains(&i.id)) {
-                        let mut inst = def.instance();
-                        resolve_auto_points(&mut inst, (fw, fh), (fw, fh));
-                        // standard effects go before the intrinsic ones (render order)
-                        let pos = i.effects.iter().position(|e| e.def().is_some_and(|d| d.intrinsic)).unwrap_or(i.effects.len());
-                        let pos = if is_audio { i.effects.len() } else { pos };
-                        i.effects.insert(pos, inst);
-                        n += 1;
-                    }
+        cmd!(
+            "effects.apply",
+            "Apply Effect",
+            [],
+            None,
+            r#"{"clips":[id]?,"effect":"gaussian_blur|Gaussian Blur|…","resourceId":str?,"effectId":str?}"#,
+            has_seq,
+            |s, p| {
+                let name = str_p(p, "effect").ok_or_else(|| bad("effects.apply", "need `effect`"))?;
+                let def = resolve_effect_name(s, p, name).ok_or_else(|| bad("effects.apply", format!("unknown effect `{name}`")))?;
+                if filmcraft_project::graphic::is_layer_id(def.id) {
+                    return Err(bad("effects.apply", "graphic layers are added with graphics.newText / graphics.newShape"));
                 }
-                Ok(n)
-            })?;
-            Ok(Value::Null)
-        }),
+                // Jianying's resource numbering travels with the new instance (checked before any edit)
+                let (resource_id, effect_id) = resource_meta_p(p, "effects.apply")?;
+                if matches!(def.kind, filmcraft_project::EffectKind::VideoTransition | filmcraft_project::EffectKind::AudioTransition) {
+                    let mut q = p.clone();
+                    q["effect"] = json!(def.id);
+                    return apply_transition(
+                        s,
+                        &q,
+                        if def.kind == filmcraft_project::EffectKind::VideoTransition { TrackKind::Video } else { TrackKind::Audio },
+                    );
+                }
+                let clips = clips_p(s, p);
+                if clips.is_empty() {
+                    return Err(bad("effects.apply", "select clips first"));
+                }
+                let is_audio = def.kind == filmcraft_project::EffectKind::Audio;
+                // Audio effects belong on audio clips. A video clip in an A/V pair is retargeted to
+                // its linked audio so double-click / drop on the picture still applies Parametric EQ.
+                let clips = if is_audio { audio_effect_targets(s, &clips) } else { clips };
+                if clips.is_empty() {
+                    return Err(bad("effects.apply", "audio effects need an audio clip (or a video clip with linked audio)"));
+                }
+                let (fw, fh) = s.active_sequence().map(|q| (q.settings.width, q.settings.height)).unwrap_or((1920, 1080));
+                let label = format!("Apply {}", def.name);
+                s.edit_sequence(&label, |q, _, _| {
+                    let mut n = 0;
+                    for t in q.all_tracks_mut() {
+                        if (t.kind == TrackKind::Audio) != is_audio {
+                            continue;
+                        }
+                        for i in t.items.iter_mut().filter(|i| clips.contains(&i.id)) {
+                            let mut inst = def.instance();
+                            // Jianying numbering stays metadata: `effect` is still what renders
+                            inst.resource_id = resource_id.clone();
+                            inst.effect_id = effect_id.clone();
+                            resolve_auto_points(&mut inst, (fw, fh), (fw, fh));
+                            // standard effects go before the intrinsic ones (render order)
+                            let pos = i.effects.iter().position(|e| e.def().is_some_and(|d| d.intrinsic)).unwrap_or(i.effects.len());
+                            let pos = if is_audio { i.effects.len() } else { pos };
+                            i.effects.insert(pos, inst);
+                            n += 1;
+                        }
+                    }
+                    Ok(n)
+                })?;
+                Ok(Value::Null)
+            }
+        ),
         cmd!("effects.remove", "Remove Effect", [], None, r#"{"clip":id,"index":n}"#, has_seq, |s, p| {
             let c = clip_p(p, "clip").ok_or_else(|| bad("effects.remove", "need `clip`"))?;
             let idx = u64_p(p, "index").ok_or_else(|| bad("effects.remove", "need `index`"))? as usize;
@@ -4214,6 +4255,10 @@ pub fn preview_transition(s: &Session, p: &Value, kind: TrackKind) -> Result<(Tr
     let ekind = if kind == TrackKind::Video { filmcraft_project::EffectKind::VideoTransition } else { filmcraft_project::EffectKind::AudioTransition };
     let def = filmcraft_project::vtransition::find_transition(&eff_id, ekind).ok_or_else(|| bad("transition", format!("unknown transition `{eff_id}`")))?;
     let mut instance = def.instance();
+    // Jianying numbering of the transition resource rides on the transition's effect instance
+    let (resource_id, effect_id) = resource_meta_p(p, "transition")?;
+    instance.resource_id = resource_id;
+    instance.effect_id = effect_id;
     if let Some(params) = p.get("params") {
         set_transition_params(&mut instance, params, "transition")?;
     }
@@ -4299,6 +4344,18 @@ pub fn inspect_project(s: &Session) -> Value {
     })
 }
 
+/// Adds `resourceId` / `effectId` to an inspected effect or transition object, only when the
+/// instance carries them: payloads for effects picked by name stay exactly as they were.
+fn add_resource_meta(j: &mut Value, inst: &filmcraft_project::EffectInstance) {
+    let Some(m) = j.as_object_mut() else { return };
+    if let Some(id) = &inst.resource_id {
+        m.insert("resourceId".into(), json!(id));
+    }
+    if let Some(id) = &inst.effect_id {
+        m.insert("effectId".into(), json!(id));
+    }
+}
+
 pub fn inspect_sequence(s: &Session, id: ItemId, q: &filmcraft_project::Sequence) -> Value {
     let rate = q.settings.frame_rate;
     let tr = |t: &filmcraft_project::Track| {
@@ -4309,9 +4366,17 @@ pub fn inspect_sequence(s: &Session, id: ItemId, q: &filmcraft_project::Sequence
                 "startFrame": rate.frame_at(i.start), "durationFrames": rate.frame_at(i.duration), "sourceIn": i.source_in.0, "speed": i.speed, "reverse": i.reverse,
                 "end": i.end().0, "endFrame": rate.frame_at(i.end()), "sourceOut": i.source_out().0, "gainDb": i.gain_db,
                 "enabled": i.enabled, "link": i.link, "label": i.label.name(),
-                "effects": i.effects.iter().map(|e| json!({"effect": e.effect, "enabled": e.enabled, "masks": e.masks.len(), "params": e.params.iter().map(|(k, p)| (k.clone(), json!({"value": format!("{:?}", p.value), "keyframes": p.keyframes.len()}))).collect::<serde_json::Map<_, _>>()})).collect::<Vec<_>>(),
+                "effects": i.effects.iter().map(|e| {
+                    let mut j = json!({"effect": e.effect, "enabled": e.enabled, "masks": e.masks.len(), "params": e.params.iter().map(|(k, p)| (k.clone(), json!({"value": format!("{:?}", p.value), "keyframes": p.keyframes.len()}))).collect::<serde_json::Map<_, _>>()});
+                    add_resource_meta(&mut j, e);
+                    j
+                }).collect::<Vec<_>>(),
             })).collect::<Vec<_>>(),
-            "transitions": t.transitions.iter().map(|x| json!({"id": x.id.0, "effect": x.effect.effect, "start": x.start.0, "duration": x.duration.0, "from": x.from.map(|c| c.0), "to": x.to.map(|c| c.0), "reverse": x.reverse, "align": filmcraft_edit::transitions::bounds(t, x).map(|b| filmcraft_edit::transitions::alignment(x, b.1, rate.frame_duration()).id()), "params": x.effect.params.iter().map(|(k, v)| (k.clone(), serde_json::to_value(&v.value).unwrap_or_default())).collect::<serde_json::Map<_, _>>()})).collect::<Vec<_>>(),
+            "transitions": t.transitions.iter().map(|x| {
+                let mut j = json!({"id": x.id.0, "effect": x.effect.effect, "start": x.start.0, "duration": x.duration.0, "from": x.from.map(|c| c.0), "to": x.to.map(|c| c.0), "reverse": x.reverse, "align": filmcraft_edit::transitions::bounds(t, x).map(|b| filmcraft_edit::transitions::alignment(x, b.1, rate.frame_duration()).id()), "params": x.effect.params.iter().map(|(k, v)| (k.clone(), serde_json::to_value(&v.value).unwrap_or_default())).collect::<serde_json::Map<_, _>>()});
+                add_resource_meta(&mut j, &x.effect);
+                j
+            }).collect::<Vec<_>>(),
         })
     };
     // the frames export renders, a partial last frame included

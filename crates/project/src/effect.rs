@@ -97,6 +97,8 @@ impl EffectDef {
             post_fader: false,
             essential: false,
             layer: None,
+            resource_id: None,
+            effect_id: None,
         }
     }
 }
@@ -106,6 +108,17 @@ pub struct EffectInstance {
     pub effect: String,
     pub enabled: bool,
     pub params: BTreeMap<String, Param>,
+    /// Optional metadata reserved for mapping Jianying's (剪映) official resource numbering: the
+    /// 19-digit material id a Jianying draft uses for this effect/resource. Nothing renders from
+    /// it (`effect` stays the behavioural key); it is persisted in `.fcproj` and is meant to be
+    /// written back when a Jianying draft is exported, so "pick by number, execute in the engine"
+    /// survives a save/reopen. Absent when the effect was picked by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_id: Option<String>,
+    /// Optional Jianying effect id that goes with [`Self::resource_id`]: the second half of the
+    /// number-based selection ("编号选型 + 引擎执行"). Same persistence rules; absent by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect_id: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub masks: Vec<Mask>,
     /// Track/Mix inserts only: process after the fader instead of before it.
@@ -891,5 +904,28 @@ mod tests {
         assert!(effect_defs().len() > 90);
         assert_eq!(find_effect_by_name("Gaussian Blur").unwrap().id, "gaussian_blur");
         assert_eq!(intrinsic_video().len(), 3);
+    }
+
+    /// The Jianying resource numbering is optional metadata: an instance made from a definition
+    /// writes neither key, an existing project without them still reads, and a set id survives
+    /// the serde round-trip (which is what saving and reopening a `.fcproj` does).
+    #[test]
+    fn jianying_resource_metadata_is_optional_and_round_trips() {
+        let mut inst = find_effect("gaussian_blur").unwrap().instance();
+        let plain = serde_json::to_value(&inst).unwrap();
+        assert!(plain.get("resource_id").is_none(), "no numbering = no key: {plain}");
+        assert!(plain.get("effect_id").is_none(), "no numbering = no key: {plain}");
+
+        // an older project file, written before these fields existed, still loads
+        let old: EffectInstance = serde_json::from_value(serde_json::json!({"effect": "gaussian_blur", "enabled": true, "params": {}})).unwrap();
+        assert_eq!((old.resource_id, old.effect_id), (None, None));
+
+        inst.resource_id = Some("7012345678901234567".into());
+        inst.effect_id = Some("6791234567890123456".into());
+        let j = serde_json::to_value(&inst).unwrap();
+        assert_eq!(j["resource_id"], "7012345678901234567");
+        assert_eq!(j["effect_id"], "6791234567890123456");
+        let back: EffectInstance = serde_json::from_value(j).unwrap();
+        assert_eq!(back, inst);
     }
 }

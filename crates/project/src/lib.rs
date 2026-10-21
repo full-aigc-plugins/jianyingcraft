@@ -705,6 +705,10 @@ pub enum TransitionAlign {
 }
 
 /// A transition on a track. `at` is the cut point (or clip edge for single-sided transitions).
+///
+/// A transition is carried by its `effect` instance, so its Jianying resource numbering
+/// (`EffectInstance::resource_id` / `effect_id`) needs no separate fields here: one place holds
+/// the ids for clip effects, track inserts and transitions alike.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Transition {
     pub id: TransitionId,

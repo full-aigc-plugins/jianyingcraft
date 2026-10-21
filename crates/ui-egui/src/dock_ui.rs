@@ -289,7 +289,13 @@ impl FilmcraftApp {
         self.auto.add(&format!("panel.{}", panel.id()), body, panel.title());
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body).id_salt(("panel", panel.id())));
         child.set_clip_rect(body.intersect(ui.clip_rect()));
-        panels::show(self, &mut child, panel, body);
+        // 剪映资源 Tab（转场/滤镜/特效/贴纸/文本/字幕）在 `Jianying` 工作区接管对应面板：
+        // 画搜索 + chips + 资源网格，而不是 Premiere 式的效果树/文本工具。其它 Tab、其它工作区
+        // 一律走原面板，自动化 id 与行为不变。
+        match crate::panels::resource_catalog::active_tab(self, panel, class) {
+            Some(tab) => crate::panels::resource_catalog::show(self, &mut child, body, tab),
+            None => panels::show(self, &mut child, panel, body),
+        }
     }
 
     /// OS drag positions come from the host cursor hook, so egui pointer capture alone

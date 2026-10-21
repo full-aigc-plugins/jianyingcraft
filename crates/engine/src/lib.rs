@@ -1295,6 +1295,8 @@ mod relink_tests;
 #[cfg(test)]
 mod remix_tests;
 #[cfg(test)]
+mod resource_ids_tests;
+#[cfg(test)]
 mod ripple_delete_tests;
 #[cfg(test)]
 mod ripple_head_tests;

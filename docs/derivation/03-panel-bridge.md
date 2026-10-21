@@ -330,3 +330,23 @@ totalBytes: 40,969,658`；随后 `--check` → `drift: []`。`ui/engine/` 已在
 回复侧单条超过 8 MiB 时回 `reply_too_large`，总预算溢出时把被挤掉的回复原位替换为
 `reply_evicted` 错误信封（不再静默丢最旧）。单测覆盖"挂起条目超时后不阻塞后续回复"与
 "超大回复不吞掉其后的正常回复"。
+## 16. 剪映官方资源编号（`resourceId`，2026-10-22）
+
+"编号选型 + 引擎执行"的第一环落在工程模型上：新建的效果实例（clip effects / track inserts /
+`transition.effect`）与转场都带可选元数据 `resource_id` / `effect_id`，命令 `effects.apply` 与
+`sequence.applyVideoTransition` 接受 `resourceId` / `effectId`（19 位数字串或任意非空字符串，去空白），
+`sequence.inspect` 只在有值时才输出 `resourceId` / `effectId`。转场不另存一套字段：编号挂在
+`Transition.effect` 上，`EffectInstance` 是唯一事实源。
+
+**resourceId 在 .fcproj 里持久化，导出剪映草稿时写回**——前半句已实现并有测试证明；后半句尚未接线，
+草稿导出目前既不读也不写这两个字段。
+
+| 环节 | 位置 | 键 |
+|---|---|---|
+| 工程模型 | `crates/project/src/effect.rs` `EffectInstance` | `resource_id` / `effect_id`（`serde(default, skip_serializing_if = "Option::is_none")`） |
+| 命令参数 | `effects.apply`、`sequence.applyVideoTransition`、`sequence.applyAudioTransition` | `resourceId` / `effectId` |
+| 读回 | `sequence.inspect` 的 `effects[]` 与 `transitions[]` | `resourceId` / `effectId`（仅当有值） |
+
+证明：`crates/engine/src/resource_ids_tests.rs`（apply 后读回、保存重开保留、不传时两键都不出现、
+数字/空串报错且不产生效果）与 `crates/project/src/effect.rs` 的
+`jianying_resource_metadata_is_optional_and_round_trips`（旧工程缺键仍可读）。

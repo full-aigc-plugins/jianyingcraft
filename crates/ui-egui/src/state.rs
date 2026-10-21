@@ -530,6 +530,15 @@ pub struct UiState {
     /// Text panel: caption search filter.
     #[serde(default)]
     pub caption_search: String,
+    /// 资源 Tab（转场/滤镜/特效/贴纸/文本/字幕）的搜索词；按名称或 resource_id 过滤。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub resource_search: String,
+    /// 资源 Tab 的 `全部 / 免费 / 会员` chips。
+    #[serde(default)]
+    pub resource_filter: crate::panels::resource_catalog::ResourceFilter,
+    /// 资源 Tab 里选中的 `resource_id`（只在状态栏回显，不执行任何动作）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_selection: Option<String>,
     /// Text panel ▸ Transcript: selected words of the sequence transcript (anchor, end; indices as
     /// `transcript.inspect` lists them).
     #[serde(default)]
@@ -1034,6 +1043,9 @@ impl Default for UiState {
             export: Default::default(),
             text_tab: captions_tab(),
             caption_search: String::new(),
+            resource_search: String::new(),
+            resource_filter: crate::panels::resource_catalog::ResourceFilter::default(),
+            resource_selection: None,
             transcript_sel: None,
             transcript_search: String::new(),
             play_after_render: true,
