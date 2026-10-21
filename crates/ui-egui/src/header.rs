@@ -3,9 +3,10 @@
 //! live in the native menu bar (set up by the app); elsewhere a compact in-window menu bar follows
 //! the mode tabs.
 //!
-//! 剪映专业版工作区（Wide + `Jianying` + 编辑模式）只有**一条** 48 pt 顶栏：左侧 ☰（打开 shell
-//! 菜单）→ 13 个一级 Tab → 右侧「导出」。这条顶栏取代原来的「Premiere 全局菜单条 + 42 pt Tab 条」
-//! 两行结构；其余工作区与导入/导出模式仍使用上面的 Premiere 顶栏。
+//! 剪映专业版工作区（Wide + `Jianying` + 编辑模式）只有**一条** 56 pt 顶栏：左侧 ☰（打开 shell
+//! 菜单）→ 13 个一级 Tab（20 px 图标在上、11 px 文字在下的两行式）→ 右侧「导出」。这条顶栏取代原来
+//! 的「Premiere 全局菜单条 + 42 pt Tab 条」两行结构；其余工作区与导入/导出模式仍使用上面的 Premiere
+//! 顶栏。
 
 use egui::{Color32, Rect, Sense, Stroke, pos2, vec2};
 
@@ -17,9 +18,10 @@ use crate::theme::Tokens;
 
 /// 剪映专业版单行顶栏的高度（Wide + `Jianying`）。
 ///
-/// `lib.rs` 的顶栏高度仍是 38 pt；顶栏本体按本常量向下多画 10 pt，`dock_ui` 再把 dock 内容区
-/// 相应下移，所以这一行视觉上是完整的 48 pt，而不用改共享的窗口骨架。
-pub(crate) const JIANYING_HEADER_HEIGHT: f32 = 48.0;
+/// 对照剪映专业版截图：每个一级 Tab 是「20 px 图标 + 11 px 文字」两行，顶栏因此是 56 pt（不是
+/// Premiere 的 38 pt）。`lib.rs` 直接用本常量分配顶栏矩形，dock 内容区随之下移，不需要另改窗口
+/// 骨架。
+pub(crate) const JIANYING_HEADER_HEIGHT: f32 = 56.0;
 
 /// 该帧是否走剪映专业版的单行顶栏。
 ///
@@ -193,13 +195,14 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
 }
 
-/// 剪映专业版的单行顶栏：☰ → 13 个一级 Tab → 「导出」。
+/// 剪映专业版的单行顶栏：☰ → 13 个两行式一级 Tab → 「导出」。
 ///
 /// 只画导航与导出，没有 Home / 模式 Tab / 文档标题 / 工作区名 / 快速导出——剪映桌面版把这些
 /// 入口放在草稿列表和导出面板里。全局菜单收进 ☰（`ui.jy_menu_open`，弹层由 `dock_area` 在面板
 /// 之后绘制，保证盖在预览与时间轴之上）。
 ///
-/// `rect` 由 `lib.rs` 按 [`JIANYING_HEADER_HEIGHT`] 分配（Wide 下 48 pt）。
+/// `rect` 由 `lib.rs` 按 [`JIANYING_HEADER_HEIGHT`] 分配（Wide 下 56 pt）。Tab 自身的高度交给
+/// `jianying_tab_row`：图标 20 px 在上、11 px 文字在下，两行合起来的视觉中心与顶栏中心对齐。
 /// 不再靠下游手工下移内容区。
 fn jianying_bar(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;

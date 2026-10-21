@@ -490,22 +490,20 @@ fn body(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View, actions
         actions.push(("file.import".into(), json!({"bin": v.bin.0})));
     }
 
-    // search row: field, Find, item count
+    // 剪映式搜索行：搜索框通栏（只留左右 padding），右侧内嵌一个圆形 Find 标。
     let row = Rect::from_min_size(pos2(rect.min.x + 8.0, rect.min.y + TITLE_H + 1.0), vec2(rect.width() - 16.0, 24.0));
-    let sw = (row.width() * 0.45).clamp(80.0, 240.0);
-    let search_rect = Rect::from_min_size(row.min, vec2(sw, 22.0));
+    let search_rect = Rect::from_min_size(row.min, vec2(row.width(), 22.0));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(search_rect).id_salt((&pre, "search")));
     let mut q = app.ui.project_search.clone();
     crate::widgets::search_field(&mut child, &mut q, tl!("Search"), search_rect.width(), &t);
     app.ui.project_search = q;
     app.auto.add(&format!("{pre}.search"), search_rect, "Search");
-    let find = Rect::from_min_size(pos2(search_rect.max.x + 8.0, row.min.y), vec2(24.0, 22.0));
+    let find = Rect::from_center_size(pos2(search_rect.max.x - 16.0, search_rect.center().y), vec2(22.0, 18.0));
     let fr = ui.interact(find, egui::Id::new((&pre, "find")), Sense::click()).on_hover_text(tl!("Find…"));
     app.auto.add(&format!("{pre}.find"), find, "Find…");
-    if fr.hovered() {
-        ui.painter().rect_filled(find, 3.0, t.hover);
-    }
-    icons::paint(ui.painter(), find.shrink(4.0), Icon::Search, t.icon);
+    // 常驻的小圆底，做成剪映搜索框右端的「以图搜索」按钮的样子；悬停时提亮。
+    ui.painter().circle_filled(find.center(), 8.0, if fr.hovered() { t.hover } else { t.hover.gamma_multiply(0.55) });
+    icons::paint(ui.painter(), find.shrink(5.0), Icon::Camera, if fr.hovered() { t.icon } else { t.text_dim });
     if fr.clicked() {
         actions.push(("edit.find".into(), json!({})));
     }
@@ -513,8 +511,6 @@ fn body(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View, actions
     let total = count_items(app, v.bin);
     let sel = app.session.state.project_selection.len();
     let count = if sel > 0 { tlf!("{sel} of {total} items selected", sel, total) } else { tlf!("{total} items", total) };
-    ui.painter().text(pos2(row.max.x, row.center().y - 1.0), Align2::RIGHT_CENTER, &count, Tokens::ui(fs - 1.0), t.text_dim);
-    app.auto.add(&format!("{pre}.count"), Rect::from_min_max(pos2(row.max.x - 160.0, row.min.y), row.max), &count);
 
     let mut y = row.max.y + 6.0;
     // 剪映式素材类型筛选（全部 / 视频 / 音频 / 图像）：复用 `jy_media_filter`，与顶栏 Tab 同一状态。
@@ -539,7 +535,14 @@ fn body(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View, actions
             }
             x += 52.0;
         }
+        // 素材数 / 已选数：搜索框通栏后放到 chips 行右端（原来那一格让给搜索框）。
+        ui.painter().text(pos2(rect.max.x - 8.0, y + 10.0), Align2::RIGHT_CENTER, &count, Tokens::ui(fs - 1.0), t.text_dim);
+        app.auto.add(&format!("{pre}.count"), Rect::from_min_max(pos2(rect.max.x - 168.0, y), pos2(rect.max.x - 8.0, y + 20.0)), &count);
         y += 26.0;
+    } else {
+        ui.painter().text(pos2(rect.max.x - 8.0, y + 8.0), Align2::RIGHT_CENTER, &count, Tokens::ui(fs - 1.0), t.text_dim);
+        app.auto.add(&format!("{pre}.count"), Rect::from_min_max(pos2(rect.max.x - 168.0, y), pos2(rect.max.x - 8.0, y + 16.0)), &count);
+        y += 18.0;
     }
     if app.session.prefs.project_panel.preview_area {
         let pr = Rect::from_min_size(pos2(rect.min.x + 8.0, y), vec2(rect.width() - 16.0, PREVIEW_H));

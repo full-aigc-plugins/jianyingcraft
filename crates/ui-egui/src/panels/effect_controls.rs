@@ -33,12 +33,53 @@ const Y_CURVE: Color32 = Color32::from_rgb(0x60, 0xc0, 0x80);
 const PROPS_NAV_X: f32 = 26.0;
 /// Properties panel: where a row's value fields end, left of the navigator.
 const PROPS_VALUE_R: f32 = PROPS_NAV_X + NAV_STEP + 12.0;
-/// Properties panel tabs (剪映专业版：画面 / 音频 / 变速 / 动画 / 调节). The first item is the label,
-/// the second the automation id suffix (`props.tab.<slug>`) and the key the choice is stored under.
-const PROPERTY_TABS: [(&str, &str); 5] = [("画面", "picture"), ("音频", "audio"), ("变速", "speed"), ("动画", "animation"), ("调节", "color")];
+/// Properties panel tabs (剪映专业版：AI 编辑 / 画面 / 变速 / 动画 / 调节 / AI效果). The first item is
+/// the label, the second the automation id suffix (`props.tab.<slug>`) and the key the choice is
+/// stored under, the third whether the tab is only a greyed-out placeholder (剪映 has it, we have no
+/// content for it yet).「音频」is ours: 剪映 shows audio parameters on the audio clip's own panel.
+const PROPERTY_TABS: [(&str, &str, bool); 7] = [
+    ("AI 编辑", "ai-edit", true),
+    ("画面", "picture", false),
+    ("变速", "speed", false),
+    ("动画", "animation", false),
+    ("调节", "color", false),
+    ("音频", "audio", false),
+    ("AI效果", "ai-effect", true),
+];
 /// egui memory key of the properties panel's active tab. It is browsing state, not project state:
 /// it is deliberately not a field of the serialized UI state.
 const PROPERTY_TAB_KEY: &str = "properties-active-tab";
+/// 「画面」页签下的一排分段按钮（剪映：基础 / 抠像 / 蒙版 / 美颜媒体）。只有「基础」有内容：
+/// 其余三项对应的数据我们还没有，选中后给一句灰字说明，不假装有内容。
+const PROPERTY_SEGMENTS: [(&str, &str); 4] = [("基础", "basic"), ("抠像", "keying"), ("蒙版", "mask"), ("美颜媒体", "beauty")];
+/// egui memory key of the properties panel's active segment (browsing state, like the tab).
+const PROPERTY_SEGMENT_KEY: &str = "properties-active-segment";
+/// 剪映「画面」页签里、位置大小之下的一串可折叠行。剪映有这些效果，我们的效果模型里还没有，
+/// 所以只画折叠行（展开是一句灰字说明），不新造效果数据；`true` 的行是 AI 类，行内带一个小图标。
+const PROPERTY_PLACEHOLDER_ROWS: [(&str, &str, bool); 10] = [
+    ("变形", "warp", false),
+    ("描边", "stroke", false),
+    ("阴影", "shadow", false),
+    ("视频防抖", "stabilize", false),
+    ("一键画质提升", "quality", true),
+    ("超清画质", "superres", true),
+    ("画面降噪", "denoise", true),
+    ("AI修复", "repair", true),
+    ("智能打光", "relight", true),
+    ("补分辨率", "upscale", true),
+];
+/// 剪映式数值行 / 折叠行的行高（截图像素级：数值行 28、折叠行 26）。
+const JY_ROW_H: f32 = 28.0;
+const JY_SECTION_H: f32 = 26.0;
+/// 剪映式数值框的宽度：右侧一列数值框，框内是白的（可拖动 / 点击输入的）数值，最右边是一对
+/// 上下步进小箭头。
+const JY_BOX_W: f32 = 62.0;
+/// 行首标签列宽，之后才是滑块（英文界面里 "Anchor point" 也要放得下）。
+const JY_LABEL_W: f32 = 76.0;
+/// 数值框的高度（行高 28 里留出上下各 4.5 点）。
+const JY_BOX_H: f32 = 19.0;
+/// 剪映当前页签的高亮色（截图里是青色 #10c1cd）。
+const JY_ACCENT: Color32 = Color32::from_rgb(0x10, 0xc1, 0xcd);
 
 /// Timeline time at which the clip shows media time `m` (where a keyframe sits in the sequence).
 fn timeline_time_of(it: &TrackItem, m: Tick) -> Tick {
@@ -882,51 +923,251 @@ fn draft_parameters(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
 }
 
-/// 画属性面板顶部的剪映式页签（画面 / 音频 / 变速 / 动画 / 调节），返回当前页签的 slug。
+/// 画属性面板顶部的剪映式页签（AI 编辑 / 画面 / 变速 / 动画 / 调节 / AI效果），返回当前页签的 slug。
 ///
-/// 当前页签用一条短下划线 + 高亮文字标出；点击只改浏览状态，立即在下一帧生效。页签本身不进
-/// 工程，也不写 UI 序列化字段（用 egui 内存保存），所以关掉再打开面板仍停在原来那页。
+/// 剪映把页签均分整行：当前页白色 + 一条下划线，其余灰色；「AI 编辑」「AI效果」只占位（灰显、
+/// 不可点）。点击只改浏览状态，立即在下一帧生效。页签本身不进工程，也不写 UI 序列化字段
+/// （用 egui 内存保存），所以关掉再打开面板仍停在原来那页；默认「画面」。
 fn property_tabs(app: &mut FilmcraftApp, ui: &mut egui::Ui) -> &'static str {
     let t = app.tokens;
     let key = egui::Id::new(PROPERTY_TAB_KEY);
     let saved = ui.ctx().data(|d| d.get_temp::<String>(key)).unwrap_or_default();
-    // 默认「画面」；内存里是陌生值（旧版本、手改状态）时也回到「画面」。
-    let current = PROPERTY_TABS.iter().map(|(_, slug)| *slug).find(|slug| *slug == saved.as_str()).unwrap_or("picture");
-    let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::hover());
+    // 默认「画面」；内存里是陌生值（旧版本、手改状态）或占位页签时也回到「画面」。
+    let current = PROPERTY_TABS.iter().find(|(_, slug, placeholder)| !*placeholder && *slug == saved.as_str()).map_or("picture", |(_, slug, _)| *slug);
+    let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::hover());
     ui.painter().line_segment([row.left_bottom(), row.right_bottom()], Stroke::new(1.0, t.separator));
-    let mut x = row.min.x;
+    let cell_w = (row.width() / PROPERTY_TABS.len() as f32).max(1.0);
     let mut chosen = None;
-    for (label, slug) in PROPERTY_TABS {
-        let galley = ui.painter().layout_no_wrap(label.to_string(), Tokens::semibold(13.0), t.text);
-        let cell = Rect::from_min_size(pos2(x, row.min.y), vec2(galley.size().x + 18.0, row.height()));
-        if cell.max.x > row.max.x + 0.5 {
-            break;
+    for (i, (label, slug, placeholder)) in PROPERTY_TABS.iter().enumerate() {
+        let cell = Rect::from_min_size(pos2(row.min.x + i as f32 * cell_w, row.min.y), vec2(cell_w, row.height()));
+        // 占位页签只登记自动化 id，不接点击：灰显、点了没反应，和剪映未开通的功能一样。
+        let resp = ui.interact(cell, egui::Id::new(("props-tab", *slug)), if *placeholder { Sense::hover() } else { Sense::click() });
+        let selected = !*placeholder && *slug == current;
+        if !selected && !*placeholder && resp.hovered() {
+            ui.painter().rect_filled(cell.shrink2(vec2(2.0, 6.0)), 4.0, t.hover);
         }
-        let resp = ui.interact(cell, egui::Id::new(("props-tab", slug)), Sense::click());
-        let selected = slug == current;
-        if !selected && resp.hovered() {
-            ui.painter().rect_filled(cell, 4.0, t.hover);
-        }
-        ui.painter().galley(
-            pos2(cell.center().x - galley.size().x / 2.0, cell.center().y - galley.size().y / 2.0),
-            galley,
-            if selected { t.text } else { t.text_dim },
-        );
+        let col = if *placeholder {
+            t.text_faint
+        } else if selected {
+            t.text
+        } else {
+            t.text_dim
+        };
+        // 窄面板里按格子缩放字号并按格子剪切，尽量别让「AI 编辑」被切掉、也别画到隔壁页签上
+        let galley = ui.painter().layout_no_wrap((*label).to_string(), Tokens::semibold(if cell_w >= 40.0 { 12.0 } else { 10.5 }), t.text);
+        ui.painter().with_clip_rect(cell).galley(pos2(cell.center().x - galley.size().x / 2.0, cell.center().y - galley.size().y / 2.0), galley.clone(), col);
         if selected {
-            let bar = Rect::from_center_size(pos2(cell.center().x, row.max.y - 2.0), vec2(18.0, 2.0));
-            ui.painter().rect_filled(bar, 1.0, t.accent);
+            // 当前页：白字 + 一条 2 点下划线（剪映的高亮色是青色）
+            let bar = Rect::from_center_size(pos2(cell.center().x, row.max.y - 2.0), vec2((galley.size().x + 12.0).max(16.0), 2.0));
+            ui.painter().rect_filled(bar, 1.0, JY_ACCENT);
         }
         app.auto.add(&format!("props.tab.{slug}"), cell, label);
         if resp.clicked() {
-            chosen = Some(slug);
+            chosen = Some(*slug);
         }
-        x = cell.max.x + 8.0;
     }
     if let Some(slug) = chosen {
         ui.ctx().data_mut(|d| d.insert_temp(key, slug.to_string()));
         return slug;
     }
     current
+}
+
+/// 画「画面」页签下的一排分段按钮（基础 / 抠像 / 蒙版 / 美颜媒体），返回当前分段 slug。
+///
+/// 与页签一样只改浏览状态（egui 内存），不写工程、不写 UI 序列化字段；默认「基础」。
+fn property_segments(app: &mut FilmcraftApp, ui: &mut egui::Ui) -> &'static str {
+    let t = app.tokens;
+    let key = egui::Id::new(PROPERTY_SEGMENT_KEY);
+    let saved = ui.ctx().data(|d| d.get_temp::<String>(key)).unwrap_or_default();
+    let current = PROPERTY_SEGMENTS.iter().map(|(_, slug)| *slug).find(|slug| *slug == saved.as_str()).unwrap_or("basic");
+    let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
+    let gap = 6.0;
+    let w = ((row.width() - gap * (PROPERTY_SEGMENTS.len() as f32 - 1.0)) / PROPERTY_SEGMENTS.len() as f32).max(1.0);
+    let mut chosen = None;
+    for (i, (label, slug)) in PROPERTY_SEGMENTS.iter().enumerate() {
+        let cell = Rect::from_min_size(pos2(row.min.x + i as f32 * (w + gap), row.min.y + 6.0), vec2(w, 22.0));
+        let resp = ui.interact(cell, egui::Id::new(("props-seg", *slug)), Sense::click());
+        let active = *slug == current;
+        ui.painter().rect_filled(cell, 4.0, if active { t.pill_active_bg } else { t.hover });
+        ui.painter().rect_stroke(cell, 4.0, Stroke::new(1.0, if active || resp.hovered() { t.control_border } else { t.separator }), egui::StrokeKind::Inside);
+        let col = if active { t.text } else { t.text_dim };
+        let galley = ui.painter().layout_no_wrap((*label).to_string(), Tokens::ui(11.5), t.text);
+        ui.painter().with_clip_rect(cell.shrink(3.0)).galley(
+            pos2(cell.center().x - galley.size().x / 2.0, cell.center().y - galley.size().y / 2.0),
+            galley,
+            col,
+        );
+        app.auto.add(&format!("props.segment.{slug}"), cell, label);
+        if resp.clicked() {
+            chosen = Some(*slug);
+        }
+    }
+    if let Some(slug) = chosen {
+        ui.ctx().data_mut(|d| d.insert_temp(key, slug.to_string()));
+        return slug;
+    }
+    current
+}
+
+/// 剪映式数值行：左侧标签、行高 28。返回整行的矩形，右侧的滑块 / 数值框按它摆放；`id` 是这一行
+/// 的自动化 id（`properties.row.<effect>.<param>`），方便自动化核对行高与排列。
+fn jy_row(app: &mut FilmcraftApp, ui: &mut egui::Ui, label: &str, id: &str) -> Rect {
+    let t = app.tokens;
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), JY_ROW_H), Sense::hover());
+    row_label(ui, pos2(r.min.x + 8.0, r.center().y), label, JY_LABEL_W, Tokens::ui(11.5), t.text_dim);
+    app.auto.add(id, r, label);
+    r
+}
+
+/// 行右侧的数值框：剪映里是细边框的深色小框，数值在框内（可拖动 / 点击输入）。
+fn jy_box_rect(r: Rect) -> Rect {
+    let right = r.max.x - PROPS_VALUE_R;
+    Rect::from_min_max(pos2(right - JY_BOX_W, r.center().y - JY_BOX_H / 2.0), pos2(right, r.center().y + JY_BOX_H / 2.0))
+}
+
+/// 位置 / 锚点这类二维参数：X、Y 两个并排的数值框，整体右对齐到数值列。
+fn jy_pair_boxes(r: Rect) -> (Rect, Rect) {
+    let y = jy_box_rect(r);
+    let x = y.translate(vec2(-(JY_BOX_W + 6.0), 0.0));
+    (x, y)
+}
+
+/// 数值框左边的滑块范围：标签列之后到数值框之前。
+fn jy_slider_rect(r: Rect) -> Rect {
+    let b = jy_box_rect(r);
+    Rect::from_min_max(pos2(r.min.x + JY_LABEL_W + 4.0, r.center().y - 8.0), pos2(b.min.x - 8.0, r.center().y + 8.0))
+}
+
+/// 剪映式数值框：细边框 + 框内右侧的数值（沿用 `hot_number`：拖动改值、点击输入算式），框的
+/// 最右边一对上下小箭头按一个显示精度步进。`prefix` 是框内左侧的灰色小标签（X / Y）。
+/// 返回 Some 表示用户改了值。
+#[allow(clippy::too_many_arguments)]
+fn jy_value_box(
+    ui: &mut egui::Ui,
+    rect: Rect,
+    id: egui::Id,
+    value: f64,
+    speed: f64,
+    range: (f64, f64),
+    decimals: usize,
+    unit: &str,
+    prefix: Option<&str>,
+    t: &Tokens,
+) -> Option<f64> {
+    if rect.width() < 12.0 {
+        return None;
+    }
+    let p = ui.painter();
+    p.rect_filled(rect, 3.0, t.field_bg);
+    p.rect_stroke(rect, 3.0, Stroke::new(1.0, t.field_border), egui::StrokeKind::Inside);
+    let left = if let Some(prefix) = prefix {
+        p.text(pos2(rect.min.x + 5.0, rect.center().y), Align2::LEFT_CENTER, prefix, Tokens::ui(10.5), t.text_faint);
+        14.0
+    } else {
+        4.0
+    };
+    // 右侧的上下步进箭头：一格的步长是显示精度的下一档（1 / 0.1 …）
+    let step = 10f64.powi(-(decimals as i32));
+    let col = Rect::from_min_max(pos2(rect.max.x - 13.0, rect.min.y + 2.0), pos2(rect.max.x - 3.0, rect.max.y - 2.0));
+    let mut out = None;
+    for (half, dir) in
+        [(egui::Rect::from_min_max(col.min, pos2(col.max.x, col.center().y)), 1.0), (egui::Rect::from_min_max(pos2(col.min.x, col.center().y), col.max), -1.0)]
+    {
+        let resp = ui.interact(half, id.with(("step", dir > 0.0)), Sense::click());
+        let c = half.center();
+        let pts = if dir > 0.0 {
+            vec![c + vec2(-3.0, 2.0), c + vec2(3.0, 2.0), c + vec2(0.0, -2.5)]
+        } else {
+            vec![c + vec2(-3.0, -2.5), c + vec2(3.0, -2.5), c + vec2(0.0, 2.0)]
+        };
+        ui.painter().add(egui::Shape::convex_polygon(pts, if resp.hovered() { t.text } else { t.text_dim }, Stroke::NONE));
+        if resp.clicked() {
+            out = Some((value + dir * step).clamp(range.0.min(range.1), range.0.max(range.1)));
+        }
+    }
+    let inner = Rect::from_min_max(pos2(rect.min.x + left, rect.min.y + 2.0), pos2(rect.max.x - 14.0, rect.max.y - 2.0));
+    let mut vui = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::right_to_left(egui::Align::Center)));
+    // 剪映的数值是白的：只把 hot text 的颜色换成正文色，悬停 / 拖动时的蓝色提示仍保留。
+    let white = Tokens { hot_text: t.text, ..*t };
+    let (_, nv) = crate::widgets::hot_number(&mut vui, id, value, speed, range, decimals, unit, &white);
+    nv.or(out)
+}
+
+/// 剪映式滑块：一条细轨道 + 白色的竖圆角滑块（截图里没有填充色，只有位置）。
+/// 返回 Some 表示改了值。
+fn jy_slider(ui: &mut egui::Ui, rect: Rect, id: egui::Id, value: f64, range: (f64, f64), t: &Tokens) -> Option<f64> {
+    let (lo, hi) = range;
+    let span = hi - lo;
+    if rect.width() < 12.0 || !span.is_finite() || span <= 0.0 {
+        return None;
+    }
+    let frac = ((value - lo) / span).clamp(0.0, 1.0) as f32;
+    let track = Rect::from_center_size(rect.center(), vec2(rect.width(), 3.0));
+    let resp = ui.interact(rect, id, Sense::click_and_drag());
+    let p = ui.painter();
+    p.rect_filled(track, 1.5, if resp.hovered() || resp.dragged() { t.control_border } else { t.slider_disabled_track });
+    let knob = Rect::from_center_size(pos2(track.min.x + frac * track.width(), track.center().y), vec2(8.0, 14.0));
+    p.rect_filled(knob, 3.0, if resp.hovered() || resp.dragged() { Color32::WHITE } else { t.control_handle });
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    }
+    if resp.dragged() || resp.clicked() {
+        let pos = resp.interact_pointer_pos()?;
+        let f = ((pos.x - track.min.x) / track.width().max(1.0)).clamp(0.0, 1.0) as f64;
+        let nv = lo + f * span;
+        if (nv - value).abs() > 1e-9 {
+            return Some(nv);
+        }
+    }
+    None
+}
+
+/// 剪映里有、我们还没有数据的分组（抠像 / 蒙版 / 美颜媒体）：一句灰字，不留一片空白。
+fn unimplemented_segment(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
+    let t = app.tokens;
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 64.0), Sense::hover());
+    ui.painter().text(r.center(), Align2::CENTER_CENTER, "该分组暂未实现", Tokens::ui(12.0), t.text_faint);
+    app.auto.add("props.segment.empty", r, "该分组暂未实现");
+}
+
+/// 剪映「画面」页签里、位置大小之下的可折叠行（变形 / 描边 / 阴影 / 视频防抖 / …）。
+///
+/// 这些效果在我们的效果模型里还没有，所以只画折叠行：左侧文字 + 右侧小三角，行高 26；展开是
+/// 一句灰字说明，不新造效果数据。折叠状态借用 `collapsed_fx`，但占位行「在表里」表示展开——
+/// 它们默认收起，和剪映一致。
+fn placeholder_row(app: &mut FilmcraftApp, ui: &mut egui::Ui, label: &str, slug: &str, ai: bool) {
+    let t = app.tokens;
+    let key = format!("props.op:{slug}");
+    let expanded = app.ui.collapsed_fx.contains(&key);
+    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), JY_SECTION_H), Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(r, 0.0, t.hover);
+    }
+    ui.painter().line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, t.separator));
+    let mut x = r.min.x + 8.0;
+    // AI 类的一行带一个小图标（剪映在这些行上都有个提示图标）
+    if ai {
+        icons::paint(ui.painter(), Rect::from_center_size(pos2(x + 5.0, r.center().y), vec2(9.0, 9.0)), Icon::Sparkle, t.text_faint);
+        x += 16.0;
+    }
+    ui.painter().text(pos2(x, r.center().y), Align2::LEFT_CENTER, label, Tokens::ui(12.0), t.text_dim);
+    // 右侧的小三角（行高 26，三角离右边缘 8 点）
+    let tw = Rect::from_center_size(pos2(r.max.x - 13.0, r.center().y), vec2(10.0, 10.0));
+    icons::paint(ui.painter(), tw, if expanded { Icon::ChevronDown } else { Icon::ChevronRight }, t.text_faint);
+    app.auto.add(&format!("props.op.{slug}"), r, label);
+    if resp.clicked() {
+        if expanded {
+            app.ui.collapsed_fx.retain(|k| *k != key);
+        } else {
+            app.ui.collapsed_fx.push(key);
+        }
+    }
+    if expanded {
+        let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
+        ui.painter().text(pos2(hr.min.x + 26.0, hr.center().y), Align2::LEFT_CENTER, "该分组暂未实现", Tokens::ui(11.5), t.text_faint);
+        app.auto.add(&format!("props.op.{slug}.detail"), hr, "该分组暂未实现");
+    }
 }
 
 /// Properties panel (Premiere 26): a compact inspector for the selected clip.
@@ -946,8 +1187,8 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let mt = it.source_time_at(ph.clamp(it.start, it.end() - Tick(1)));
     let mut actions: Vec<(String, Value)> = Vec::new();
     let mut bui = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(14.0, 8.0))).id_salt("props"));
-    // 剪映工作区：右栏顶部是一排文字页签（画面 / 音频 / 变速 / 动画 / 调节），下面才是当前页签的
-    // 内容；其它工作区保持原来的连续分组。页签只决定画哪一组，五组的折叠状态仍然共用。
+    // 剪映工作区：右栏顶部是一排文字页签（AI 编辑 / 画面 / 变速 / 动画 / 调节 / AI效果），下面
+    // 才是当前页签的内容；其它工作区保持原来的连续分组。页签只决定画哪一组。
     let jianying = app.ui.workspace == "Jianying";
     let tab = if jianying { property_tabs(app, &mut bui) } else { "" };
     // header: clip name + menu
@@ -956,34 +1197,38 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let lc = app.session.prefs.labels.rgb(it.label);
     bui.painter().rect_filled(sw, 2.0, Color32::from_rgb(lc[0], lc[1], lc[2]));
     bui.painter().text(pos2(hr.min.x + 22.0, hr.center().y), Align2::LEFT_CENTER, &it.name, Tokens::semibold(12.5), t.text);
+    // 「画面」页签下的一排分段按钮（基础 / 抠像 / 蒙版 / 美颜媒体）：只有「基础」有内容。
+    let segment = if jianying && tab == "picture" { property_segments(app, &mut bui) } else { "basic" };
     let row = |ui: &mut egui::Ui, label: &str| -> Rect {
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::hover());
         ui.painter().text(pos2(r.min.x + 18.0, r.center().y), Align2::LEFT_CENTER, label, Tokens::ui(12.0), t.text_dim);
         r
     };
     // 剪映式分组（基础 / 变速 / 动画 / 音频 / 调色）：标题可折叠，自动化 id 是 `props:<Group>`。
+    // 行高 26、左侧文字、右侧小三角（截图里的折叠行样式）。
     let section = |ui: &mut egui::Ui, app: &mut FilmcraftApp, name: &str, reset: Option<(usize, u64)>, actions: &mut Vec<(String, Value)>| -> bool {
-        ui.add_space(4.0);
         let key = format!("props:{name}");
         let open = !app.ui.collapsed_fx.contains(&key);
-        let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
+        let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), JY_SECTION_H), Sense::click());
         app.auto.add(&key, r, name);
         ui.painter().line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, t.separator));
         icons::paint(
             ui.painter(),
-            Rect::from_center_size(pos2(r.min.x + 6.0, r.center().y), vec2(10.0, 10.0)),
+            Rect::from_center_size(pos2(r.max.x - 13.0, r.center().y), vec2(10.0, 10.0)),
             if open { Icon::ChevronDown } else { Icon::ChevronRight },
             t.text_dim,
         );
-        ui.painter().text(pos2(r.min.x + 18.0, r.center().y), Align2::LEFT_CENTER, crate::i18n::t(name), Tokens::semibold(13.0), t.text);
+        ui.painter().text(pos2(r.min.x + 8.0, r.center().y), Align2::LEFT_CENTER, crate::i18n::t(name), Tokens::semibold(12.5), t.text);
+        let mut reset_clicked = false;
         if let Some((idx, c)) = reset {
-            let rr = Rect::from_center_size(pos2(r.max.x - PROPS_NAV_X, r.center().y), vec2(14.0, 14.0));
+            let rr = Rect::from_center_size(pos2(r.max.x - 30.0, r.center().y), vec2(14.0, 14.0));
             icons::paint(ui.painter(), rr, Icon::Reset, t.text_dim);
-            if ui.interact(rr, egui::Id::new(("props-reset", name, c)), Sense::click()).clicked() {
+            reset_clicked = ui.interact(rr, egui::Id::new(("props-reset", name, c)), Sense::click()).on_hover_text(tl!("Reset Effect")).clicked();
+            if reset_clicked {
                 actions.push(("effects.reset".into(), json!({"clip": c, "index": idx})));
             }
         }
-        if resp.clicked() {
+        if resp.clicked() && !reset_clicked {
             if open {
                 app.ui.collapsed_fx.push(key);
             } else {
@@ -1001,66 +1246,76 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         bui.set_max_width((bui.available_width() - 14.0).max(1.0));
         let eff_idx = |id: &str| it.effects.iter().position(|e| e.effect == id);
         let val = |eid: &str, p: &str| it.effect(eid).and_then(|e| e.param(p)).map(|p| p.value_at(mt));
-        if on_tab("picture") && kind == TrackKind::Video && section(bui, app, "Basic", eff_idx("motion").map(|i| (i, clip.0)), &mut actions) {
-            for (label, p, unit, speed, range) in [
-                (tl!("Position"), "position", "", 1.0, (-100_000.0, 100_000.0)),
-                (tl!("Anchor point"), "anchor", "", 1.0, (-100_000.0, 100_000.0)),
-                (tl!("Scale"), "scale", " %", 0.5, (0.0, 10000.0)),
-                (tl!("Rotation"), "rotation", " °", 0.5, (-36000.0, 36000.0)),
-            ] {
-                let r = row(bui, label);
-                let mut vui = bui.new_child(
-                    egui::UiBuilder::new()
-                        .max_rect(Rect::from_min_max(pos2(r.min.x + 150.0, r.min.y + 4.0), pos2(r.max.x - PROPS_VALUE_R, r.max.y - 4.0)))
-                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
-                );
-                match val("motion", p) {
-                    Some(ParamValue::Vec2(v)) => {
-                        let (_, nx) = crate::widgets::hot_number(&mut vui, egui::Id::new(("pp", p, "x", clip.0)), v.x, speed, range, 0, " X", &t);
-                        vui.add_space(10.0);
-                        let (_, ny) = crate::widgets::hot_number(&mut vui, egui::Id::new(("pp", p, "y", clip.0)), v.y, speed, range, 0, " Y", &t);
-                        if nx.is_some() || ny.is_some() {
-                            actions.push((
-                                "effects.setParam".into(),
-                                json!({"clip": clip.0, "effect": "motion", "param": p, "value": [nx.unwrap_or(v.x), ny.unwrap_or(v.y)]}),
-                            ));
-                        }
+        // 剪映「画面」页签：分段按钮里只有「基础」有内容，抠像 / 蒙版 / 美颜媒体给一句灰字。
+        let picture = on_tab("picture") && kind == TrackKind::Video;
+        if on_tab("picture") && jianying && segment != "basic" {
+            unimplemented_segment(app, bui);
+        } else if picture && section(bui, app, "Basic", eff_idx("motion").map(|i| (i, clip.0)), &mut actions) {
+            // 位置 / 锚点：左侧标签 + 右侧 X、Y 两个数值框（行高 28）。
+            for (label, p) in [(tl!("Position"), "position"), (tl!("Anchor point"), "anchor")] {
+                let r = jy_row(app, bui, label, &format!("properties.row.motion.{p}"));
+                let (bx, by) = jy_pair_boxes(r);
+                app.auto.add(&format!("properties.value.motion.{p}.x"), bx, label);
+                app.auto.add(&format!("properties.value.motion.{p}.y"), by, label);
+                if let Some(ParamValue::Vec2(v)) = val("motion", p) {
+                    let nx = jy_value_box(bui, bx, egui::Id::new(("pp", p, "x", clip.0)), v.x, 1.0, (-100_000.0, 100_000.0), 0, "", Some("X"), &t);
+                    let ny = jy_value_box(bui, by, egui::Id::new(("pp", p, "y", clip.0)), v.y, 1.0, (-100_000.0, 100_000.0), 0, "", Some("Y"), &t);
+                    if nx.is_some() || ny.is_some() {
+                        actions.push((
+                            "effects.setParam".into(),
+                            json!({"clip": clip.0, "effect": "motion", "param": p, "value": [nx.unwrap_or(v.x), ny.unwrap_or(v.y)]}),
+                        ));
                     }
-                    Some(ParamValue::Float(v)) => {
-                        let (_, nv) =
-                            crate::widgets::hot_number(&mut vui, egui::Id::new(("pp", p, clip.0)), v, speed, range, if p == "scale" { 0 } else { 1 }, unit, &t);
-                        if let Some(nv) = nv {
-                            actions.push(("effects.setParam".into(), json!({"clip": clip.0, "effect": "motion", "param": p, "value": nv})));
-                        }
-                    }
-                    _ => {}
                 }
                 properties_nav(app, bui, r, clip, &it, mt, "motion", p, &mut actions);
             }
-            let r = row(bui, tl!("Opacity"));
-            let mut vui = bui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(Rect::from_min_max(pos2(r.min.x + 150.0, r.min.y + 4.0), pos2(r.max.x - PROPS_VALUE_R, r.max.y - 4.0)))
-                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
-            );
-            if let Some(ParamValue::Float(v)) = val("opacity", "opacity") {
-                let (_, nv) = crate::widgets::hot_number(&mut vui, egui::Id::new(("pp-op", clip.0)), v, 0.5, (0.0, 100.0), 0, " %", &t);
-                if let Some(nv) = nv {
-                    actions.push(("effects.setParam".into(), json!({"clip": clip.0, "effect": "opacity", "param": "opacity", "value": nv})));
+            // 缩放 / 旋转：左侧标签、中间滑块、右侧数值框（截图里缩放是滑块 + 100% 框）。
+            for (label, p, unit, decimals, slider) in
+                [(tl!("Scale"), "scale", "%", 0usize, (0.0, 200.0)), (tl!("Rotation"), "rotation", "°", 2, (-180.0, 180.0))]
+            {
+                let r = jy_row(app, bui, label, &format!("properties.row.motion.{p}"));
+                let (sr, br) = (jy_slider_rect(r), jy_box_rect(r));
+                app.auto.add(&format!("properties.slider.motion.{p}"), sr, label);
+                app.auto.add(&format!("properties.value.motion.{p}"), br, label);
+                let mut set = None;
+                if let Some(ParamValue::Float(v)) = val("motion", p) {
+                    if let Some(nv) = jy_slider(bui, sr, egui::Id::new(("pps", p, clip.0)), v, slider, &t) {
+                        set = Some(nv);
+                    }
+                    let range = if p == "scale" { (0.0, 10000.0) } else { (-36000.0, 36000.0) };
+                    if let Some(nv) = jy_value_box(bui, br, egui::Id::new(("pp", p, clip.0)), v, 0.5, range, decimals, unit, None, &t) {
+                        set = Some(nv);
+                    }
                 }
+                if let Some(nv) = set {
+                    actions.push(("effects.setParam".into(), json!({"clip": clip.0, "effect": "motion", "param": p, "value": nv})));
+                }
+                properties_nav(app, bui, r, clip, &it, mt, "motion", p, &mut actions);
+            }
+            // 不透明度：滑块 + 数值框。
+            let r = jy_row(app, bui, tl!("Opacity"), "properties.row.opacity.opacity");
+            app.auto.add("properties.slider.opacity", jy_slider_rect(r), tl!("Opacity"));
+            app.auto.add("properties.value.opacity", jy_box_rect(r), tl!("Opacity"));
+            let mut set = None;
+            if let Some(ParamValue::Float(v)) = val("opacity", "opacity") {
+                if let Some(nv) = jy_slider(bui, jy_slider_rect(r), egui::Id::new(("pps-op", clip.0)), v, (0.0, 100.0), &t) {
+                    set = Some(nv);
+                }
+                if let Some(nv) = jy_value_box(bui, jy_box_rect(r), egui::Id::new(("pp-op", clip.0)), v, 0.5, (0.0, 100.0), 0, "%", None, &t) {
+                    set = Some(nv);
+                }
+            }
+            if let Some(nv) = set {
+                actions.push(("effects.setParam".into(), json!({"clip": clip.0, "effect": "opacity", "param": "opacity", "value": nv})));
             }
             properties_nav(app, bui, r, clip, &it, mt, "opacity", "opacity", &mut actions);
             // 剪映的「基础」分组里还有裁剪：Crop 未应用时，第一次改数值先应用它再设参数。
             let crop = eff_idx("crop");
             for (label, p) in [(tl!("Left"), "left"), (tl!("Top"), "top"), (tl!("Right"), "right"), (tl!("Bottom"), "bottom")] {
-                let r = row(bui, label);
-                let mut vui = bui.new_child(
-                    egui::UiBuilder::new()
-                        .max_rect(Rect::from_min_max(pos2(r.min.x + 150.0, r.min.y + 4.0), pos2(r.max.x - PROPS_VALUE_R, r.max.y - 4.0)))
-                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
-                );
+                let r = jy_row(app, bui, label, &format!("properties.row.crop.{p}"));
+                app.auto.add(&format!("properties.value.crop.{p}"), jy_box_rect(r), label);
                 let v = val("crop", p).and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let (_, nv) = crate::widgets::hot_number(&mut vui, egui::Id::new(("pp-crop", p, clip.0)), v, 0.2, (0.0, 100.0), 1, " %", &t);
+                let nv = jy_value_box(bui, jy_box_rect(r), egui::Id::new(("pp-crop", p, clip.0)), v, 0.2, (0.0, 100.0), 1, "%", None, &t);
                 if let Some(nv) = nv {
                     if crop.is_none() {
                         actions.push(("effects.apply".into(), json!({"clips": [clip.0], "effect": "crop"})));
@@ -1068,6 +1323,13 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                     actions.push(("effects.setParam".into(), json!({"clip": clip.0, "effect": "crop", "param": p, "value": nv})));
                 }
                 properties_nav(app, bui, r, clip, &it, mt, "crop", p, &mut actions);
+            }
+        }
+        // 「基础」分组之下是剪映的那一串折叠行（变形 / 描边 / 阴影 / 视频防抖 / …）：我们还没有
+        // 这些效果的数据，所以只是折叠行 + 灰字说明，不新造效果。
+        if on_tab("picture") && jianying && segment == "basic" && kind == TrackKind::Video {
+            for (label, slug, ai) in PROPERTY_PLACEHOLDER_ROWS {
+                placeholder_row(app, bui, label, slug, ai);
             }
         }
         // 变速：视频和音频片段都有速度（音频是时间伸缩）。复用现有的「速度 / 持续时间」命令
@@ -1165,7 +1427,8 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         // 当前页签没有可调内容（例如纯音频片段停在「画面」）：给一句说明，不留一片空白。
         if jianying {
             let has_content = match tab {
-                "picture" => kind == TrackKind::Video,
+                // 抠像 / 蒙版 / 美颜媒体那几个分段已经画了自己的灰字说明
+                "picture" => kind == TrackKind::Video || segment != "basic",
                 "audio" => clips.iter().any(|c| c.2 == TrackKind::Audio),
                 "animation" | "color" => kind == TrackKind::Video,
                 _ => true,

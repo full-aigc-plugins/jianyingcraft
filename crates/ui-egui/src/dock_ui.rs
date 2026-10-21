@@ -887,9 +887,14 @@ impl FilmcraftApp {
     /// 剪映专业版的一级 Tab 行（Wide + `Jianying` 工作区）：素材 / 音频 / 文本 / 贴纸 / 特效 /
     /// 转场 / 字幕 / 智能包装 / 滤镜 / 调节 / 模板 / 数字人 / 插件。
     ///
+    /// 对照截图的像素级结构：每个 Tab 是**上下两行**——20 px 线性图标在上，11 px 文字在下；两行
+    /// 合起来的视觉中心与 56 pt 顶栏的中心对齐（图标中心在上方 8 px，文字中心在下方 12 px）。
+    /// 当前项用主题强调色同时点亮图标与文字（截图里剪映就是青色图标 + 青色文字，不用胶囊底色），
+    /// 其余项为灰白；未实现的模块仍画出图标与文字，但压暗且不可点——不摆假入口。
+    ///
     /// 只画按钮、不画背景与「导出」——它们属于顶栏（`header::jianying_bar`），这里只负责把这一行
     /// 排进给定的 `rect`。只做**导航**：有对应面板的 Tab 调 `show_panel`；模板/数字人/智能包装/
-    /// 插件在本仓库没有实现，画成灰色且不可点——不摆假入口。
+    /// 插件在本仓库没有实现，画成灰色且不可点。
     ///
     /// 自动化 id 同时登记两套：`jy.tabstrip.<slug>` 是 Wide 档沿用的旧契约（测试与脚本按它点击），
     /// `jy.tab.<slug>` 与 Compact/Medium 顶栏的一级 Tab 同名（`SHELL_TABS`），两套都指向同一块矩形。
@@ -897,46 +902,72 @@ impl FilmcraftApp {
         if rect.width() <= 0.0 || rect.height() <= 0.0 {
             return;
         }
-        let tabs: [(&str, &str, Option<PanelKind>); 13] = [
-            ("素材", "media", Some(PanelKind::Project)),
-            ("音频", "audio", Some(PanelKind::Project)),
-            ("文本", "text", Some(PanelKind::Text)),
-            ("贴纸", "sticker", Some(PanelKind::EssentialGraphics)),
-            ("特效", "effects", Some(PanelKind::Effects)),
-            ("转场", "transitions", Some(PanelKind::Effects)),
-            ("字幕", "captions", Some(PanelKind::Text)),
-            ("智能包装", "smart", None),
-            ("滤镜", "filters", Some(PanelKind::LumetriColor)),
-            ("调节", "adjust", Some(PanelKind::LumetriColor)),
-            ("模板", "templates", None),
-            ("数字人", "avatar", None),
-            ("插件", "plugins", None),
+        // 图标一律复用 `icons.rs` 的自绘线性图标（16×16 坐标系），不引入第三方图标资产。
+        let tabs: [(&str, &str, Icon, Option<PanelKind>); 13] = [
+            ("素材", "media", Icon::Film, Some(PanelKind::Project)),
+            ("音频", "audio", Icon::Audio, Some(PanelKind::Project)),
+            ("文本", "text", Icon::Type, Some(PanelKind::Text)),
+            ("贴纸", "sticker", Icon::Star, Some(PanelKind::EssentialGraphics)),
+            ("特效", "effects", Icon::Fx, Some(PanelKind::Effects)),
+            ("转场", "transitions", Icon::Rolling, Some(PanelKind::Effects)),
+            ("字幕", "captions", Icon::Captions, Some(PanelKind::Text)),
+            ("智能包装", "smart", Icon::Sparkle, None),
+            ("滤镜", "filters", Icon::Ellipse, Some(PanelKind::LumetriColor)),
+            ("调节", "adjust", Icon::Adjust, Some(PanelKind::LumetriColor)),
+            ("模板", "templates", Icon::Folder, None),
+            ("数字人", "avatar", Icon::Image, None),
+            ("插件", "plugins", Icon::Grid, None),
         ];
         let mut chosen: Option<(String, PanelKind)> = None;
         let mut x = rect.min.x;
         // 没点过 Tab 时默认高亮「素材」：剪映桌面版一进来就停在素材区，而不是一排都不亮。
         let current = self.ui.jianying_tab.as_deref().unwrap_or("media");
-        let pill = Rect::from_min_size(egui::pos2(rect.min.x, rect.center().y - 14.0), egui::vec2(rect.width(), 28.0));
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(pill).id_salt("jy-header-tabs"));
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).id_salt("jy-header-tabs"));
         child.set_clip_rect(rect);
         let p = child.painter().clone();
-        for (label, slug, target) in tabs {
-            let color = if target.is_some() { t.text } else { t.text_dim };
-            let galley = p.layout_no_wrap(label.to_string(), Tokens::ui(12.0), color);
-            let width = galley.size().x + 18.0;
+        // 截图像素：图标 20 px、文字 11 px、两者间距 3 px。
+        const ICON_SIDE: f32 = 20.0;
+        const LABEL_SIZE: f32 = 11.0;
+        const ICON_LABEL_GAP: f32 = 3.0;
+        for (label, slug, icon, target) in tabs {
+            let enabled = target.is_some();
+            let galley = p.layout_no_wrap(label.to_string(), Tokens::ui(LABEL_SIZE), t.text);
+            // 列宽取图标 / 文字里更宽的那个，左右各 10 px：两字标签约 42 px，四个字约 64 px，
+            // 13 个 Tab 在 1280 px 下仍能整条排进 ☰ 与「导出」之间。
+            let width = galley.size().x.max(ICON_SIDE) + 20.0;
             if x + width > rect.max.x + 0.5 {
                 break;
             }
-            let cell = Rect::from_min_size(egui::pos2(x, pill.min.y), egui::vec2(width, 28.0));
+            let cell = Rect::from_min_size(pos2(x, rect.min.y), vec2(width, rect.height()));
             let response = child.interact(cell, egui::Id::new(("jy-tabstrip", slug)), Sense::click());
             let active = current == slug;
-            if active {
-                p.rect_filled(cell, 6.0, t.accent);
-            } else if response.hovered() && target.is_some() {
-                p.rect_filled(cell, 6.0, t.hover);
+            // 当前项只换颜色（截图里没有胶囊底色，也没有下划线）；悬停再给一层很淡的底。
+            if enabled && response.hovered() {
+                p.rect_filled(cell.shrink2(vec2(1.0, 5.0)), 6.0, t.hover);
             }
-            let text = if active { Color32::WHITE } else { color };
-            p.galley(egui::pos2(cell.min.x + 9.0, cell.center().y - galley.size().y / 2.0), galley, text);
+            // 当前项：图标用强调色（截图里选中 Tab 的图标是填色块）、文字纯白；其余项统一为灰白；
+            // 未实现的模块再压暗一档，和可用项一眼分开。
+            let dim = t.text_dim.gamma_multiply(0.7);
+            let label_color = if active {
+                Color32::WHITE
+            } else if enabled {
+                t.tab_text
+            } else {
+                dim
+            };
+            let icon_color = if active {
+                t.accent
+            } else if enabled {
+                t.icon
+            } else {
+                dim
+            };
+            // 图标在上、文字在下：整块内容在顶栏里竖直居中。
+            let content_h = ICON_SIDE + ICON_LABEL_GAP + galley.size().y;
+            let top = cell.center().y - content_h / 2.0;
+            let icon_rect = Rect::from_min_size(pos2(cell.center().x - ICON_SIDE / 2.0, top), vec2(ICON_SIDE, ICON_SIDE));
+            icons::paint(&p, icon_rect, icon, icon_color);
+            p.galley(pos2(cell.center().x - galley.size().x / 2.0, top + ICON_SIDE + ICON_LABEL_GAP), galley, label_color);
             self.auto.add(&format!("jy.tabstrip.{slug}"), cell, label);
             // 与 Compact/Medium 顶栏同名的第二套 id（标签一一对应）。
             if let Some(shell_id) = SHELL_TABS.iter().find(|tab| tab.0 == label).map(|tab| tab.2) {
@@ -947,7 +978,7 @@ impl FilmcraftApp {
             {
                 chosen = Some((slug.to_string(), panel));
             }
-            x = cell.max.x + 4.0;
+            x = cell.max.x + 2.0;
         }
         if let Some((slug, panel)) = chosen {
             self.ui.jianying_tab = Some(slug.clone());
@@ -1069,52 +1100,82 @@ impl FilmcraftApp {
         Rect::from_min_max(pos2(g.rect.min.x, g.rect.min.y + row_h), g.rect.max)
     }
 
-    /// 剪映专业版左栏竖向 rail。有对应功能的（导入 / 素材）可点，其余（子草稿 / 我的 / AI /
-    /// 云素材 / 官方素材 / 即梦）在本仓库没有实现，画灰不可点。
+    /// 剪映专业版左栏的窄列文字导航 rail。
+    ///
+    /// 对照截图：剪映的 rail 不是大号竖排，而是 72 px 宽的窄列——每行 30 px，12 px 文字左边跟一枚
+    /// 13 px 小图标，行尾留白；当前项在**最左侧**有一条 2 px 强调色高亮条（截图里选中的「热门」就是
+    /// 青色文字 + 左侧细条，没有胶囊底色）。
+    ///
+    /// 本仓库有的入口可点（导入 / 素材），其余（子草稿 / 我的 / AI / 云素材 / 官方 / 即梦）没有实现，
+    /// 压暗且不可点——不摆假入口。`jy.rail.*` 的自动化 id 与选中值（`ui.jianying_rail` 存标签文本）
+    /// 全部保持原契约。
     fn jianying_rail(&mut self, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
         ui.painter().rect_filled(rect, 0.0, t.header_bg);
         ui.painter()
             .line_segment([egui::pos2(rect.max.x, rect.min.y), egui::pos2(rect.max.x, rect.max.y)], egui::Stroke::new(1.0, t.text_dim.gamma_multiply(0.35)));
-        let entries: [(&str, &str, Option<PanelKind>, Option<&str>); 8] = [
-            ("jy.rail.import", "导入", None, Some("file.import")),
-            ("jy.rail.media", "素材", Some(PanelKind::Project), None),
-            ("jy.rail.subdraft", "子草稿", None, None),
-            ("jy.rail.mine", "我的", None, None),
-            ("jy.rail.ai", "AI", None, None),
-            ("jy.rail.cloud", "云素材", None, None),
-            ("jy.rail.official", "官方", None, None),
-            ("jy.rail.dreamina", "即梦", None, None),
+        let entries: [(&str, &str, Icon, Option<PanelKind>, Option<&str>); 8] = [
+            ("jy.rail.import", "导入", Icon::Import, None, Some("file.import")),
+            ("jy.rail.media", "素材", Icon::Film, Some(PanelKind::Project), None),
+            ("jy.rail.subdraft", "子草稿", Icon::Sequence, None, None),
+            ("jy.rail.mine", "我的", Icon::Home, None, None),
+            ("jy.rail.ai", "AI", Icon::Sparkle, None, None),
+            ("jy.rail.cloud", "云素材", Icon::Network, None, None),
+            ("jy.rail.official", "官方", Icon::Star, None, None),
+            ("jy.rail.dreamina", "即梦", Icon::Grid, None, None),
         ];
-        let cell_height = 44.0_f32;
-        let mut y = rect.min.y + 8.0;
+        // 截图像素：行高 30 px、文字 12 px、小图标 13 px、左侧缩进 12 px。
+        const ROW_HEIGHT: f32 = 30.0;
+        const ICON_SIDE: f32 = 13.0;
+        const LABEL_SIZE: f32 = 12.0;
+        const INSET_X: f32 = 12.0;
+        let mut y = rect.min.y + 6.0;
         let mut clicked: Option<(&str, Option<PanelKind>, Option<&str>)> = None;
-        for (id, label, panel, command) in entries {
-            if y + cell_height > rect.max.y {
+        for (id, label, icon, panel, command) in entries {
+            if y + ROW_HEIGHT > rect.max.y {
                 break;
             }
             let enabled = panel.is_some() || command.is_some();
-            let cell = Rect::from_min_size(egui::pos2(rect.min.x + 4.0, y), egui::vec2(rect.width() - 8.0, cell_height));
-            let response = ui.interact(cell, egui::Id::new(id), if enabled { Sense::click() } else { Sense::hover() });
+            let row = Rect::from_min_size(egui::pos2(rect.min.x, y), egui::vec2(rect.width(), ROW_HEIGHT));
+            // 悬停 / 选中底色从 rail 边缘缩进 3 px，左边留给 2 px 高亮条，不压住它。
+            let pill = Rect::from_min_max(egui::pos2(row.min.x + 3.0, row.min.y + 2.0), egui::pos2(row.max.x - 3.0, row.max.y - 2.0));
+            let response = ui.interact(row, egui::Id::new(id), if enabled { Sense::click() } else { Sense::hover() });
             let active = self.ui.jianying_rail.as_deref() == Some(label);
             if active {
-                ui.painter().rect_filled(cell, 6.0, t.accent);
+                ui.painter().rect_filled(pill, 4.0, t.row_selected);
+                // 选中项左侧 2 px 高亮条：上下各让 3 px，长度 24 px。
+                let bar = Rect::from_min_size(egui::pos2(row.min.x + 1.0, row.min.y + 3.0), egui::vec2(2.0, ROW_HEIGHT - 6.0));
+                ui.painter().rect_filled(bar, 1.0, t.accent);
             } else if enabled && response.hovered() {
-                ui.painter().rect_filled(cell, 6.0, t.hover);
+                ui.painter().rect_filled(pill, 4.0, t.hover);
             }
-            let color = if active {
+            // 选中项：白色文字 + 强调色图标（剪映原图整行是青色字，但主题里没有青色 token；
+            // 白字保证 12 px 的对比度，2 px 高亮条负责"当前项"的识别）。未实现的入口压暗。
+            let dim = t.text_dim.gamma_multiply(0.7);
+            let label_color = if active {
                 Color32::WHITE
             } else if enabled {
                 t.text
             } else {
-                t.text_dim
+                dim
             };
-            let galley = ui.painter().layout_no_wrap(label.to_string(), Tokens::ui(11.5), color);
-            ui.painter().galley(egui::pos2(cell.center().x - galley.size().x / 2.0, cell.center().y - galley.size().y / 2.0), galley, color);
-            self.auto.add(id, cell, label);
+            let icon_color = if active {
+                t.accent
+            } else if enabled {
+                t.icon
+            } else {
+                dim
+            };
+            let icon_rect = Rect::from_center_size(egui::pos2(row.min.x + INSET_X + ICON_SIDE / 2.0, row.center().y), egui::vec2(ICON_SIDE, ICON_SIDE));
+            icons::paint(ui.painter(), icon_rect, icon, icon_color);
+            let galley = ui.painter().layout_no_wrap(label.to_string(), Tokens::ui(LABEL_SIZE), label_color);
+            let text_pos = egui::pos2(icon_rect.max.x + 7.0, row.center().y - galley.size().y / 2.0);
+            // 3 个汉字（子草稿 / 云素材）刚好贴到 72 px 列的右缘：裁一下，别画到分隔线上。
+            ui.painter().with_clip_rect(pill).galley(text_pos, galley, label_color);
+            self.auto.add(id, row, label);
             if enabled && response.clicked() {
                 clicked = Some((label, panel, command));
             }
-            y += cell_height + 2.0;
+            y += ROW_HEIGHT;
         }
         if let Some((label, panel, command)) = clicked {
             self.ui.jianying_rail = Some(label.to_string());
@@ -1143,12 +1204,13 @@ impl FilmcraftApp {
         }
         let t = self.tokens;
         let jianying = class == LayoutClass::Wide && self.ui.workspace == "Jianying";
-        // 剪映专业版只有一条 48 pt 顶栏：`header::show` 已经把它画进 body 顶部 10 pt。这里把 dock
-        // 内容区同步下移同样的距离，顶栏不会压住第一行面板标题。`body.min.y - 1` 就是 `lib.rs`
-        // 已经画出的顶栏高度（Wide = 38）；隐藏顶栏时不动。
-        // 左栏竖向 rail：导入 / 素材 / 子草稿 / 我的 / AI / 云 / 官方 / 即梦。
+        // 剪映专业版只有一条 56 pt 顶栏：`lib.rs` 按 `JIANYING_HEADER_HEIGHT` 分配、`header::show`
+        // 绘制，body 已经从顶栏下方开始，所以这里不再手工下移内容区。
+        // 左栏竖向 rail：导入 / 素材 / 子草稿 / 我的 / AI / 云素材 / 官方 / 即梦。
+        // 对照截图的窄列文字分类：72 px 宽（行高 30 px，见 `jianying_rail`），比旧版 56 px 略宽，
+        // 刚好放下「12 px 图标 + 3 个汉字」。窗口过窄时按比例收窄，绝不挤掉 dock 内容。
         let body = if jianying && body.width() > 520.0 {
-            let rail_width = 56.0_f32.min(body.width() * 0.08);
+            let rail_width = 72.0_f32.min(body.width() * 0.14);
             let rail = Rect::from_min_size(body.min, egui::vec2(rail_width, body.height()));
             self.jianying_rail(ui, rail, &t);
             Rect::from_min_max(egui::pos2(body.min.x + rail_width, body.min.y), body.max)

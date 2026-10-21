@@ -18,12 +18,29 @@ const OFFLINE: Color32 = Color32::from_rgb(0xe8, 0x5c, 0x5c);
 const BIN_COLOR: Color32 = Color32::from_rgb(237, 150, 58);
 /// Width of the label chip lead-in before the Name column.
 const LEAD: f32 = 26.0;
-/// 剪映式网格卡片：间距 8px、圆角 6px，悬停时整张卡片提亮。
-const CARD_GAP: f32 = 8.0;
-/// 卡片底色比缩略图向外扩出的内边距（px）。
+/// 剪映式密集网格：卡片之间的间距 6px（横竖都是）。
+const CARD_GAP: f32 = 6.0;
+/// Freeform 卡片底色比缩略图向外扩出的内边距（px）；Icon 卡片没有内边距，缩略图铺满。
 const CARD_PAD: f32 = 6.0;
 /// 卡片圆角（px）。
-const CARD_RADIUS: f32 = 6.0;
+const CARD_RADIUS: f32 = 4.0;
+/// 缩略图下方的名称行高度（px）：11px 名称。
+const NAME_ROW_H: f32 = 18.0;
+/// 网格左右留白（px）。
+const GRID_PAD: f32 = 8.0;
+/// 剪映素材库的列数：面板窄时按 6 列排满（1280 宽的左栏约 54px 一张卡）。
+const GRID_COLS: f32 = 6.0;
+/// Icon 视图名称字号（px）。
+const ICON_NAME_PX: f32 = 11.0;
+/// Icon 视图时长角标字号（px）。
+const ICON_DURATION_PX: f32 = 10.0;
+
+/// 卡片形状：Icon 视图是「方形缩略图 + 名称行」，Freeform 保持 16:9。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CardShape {
+    Icon,
+    Freeform,
+}
 
 pub fn item_icon(k: &ItemKind) -> Icon {
     match k {
@@ -770,7 +787,7 @@ fn list_bin(app: &mut FilmcraftApp, ui: &mut egui::Ui, bin: &Bin, depth: usize, 
         let mut icon_x = nx;
         if lc.thumbs {
             let th = Rect::from_min_size(pos2(nx, r.min.y + 3.0), vec2((lc.row_h - 6.0) * 16.0 / 9.0, lc.row_h - 6.0));
-            thumb(app, ui, th, &it, None);
+            thumb(app, ui, th, &it, None, 2.0);
             icon_x = th.max.x + 4.0;
         }
         icons::paint(ui.painter(), Rect::from_center_size(pos2(icon_x + 7.0, r.center().y), vec2(14.0, 14.0)), item_icon(&it.kind), t.icon);
@@ -808,9 +825,10 @@ fn list_bin(app: &mut FilmcraftApp, ui: &mut egui::Ui, bin: &Bin, depth: usize, 
     }
 }
 
-/// An item's thumbnail at `t` (None: the poster frame or a third in) fitted into `r`.
-fn thumb(app: &mut FilmcraftApp, ui: &egui::Ui, r: Rect, it: &filmcraft_project::ProjectItem, at: Option<Tick>) {
-    ui.painter().rect_filled(r, 2.0, Color32::from_rgb(12, 12, 12));
+/// An item's thumbnail at `t` (None: the poster frame or a third in) fitted into `r`, the dark
+/// backing plate rounded by `radius`.
+fn thumb(app: &mut FilmcraftApp, ui: &egui::Ui, r: Rect, it: &filmcraft_project::ProjectItem, at: Option<Tick>, radius: f32) {
+    ui.painter().rect_filled(r, radius, Color32::from_rgb(12, 12, 12));
     let tt = at.or_else(|| filmcraft_engine::keyboard::poster_frame(it)).unwrap_or(Tick(it.duration().0 * 3 / 10));
     let ctx = ui.ctx().clone();
     let w = (r.width() as u32).clamp(96, 320);
@@ -842,15 +860,30 @@ fn hover_time(app: &mut FilmcraftApp, ui: &egui::Ui, resp: &egui::Response, r: R
 }
 
 /// A clip card: thumbnail (hover scrub, poster frame), In/Out bar, badges, name and duration.
+/// Icon view draws a square thumbnail that fills the card with the name in a row below; Freeform
+/// keeps the 16:9 thumbnail with a padded plate.
 #[allow(clippy::too_many_arguments)]
-fn card(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, id: ItemId, pre: &str, show_name: bool, show_dur: bool, sense: Sense) -> Option<egui::Response> {
+fn card(
+    app: &mut FilmcraftApp,
+    ui: &mut egui::Ui,
+    r: Rect,
+    id: ItemId,
+    pre: &str,
+    show_name: bool,
+    show_dur: bool,
+    shape: CardShape,
+    sense: Sense,
+) -> Option<egui::Response> {
     let t = app.tokens;
     let it = app.session.project.item(id).cloned()?;
     let resp = ui.interact(r.expand(2.0), egui::Id::new((pre, "card", id.0)), sense);
-    let th = Rect::from_min_size(r.min, vec2(r.width(), r.width() * 9.0 / 16.0));
+    // 剪映素材库的卡片是方形的（16:9 的素材在卡片里上下留黑）；Freeform 仍是 16:9。
+    let th_h = if shape == CardShape::Icon { r.width() } else { r.width() * 9.0 / 16.0 };
+    let th = Rect::from_min_size(r.min, vec2(r.width(), th_h));
     let selected = app.session.state.project_selection.contains(&id);
     let hovered = resp.hovered();
-    let card_bg = Rect::from_min_max(th.min - vec2(CARD_PAD, CARD_PAD), pos2(th.max.x + CARD_PAD, r.max.y + 2.0));
+    // Icon 卡片没有内边距：缩略图 + 名称行就是整张卡片。
+    let card_bg = if shape == CardShape::Icon { r } else { Rect::from_min_max(th.min - vec2(CARD_PAD, CARD_PAD), pos2(th.max.x + CARD_PAD, r.max.y + 2.0)) };
     // 剪映式悬停高亮：未选中的卡片在指针下也提亮底色，并描一圈淡蓝边。
     ui.painter().rect_filled(
         card_bg,
@@ -869,7 +902,7 @@ fn card(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, id: ItemId, pre: &st
         ui.painter().rect_stroke(card_bg, CARD_RADIUS, Stroke::new(1.0, t.focus.gamma_multiply(0.55)), StrokeKind::Inside);
     }
     let at = hover_time(app, ui, &resp, th, &it);
-    thumb(app, ui, th, &it, at);
+    thumb(app, ui, th, &it, at, CARD_RADIUS);
     let dur = it.duration();
     // In/Out range bar along the bottom of the thumbnail
     let marks = match &it.kind {
@@ -892,18 +925,20 @@ fn card(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, id: ItemId, pre: &st
         let x = th.min.x + th.width() * (ht.0 as f32 / dur.0 as f32);
         ui.painter().line_segment([pos2(x, th.min.y), pos2(x, th.max.y)], Stroke::new(1.0, Color32::from_rgb(0x5a, 0x9b, 0xf0)));
     }
-    // video / audio badges
-    let mut bx = th.max.x - 4.0;
-    for (has, icon) in [
-        (it.has_audio(), Icon::Audio),
-        (it.has_video() && !matches!(it.kind, ItemKind::Sequence(_)), Icon::Film),
-        (matches!(it.kind, ItemKind::Sequence(_)), Icon::Sequence),
-    ] {
-        if has {
-            let br = Rect::from_min_max(pos2(bx - 15.0, th.max.y - 17.0), pos2(bx, th.max.y - 5.0));
-            ui.painter().rect_filled(br, 2.0, Color32::from_black_alpha(160));
-            icons::paint(ui.painter(), br.shrink(1.5), icon, Color32::from_rgb(0x8f, 0xb8, 0xf5));
-            bx -= 17.0;
+    // video / audio badges（剪映的缩略图上没有这两个小标，Icon 卡片不再画，避免小图太挤）
+    if shape != CardShape::Icon {
+        let mut bx = th.max.x - 4.0;
+        for (has, icon) in [
+            (it.has_audio(), Icon::Audio),
+            (it.has_video() && !matches!(it.kind, ItemKind::Sequence(_)), Icon::Film),
+            (matches!(it.kind, ItemKind::Sequence(_)), Icon::Sequence),
+        ] {
+            if has {
+                let br = Rect::from_min_max(pos2(bx - 15.0, th.max.y - 17.0), pos2(bx, th.max.y - 5.0));
+                ui.painter().rect_filled(br, 2.0, Color32::from_black_alpha(160));
+                icons::paint(ui.painter(), br.shrink(1.5), icon, Color32::from_rgb(0x8f, 0xb8, 0xf5));
+                bx -= 17.0;
+            }
         }
     }
     let badge = media_badge(app, &it);
@@ -915,17 +950,49 @@ fn card(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, id: ItemId, pre: &st
         app.auto.add(&format!("{pre}.item.{}.offline", id.0), band, badge.offline_text);
     }
     if badge.proxy {
-        let pr = Rect::from_min_size(pos2(th.max.x - 22.0, th.min.y + 4.0), vec2(18.0, 14.0));
+        // Icon 卡片的右上角留给时长角标，代理解码标放到左上角（截图里的蓝色小标位置）。
+        let pr = if shape == CardShape::Icon {
+            Rect::from_min_size(pos2(th.min.x + 4.0, th.min.y + 4.0), vec2(18.0, 14.0))
+        } else {
+            Rect::from_min_size(pos2(th.max.x - 22.0, th.min.y + 4.0), vec2(18.0, 14.0))
+        };
         ui.painter().rect_filled(pr, 2.0, if badge.proxy_on { t.accent } else { Color32::from_gray(70) });
         ui.painter().text(pr.center(), Align2::CENTER_CENTER, "P", Tokens::ui(10.0), Color32::WHITE);
         app.auto.add(&format!("{pre}.item.{}.proxy", id.0), pr, "Proxy attached");
+    }
+    let secs = dur.seconds().max(0.0) as u64;
+    // 剪映式时长角标：mm:ss（超过一小时 h:mm:ss），共用的格式化留在这里。
+    let dtext = if secs >= 3600 { format!("{}:{:02}:{:02}", secs / 3600, (secs / 60) % 60, secs % 60) } else { format!("{:02}:{:02}", secs / 60, secs % 60) };
+    if shape == CardShape::Icon {
+        // 时长角标压在缩略图右上角（对照截图「00:03」），深色半透明底 + 白字。
+        if show_dur {
+            // 角标字号随卡片大小缩放，小卡片上不会占掉半个缩略图。
+            let dfont = (th.width() * 0.12).clamp(8.0, ICON_DURATION_PX);
+            let dg = ui.painter().layout_no_wrap(dtext, Tokens::ui(dfont), Color32::WHITE);
+            let pill = Rect::from_min_size(pos2(th.max.x - dg.size().x - 10.0, th.min.y + 3.0), vec2(dg.size().x + 6.0, dg.size().y + 2.0));
+            ui.painter().rect_filled(pill, 3.0, Color32::from_rgba_unmultiplied(0x18, 0x18, 0x18, 190));
+            ui.painter().galley(pos2(pill.min.x + 3.0, pill.center().y - dg.size().y / 2.0), dg, Color32::WHITE);
+        }
+        // 名称一行：11px，放不下用「…」截断（截图里没有名称行，这里按需求保留）。
+        if show_name {
+            let row_top = th.max.y + 1.0;
+            let row_bot = (th.max.y + NAME_ROW_H - 1.0).max(row_top + 1.0);
+            let nr = Rect::from_min_max(pos2(th.min.x, row_top), pos2(th.max.x, row_bot));
+            if !rename_field(app, ui, nr, Some(id.0), None, pre) {
+                let color = if badge.offline { OFFLINE } else { t.text };
+                let mut job = egui::text::LayoutJob::simple_singleline(it.name.clone(), Tokens::ui(ICON_NAME_PX), color);
+                job.wrap = egui::text::TextWrapping::truncate_at_width(nr.width().max(1.0));
+                let g = ui.painter().layout_job(job);
+                ui.painter().with_clip_rect(nr).galley(pos2(nr.min.x, nr.center().y - g.size().y / 2.0), g, color);
+            }
+        }
+        app.auto.add(&format!("{pre}.item.{}", id.0), r, &it.name);
+        return Some(resp);
     }
     let f = font(app);
     let ty = th.max.y + 11.0;
     let mut dw = 0.0;
     if show_dur {
-        let secs = dur.seconds().max(0.0) as u64;
-        let dtext = if secs >= 3600 { format!("{}:{:02}:{:02}", secs / 3600, (secs / 60) % 60, secs % 60) } else { format!("{}:{:02}", secs / 60, secs % 60) };
         let dg = ui.painter().layout_no_wrap(dtext, Tokens::ui(f - 1.0), t.text_dim);
         dw = dg.size().x;
         ui.painter().galley(pos2(th.max.x - dw, ty - dg.size().y / 2.0), dg, t.text_dim);
@@ -941,17 +1008,18 @@ fn card(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, id: ItemId, pre: &st
             if badge.offline { OFFLINE } else { t.text },
         );
     }
-    app.auto.add(&format!("{pre}.item.{}", id.0), th, &it.name);
+    app.auto.add(&format!("{pre}.item.{}", id.0), r, &it.name);
     Some(resp)
 }
 
 fn bin_card(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, b: &Bin, v: &View, actions: &mut Actions) {
     let t = app.tokens;
-    let th = Rect::from_min_size(r.min, vec2(r.width(), r.width() * 9.0 / 16.0));
+    // 文件夹没有缩略图：方形底板上放文件夹图标，下方同样是一行名称，保持与素材卡一致的尺寸。
+    let th = Rect::from_min_size(r.min, vec2(r.width(), r.width()));
     let resp = ui.interact(r.expand(2.0), egui::Id::new((&v.prefix, "bincard", b.id.0)), Sense::click_and_drag());
     let selected = app.ui.project_panel.selected_bin == Some(b.id.0);
     let hovered = resp.hovered();
-    let bg = Rect::from_min_max(th.min - vec2(CARD_PAD, CARD_PAD), pos2(th.max.x + CARD_PAD, r.max.y + 2.0));
+    let bg = r;
     ui.painter().rect_filled(
         bg,
         CARD_RADIUS,
@@ -968,18 +1036,28 @@ fn bin_card(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, b: &Bin, v: &Vie
     } else if hovered {
         ui.painter().rect_stroke(bg, CARD_RADIUS, Stroke::new(1.0, t.focus.gamma_multiply(0.55)), StrokeKind::Inside);
     }
-    ui.painter().rect_filled(th, 4.0, Color32::from_gray(26));
-    icons::paint(ui.painter(), Rect::from_center_size(th.center(), vec2(th.height() * 0.6, th.height() * 0.6)), Icon::Folder, BIN_COLOR);
+    ui.painter().rect_filled(th, CARD_RADIUS, Color32::from_gray(26));
+    icons::paint(ui.painter(), Rect::from_center_size(th.center(), vec2(th.height() * 0.58, th.height() * 0.58)), Icon::Folder, BIN_COLOR);
     let mut n = Vec::new();
     b.all_items(&mut n);
-    let f = font(app);
-    let nr = Rect::from_min_max(pos2(th.min.x, th.max.y + 2.0), pos2(th.max.x, th.max.y + 20.0));
+    // 素材数压在小图右下角（像截图里图块上的小标），名称行整行留给文件夹名。
+    let ntext = tlf!("{n} items", n = n.len());
+    let nfont = (th.width() * 0.12).clamp(8.0, ICON_DURATION_PX);
+    let ng = ui.painter().layout_no_wrap(ntext.clone(), Tokens::ui(nfont), Color32::WHITE);
+    let pill = Rect::from_min_size(pos2(th.max.x - ng.size().x - 10.0, th.min.y + 3.0), vec2(ng.size().x + 6.0, ng.size().y + 2.0));
+    ui.painter().rect_filled(pill, 3.0, Color32::from_rgba_unmultiplied(0x18, 0x18, 0x18, 190));
+    ui.painter().galley(pos2(pill.min.x + 3.0, pill.center().y - ng.size().y / 2.0), ng, Color32::WHITE);
+    let row_top = th.max.y + 1.0;
+    let row_bot = (th.max.y + NAME_ROW_H - 1.0).max(row_top + 1.0);
+    let nr = Rect::from_min_max(pos2(th.min.x, row_top), pos2(th.max.x, row_bot));
     if !rename_field(app, ui, nr, None, Some(b.id.0), &v.prefix) {
-        ui.painter().with_clip_rect(nr).text(pos2(th.min.x, th.max.y + 11.0), Align2::LEFT_CENTER, &b.name, Tokens::ui(f - 0.5), t.text);
-        ui.painter().text(pos2(th.max.x, th.max.y + 11.0), Align2::RIGHT_CENTER, tlf!("{n} items", n = n.len()), Tokens::ui(f - 1.5), t.text_dim);
+        let mut job = egui::text::LayoutJob::simple_singleline(b.name.clone(), Tokens::ui(ICON_NAME_PX), t.text);
+        job.wrap = egui::text::TextWrapping::truncate_at_width(nr.width().max(1.0));
+        let g = ui.painter().layout_job(job);
+        ui.painter().with_clip_rect(nr).galley(pos2(nr.min.x, nr.center().y - g.size().y / 2.0), g, t.text);
     }
-    app.auto.add(&format!("{}.bin.{}", v.prefix, b.id.0), th, &b.name);
-    accept_bin_drop(app, ui, th, b.id.0, actions);
+    app.auto.add(&format!("{}.bin.{}", v.prefix, b.id.0), r, &b.name);
+    accept_bin_drop(app, ui, r, b.id.0, actions);
     if resp.drag_started() {
         crate::panels::start_drag_bin(ui, b.id.0);
     }
@@ -999,10 +1077,13 @@ fn bin_card(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, b: &Bin, v: &Vie
 pub fn icon_view(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View, filter: &str, actions: &mut Actions) {
     let Some(bin) = app.session.project.root.find_bin(v.bin).cloned() else { return };
     let size = v.icon_size;
-    let th_h = size * 9.0 / 16.0;
-    // 单元格 = 卡片底色（缩略图 + 两侧 CARD_PAD）+ 卡片间距 CARD_GAP，横竖都留 8px。
-    // 底色上沿高出内容 CARD_PAD、下沿低 2px，所以竖向额外占 CARD_PAD + 2。
-    let cell = vec2(size + 2.0 * CARD_PAD + CARD_GAP, th_h + 20.0 + CARD_PAD + 2.0 + CARD_GAP);
+    // 剪映素材库的密集网格：默认排 6 列（1280 宽左栏约 54px 一张卡）；面板更宽时按缩略图
+    // 大小滑块（icon_size）排更多列。卡片刻度 = 方形缩略图 + 11px 名称行，间距 6px。
+    let avail = (rect.width() - 2.0 * GRID_PAD).max(1.0);
+    let six = ((avail - (GRID_COLS - 1.0) * CARD_GAP) / GRID_COLS).max(1.0);
+    let (card_w, cols) = if six < size { (six, GRID_COLS as usize) } else { (size, (((avail + CARD_GAP) / (size + CARD_GAP)).floor() as usize).max(1)) };
+    let card_h = card_w + NAME_ROW_H;
+    let cell = vec2(card_w + CARD_GAP, card_h + CARD_GAP);
     let ids = icon_order(app, &bin, filter);
     let bins: Vec<Bin> = if filter.is_empty() {
         bin.children.iter().filter_map(|e| if let BinEntry::Bin(b) = e { Some(b.clone()) } else { None }).collect()
@@ -1012,19 +1093,18 @@ pub fn icon_view(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View
     let n = bins.len() + ids.len();
     egui::ScrollArea::vertical().id_salt((&v.prefix, "icon-scroll")).auto_shrink([false, false]).show(ui, |ui| {
         let bg = background(ui, v);
-        let per_row = ((rect.width() - 12.0) / cell.x).floor().max(1.0) as usize;
         if v.inst == Inst::Main {
-            app.ui.keys.icon_columns = per_row;
+            app.ui.keys.icon_columns = cols;
         }
-        let rows = n.div_ceil(per_row);
+        let rows = n.div_ceil(cols.max(1));
         for rr in 0..rows {
             let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), cell.y), Sense::hover());
-            for k in 0..per_row {
-                let i = rr * per_row + k;
+            for k in 0..cols {
+                let i = rr * cols + k;
                 if i >= n {
                     break;
                 }
-                let r = Rect::from_min_size(pos2(row.min.x + 12.0 + k as f32 * cell.x, row.min.y + 8.0), vec2(size, th_h + 20.0));
+                let r = Rect::from_min_size(pos2(row.min.x + GRID_PAD + k as f32 * cell.x, row.min.y + CARD_GAP / 2.0), vec2(card_w, card_h));
                 if i < bins.len() {
                     bin_card(app, ui, r, &bins[i], v, actions);
                     continue;
@@ -1032,9 +1112,9 @@ pub fn icon_view(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View
                 let id = ids[i - bins.len()];
                 let Some(kind) = app.session.project.item(id).map(|x| x.kind.clone()) else { continue };
                 let was_selected = app.session.state.project_selection.contains(&id);
-                if let Some(resp) = card(app, ui, r, id, &v.prefix, true, true, Sense::click_and_drag()) {
+                if let Some(resp) = card(app, ui, r, id, &v.prefix, true, true, CardShape::Icon, Sense::click_and_drag()) {
                     note_hit(ui, v, id, r);
-                    let name_r = Rect::from_min_max(pos2(r.min.x, r.min.y + th_h), r.max);
+                    let name_r = Rect::from_min_max(pos2(r.min.x, r.min.y + card_w), r.max);
                     slow_click_rename(app, ui, &resp, name_r, id, was_selected);
                     item_interactions(app, ui, v, &resp, id, &kind, actions, true, true);
                 }
@@ -1095,7 +1175,10 @@ pub fn freeform_view(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, v: &
             let off = if moving(&c) { dragging.map(|d| d.1).unwrap_or_default() } else { egui::Vec2::ZERO };
             let r = Rect::from_min_size(canvas.min + vec2(c.x, c.y) + off, vec2(c.size, c.size * 9.0 / 16.0 + 20.0));
             let Some(kind) = app.session.project.item(ItemId(c.item)).map(|x| x.kind.clone()) else { continue };
-            let Some(resp) = card(app, ui, r, ItemId(c.item), &v.prefix, opts.show_names, opts.show_durations, Sense::click_and_drag()) else { continue };
+            let Some(resp) = card(app, ui, r, ItemId(c.item), &v.prefix, opts.show_names, opts.show_durations, CardShape::Freeform, Sense::click_and_drag())
+            else {
+                continue;
+            };
             note_hit(ui, v, ItemId(c.item), r);
             if let Some(s) = c.stack
                 && s == c.item
