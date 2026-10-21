@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use egui::{Align2, Color32, CursorIcon, Pos2, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
-use filmcraft_project::{ClipId, ItemId, MarkerId, Sequence, TrackId, TrackItem, TrackKind};
+use filmcraft_project::{ClipId, ItemId, MarkerId, Sequence, Track, TrackId, TrackItem, TrackKind};
 use filmcraft_time::{FrameRate, TICKS_PER_SECOND, Tick, TimeDisplay, format_time};
 use serde_json::{Value, json};
 
@@ -58,6 +58,55 @@ const CLIP_HAIRLINE: Color32 = Color32::from_rgba_premultiplied(46, 46, 46, 46);
 /// every other workspace keeps `TimelineView::header_w` (Premiere's wide header).
 pub(super) fn header_width(app: &FilmcraftApp) -> f32 {
     if app.ui.workspace == "Jianying" { app.ui.timeline.header_w.min(COMPACT_HEADER_W) } else { app.ui.timeline.header_w }
+}
+
+// ---------------------------------------------------------------------------
+// 剪映式轨道头（#235）：左侧彩色徽标 + 类型小字 + 一行图标
+// ---------------------------------------------------------------------------
+
+/// 轨道徽标：26×18，左侧 4 px 圆角，白色 10 px 粗体轨号（`V1` / `A1`）。
+const JY_BADGE_W: f32 = 26.0;
+const JY_BADGE_H: f32 = 18.0;
+/// 徽标底色：视频蓝灰 `#2f6b8f`，音频绿 `#2a6b48`（对照 `jianying-pro-reference.png`）。
+const JY_BADGE_VIDEO: Color32 = Color32::from_rgb(0x2f, 0x6b, 0x8f);
+const JY_BADGE_AUDIO: Color32 = Color32::from_rgb(0x2a, 0x6b, 0x48);
+/// 独奏 `S` 的点亮色：沿用旧版 M/S 药丸的黄。
+const JY_SOLO: Color32 = Color32::from_rgb(0xf0, 0xf0, 0x4f);
+/// 类型小字（视频/音频）最多占这么宽：再长就裁掉，给右侧图标让位。
+const JY_KIND_MAX_W: f32 = 30.0;
+
+/// 一行图标的命中框与间距：优先 12 px 框 + 4 px 间距（框内画 11 px 图标）；96 px 的轨道头
+/// 放不下时逐级收窄到 11 px 框 / 3 px 间距，最后才退到 10 px 框 / 2 px 间距。
+/// `None` 表示连最窄的一档都放不下——调用方要少放一个图标。
+fn icon_row(count: usize, space: f32) -> Option<(f32, f32)> {
+    if count == 0 {
+        return None;
+    }
+    let n = count as f32;
+    [(12.0f32, 4.0f32), (11.0, 4.0), (11.0, 3.0), (10.0, 2.0)].into_iter().find(|(b, g)| n * b + (n - 1.0) * g <= space)
+}
+
+/// 剪映式轨道头的图标按钮：`r` 是命中框（12 px 时框内图标 11 px），悬停铺 `hover`。
+fn jy_icon(ui: &mut egui::Ui, r: Rect, clip: Rect, icon: Icon, color: Color32, t: &Tokens, id: egui::Id) -> egui::Response {
+    let painter = ui.painter().with_clip_rect(clip);
+    let resp = ui.interact(r.intersect(clip), id, Sense::click());
+    if resp.hovered() {
+        painter.rect_filled(r, 2.0, t.hover);
+    }
+    let glyph = (r.width().min(r.height()) - 1.0).max(6.0);
+    icons::paint(&painter, Rect::from_center_size(r.center(), vec2(glyph, glyph)), icon, color);
+    resp
+}
+
+/// 独奏按钮：图标集里没有「独奏」字形，用 9 px 粗体 `S`（旧版 M/S 药丸的文字记号）。
+fn jy_solo(ui: &mut egui::Ui, r: Rect, clip: Rect, on: bool, t: &Tokens, id: egui::Id) -> egui::Response {
+    let painter = ui.painter().with_clip_rect(clip);
+    let resp = ui.interact(r.intersect(clip), id, Sense::click());
+    if resp.hovered() {
+        painter.rect_filled(r, 2.0, t.hover);
+    }
+    painter.text(r.center(), Align2::CENTER_CENTER, "S", Tokens::semibold(9.0), if on { JY_SOLO } else { t.text_faint });
+    resp
 }
 
 /// 剪映式主轨（#235）：第一条视频轨，即轨道头标着 V1、贴在视频区底部的那条。
@@ -1339,6 +1388,9 @@ fn patch_button(ui: &mut egui::Ui, r: Rect, clip: Rect, label: &str, on: bool, s
 fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows: &[Row], rect: Rect, vclip: Rect, aclip: Rect, t: &Tokens) {
     let hw = header_width(app);
     let tg = app.session.targeting();
+    // 选中的片段决定哪些轨道算「活动轨道」（徽标描白边、行底铺 `row_selected`），取一次快照，
+    // 免得在循环里跟 `app.auto` / `app.ui` 的可变借用打架。
+    let selected = app.session.state.selection.clone();
     let mut actions: Vec<(String, Value)> = Vec::new();
     let mut vo_action = None;
     for r in rows {
@@ -1350,133 +1402,149 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
             continue;
         }
         let p = ui.painter().with_clip_rect(visible);
-        p.rect_filled(hrect, 0.0, t.tl_header_bg);
-        p.line_segment([pos2(hrect.min.x, hrect.max.y - 0.5), pos2(hrect.max.x, hrect.max.y - 0.5)], Stroke::new(1.0, t.separator));
-        if r.kind == TrackKind::Video && r.index + 1 == seq.video_tracks.len() {
-            p.line_segment([pos2(hrect.min.x, hrect.min.y + 0.5), pos2(hrect.max.x, hrect.min.y + 0.5)], Stroke::new(1.0, t.separator));
-        }
         let label = format!("{}{}", if r.kind == TrackKind::Video { "V" } else { "A" }, r.index + 1);
         // 剪映工作区用 96 px 的两行紧凑轨道头；其余工作区保持 Premiere 式宽轨道头。
         // 判据只看工作区：96 px 只是 `header_width` 的结果，用户把别的
         // 工作区轨道头拖窄时不应突然换成两行紧凑布局。
         let compact = app.ui.workspace == "Jianying";
-        let btn_rect = |x0: f32| {
-            if compact {
-                Rect::from_min_size(pos2(hrect.min.x + x0, hrect.min.y + 3.0), vec2(20.0, 16.0))
-            } else {
-                Rect::from_min_max(pos2(hrect.min.x + x0, hrect.min.y + 1.0), pos2(hrect.min.x + x0 + 24.0, hrect.max.y - 2.0))
-            }
-        };
-        app.auto.add(&format!("timeline.track.{label}.header"), hrect, &tr.name);
-        // 1. source patch (absent when unpatched)
-        let patched = if r.kind == TrackKind::Video { tg.video_dest == Some(r.track) } else { tg.audio_dest == Some(r.track) };
-        let pr = btn_rect(if compact { 2.0 } else { 13.0 });
-        app.auto.add(&format!("timeline.track.{label}.sourcePatch"), pr, "Source patch");
-        if patch_button(ui, pr, visible, &label, patched, false, egui::Id::new(("patch", r.track.0)), t).clicked() {
-            actions.push(("timeline.setTargeting".into(), json!({"track": r.track.0, "sourcePatch": !patched})));
-        }
-        // 2. track lock
-        let small =
-            |x: f32, y: f32| Rect::from_center_size(pos2(hrect.min.x + x, y), vec2(if compact { 16.0 } else { 18.0 }, if compact { 16.0 } else { 18.0 }));
-        let upper_y = if compact { hrect.min.y + 11.0 } else { hrect.min.y + (16.0f32).min(hrect.height() / 2.0) };
         // 第二行（眼球 / M / S / 配音 / 自动化）需要 40 px 高；`minimize all` 的 22–26 px 轨道
         // 放不下就整行隐藏，不能画到下一行去。`lower_y` 同时 clamp 到轨道头内，双保险。
         let second_line = !compact || hrect.height() >= 40.0;
-        let lower_y = if compact { (hrect.min.y + 32.0).min(hrect.max.y - 8.0) } else { upper_y };
-        let lock_r = small(if compact { 32.0 } else { 49.0 }, upper_y);
-        let lresp = crate::widgets::icon_toggle(
-            ui,
-            lock_r.intersect(visible),
-            if tr.locked { Icon::Lock } else { Icon::Unlock },
-            true,
-            t,
-            egui::Id::new(("locked", r.track.0)),
-            Some(if tr.locked { t.icon_active } else { t.text_dim }),
-        );
-        app.auto.add(&format!("timeline.track.{label}.locked"), lock_r, "Toggle Track Lock");
-        if lresp.clicked() {
-            actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "locked": !tr.locked})));
+        // 剪映式轨道头（彩色徽标 + 类型小字 + 一行图标）也占两行：22 px 的轨道退回单行紧凑布局。
+        let jianying = compact && second_line;
+        let patched = if r.kind == TrackKind::Video { tg.video_dest == Some(r.track) } else { tg.audio_dest == Some(r.track) };
+        // 活动轨道 = 源补丁的目的轨道，或放着已选中片段的轨道。
+        let active = patched || tr.items.iter().any(|i| selected.contains(&i.id));
+        p.rect_filled(hrect, 0.0, if jianying && active { t.row_selected } else { t.tl_header_bg });
+        p.line_segment([pos2(hrect.min.x, hrect.max.y - 0.5), pos2(hrect.max.x, hrect.max.y - 0.5)], Stroke::new(1.0, t.separator));
+        if r.kind == TrackKind::Video && r.index + 1 == seq.video_tracks.len() {
+            p.line_segment([pos2(hrect.min.x, hrect.min.y + 0.5), pos2(hrect.max.x, hrect.min.y + 0.5)], Stroke::new(1.0, t.separator));
         }
-        if tr.locked {
-            // diagonal hatch over locked lanes is drawn by the lane painter; here a subtle tint
-            p.rect_filled(Rect::from_min_max(pos2(hrect.max.x - 4.0, hrect.min.y), hrect.max), 0.0, t.pressed);
-        }
-        // 3. target
-        let targeted = tg.targeted.contains(&r.track);
-        let trr = btn_rect(if compact { 44.0 } else { 61.0 });
-        app.auto.add(&format!("timeline.track.{label}.target"), trr, "Toggle track targeting");
-        if patch_button(ui, trr, visible, &label, targeted, true, egui::Id::new(("target", r.track.0)), t).clicked() {
-            actions.push(("timeline.setTargeting".into(), json!({"track": r.track.0, "targeted": !targeted})));
-        }
-        // 4. second line: sync lock, then the output / mute+solo controls
-        let mut x = if compact { 74.0 } else { 102.0 };
-        let sr = small(x, upper_y);
-        let sresp =
-            crate::widgets::icon_toggle(ui, sr.intersect(visible), Icon::SyncLock, tr.sync_lock, t, egui::Id::new(("syncLock", r.track.0)), Some(t.text_dim));
-        app.auto.add(&format!("timeline.track.{label}.syncLock"), sr, "Toggle Sync Lock");
-        if sresp.clicked() {
-            actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "syncLock": !tr.sync_lock})));
-        }
-        x += 24.0;
-        if second_line {
-            if r.kind == TrackKind::Video {
-                let er = small(if compact { 14.0 } else { x }, lower_y);
-                let eresp = crate::widgets::icon_toggle(
-                    ui,
-                    er.intersect(visible),
-                    if tr.enabled { Icon::Eye } else { Icon::EyeOff },
-                    true,
-                    t,
-                    egui::Id::new(("enabled", r.track.0)),
-                    Some(t.text_dim),
-                );
-                app.auto.add(&format!("timeline.track.{label}.enabled"), er, "Toggle Track Output");
-                if eresp.clicked() {
-                    actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "enabled": !tr.enabled})));
+        app.auto.add(&format!("timeline.track.{label}.header"), hrect, &tr.name);
+        if jianying {
+            draw_jianying_header(app, ui, seq, r, tr, hrect, visible, &label, patched, active, tg.targeted.contains(&r.track), &mut actions, &mut vo_action, t);
+            // 行高与命中区在下面统一处理（拖边改轨高、双击折叠），两种布局共用。
+        } else {
+            let btn_rect = |x0: f32| {
+                if compact {
+                    Rect::from_min_size(pos2(hrect.min.x + x0, hrect.min.y + 3.0), vec2(20.0, 16.0))
+                } else {
+                    Rect::from_min_max(pos2(hrect.min.x + x0, hrect.min.y + 1.0), pos2(hrect.min.x + x0 + 24.0, hrect.max.y - 2.0))
                 }
-            } else {
-                let mx = if compact { 12.0 } else { x };
-                let mr = Rect::from_center_size(pos2(hrect.min.x + mx, lower_y), vec2(14.0, 14.0));
-                let mresp = crate::widgets::letter_toggle(
-                    ui,
-                    mr.intersect(visible),
-                    "M",
-                    tr.muted,
-                    Color32::from_rgb(0x2d, 0x9d, 0x78),
-                    t,
-                    egui::Id::new(("mute", r.track.0)),
-                );
-                app.auto.add(&format!("timeline.track.{label}.muted"), mr, "Mute Track");
-                if mresp.clicked() {
-                    actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "muted": !tr.muted})));
-                }
-                let s2 = Rect::from_center_size(pos2(hrect.min.x + mx + if compact { 22.0 } else { 20.0 }, lower_y), vec2(14.0, 14.0));
-                let so = crate::widgets::letter_toggle(
-                    ui,
-                    s2.intersect(visible),
-                    "S",
-                    tr.solo,
-                    Color32::from_rgb(0xf0, 0xf0, 0x4f),
-                    t,
-                    egui::Id::new(("solo", r.track.0)),
-                );
-                app.auto.add(&format!("timeline.track.{label}.solo"), s2, "Solo Track");
-                if so.clicked() {
-                    actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "solo": !tr.solo})));
-                }
-                let vr = small(if compact { 56.0 } else { x + 42.0 }, lower_y);
-                if let Some(a) = super::voiceover::header_button(app, ui, r.track, vr, visible, &label, t) {
-                    vo_action = Some(a);
-                }
-                let kr = small(if compact { 78.0 } else { x + 64.0 }, lower_y);
-                super::timeline_automation::header_button(app, ui, seq, r, kr, visible, &label, t);
+            };
+            // 1. source patch (absent when unpatched)
+            let pr = btn_rect(if compact { 2.0 } else { 13.0 });
+            app.auto.add(&format!("timeline.track.{label}.sourcePatch"), pr, "Source patch");
+            if patch_button(ui, pr, visible, &label, patched, false, egui::Id::new(("patch", r.track.0)), t).clicked() {
+                actions.push(("timeline.setTargeting".into(), json!({"track": r.track.0, "sourcePatch": !patched})));
             }
-        }
-        // 5. name on the lower line (or inline when short); the 96 px header has room beside the eye
-        if compact && r.kind == TrackKind::Video && hrect.height() >= 44.0 {
-            p.text(pos2(hrect.min.x + 28.0, lower_y), Align2::LEFT_CENTER, &tr.name, Tokens::ui(10.5), t.text_dim);
-        } else if !compact && hrect.height() >= 40.0 {
-            p.text(pos2(hrect.min.x + 94.0, hrect.min.y + 34.0), Align2::LEFT_CENTER, &tr.name, Tokens::ui(11.0), t.text_dim);
+            // 2. track lock
+            let small =
+                |x: f32, y: f32| Rect::from_center_size(pos2(hrect.min.x + x, y), vec2(if compact { 16.0 } else { 18.0 }, if compact { 16.0 } else { 18.0 }));
+            let upper_y = if compact { hrect.min.y + 11.0 } else { hrect.min.y + (16.0f32).min(hrect.height() / 2.0) };
+            let lower_y = if compact { (hrect.min.y + 32.0).min(hrect.max.y - 8.0) } else { upper_y };
+            let lock_r = small(if compact { 32.0 } else { 49.0 }, upper_y);
+            let lresp = crate::widgets::icon_toggle(
+                ui,
+                lock_r.intersect(visible),
+                if tr.locked { Icon::Lock } else { Icon::Unlock },
+                true,
+                t,
+                egui::Id::new(("locked", r.track.0)),
+                Some(if tr.locked { t.icon_active } else { t.text_dim }),
+            );
+            app.auto.add(&format!("timeline.track.{label}.locked"), lock_r, "Toggle Track Lock");
+            if lresp.clicked() {
+                actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "locked": !tr.locked})));
+            }
+            if tr.locked {
+                // diagonal hatch over locked lanes is drawn by the lane painter; here a subtle tint
+                p.rect_filled(Rect::from_min_max(pos2(hrect.max.x - 4.0, hrect.min.y), hrect.max), 0.0, t.pressed);
+            }
+            // 3. target
+            let targeted = tg.targeted.contains(&r.track);
+            let trr = btn_rect(if compact { 44.0 } else { 61.0 });
+            app.auto.add(&format!("timeline.track.{label}.target"), trr, "Toggle track targeting");
+            if patch_button(ui, trr, visible, &label, targeted, true, egui::Id::new(("target", r.track.0)), t).clicked() {
+                actions.push(("timeline.setTargeting".into(), json!({"track": r.track.0, "targeted": !targeted})));
+            }
+            // 4. second line: sync lock, then the output / mute+solo controls
+            let mut x = if compact { 74.0 } else { 102.0 };
+            let sr = small(x, upper_y);
+            let sresp = crate::widgets::icon_toggle(
+                ui,
+                sr.intersect(visible),
+                Icon::SyncLock,
+                tr.sync_lock,
+                t,
+                egui::Id::new(("syncLock", r.track.0)),
+                Some(t.text_dim),
+            );
+            app.auto.add(&format!("timeline.track.{label}.syncLock"), sr, "Toggle Sync Lock");
+            if sresp.clicked() {
+                actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "syncLock": !tr.sync_lock})));
+            }
+            x += 24.0;
+            if second_line {
+                if r.kind == TrackKind::Video {
+                    let er = small(if compact { 14.0 } else { x }, lower_y);
+                    let eresp = crate::widgets::icon_toggle(
+                        ui,
+                        er.intersect(visible),
+                        if tr.enabled { Icon::Eye } else { Icon::EyeOff },
+                        true,
+                        t,
+                        egui::Id::new(("enabled", r.track.0)),
+                        Some(t.text_dim),
+                    );
+                    app.auto.add(&format!("timeline.track.{label}.enabled"), er, "Toggle Track Output");
+                    if eresp.clicked() {
+                        actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "enabled": !tr.enabled})));
+                    }
+                } else {
+                    let mx = if compact { 12.0 } else { x };
+                    let mr = Rect::from_center_size(pos2(hrect.min.x + mx, lower_y), vec2(14.0, 14.0));
+                    let mresp = crate::widgets::letter_toggle(
+                        ui,
+                        mr.intersect(visible),
+                        "M",
+                        tr.muted,
+                        Color32::from_rgb(0x2d, 0x9d, 0x78),
+                        t,
+                        egui::Id::new(("mute", r.track.0)),
+                    );
+                    app.auto.add(&format!("timeline.track.{label}.muted"), mr, "Mute Track");
+                    if mresp.clicked() {
+                        actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "muted": !tr.muted})));
+                    }
+                    let s2 = Rect::from_center_size(pos2(hrect.min.x + mx + if compact { 22.0 } else { 20.0 }, lower_y), vec2(14.0, 14.0));
+                    let so = crate::widgets::letter_toggle(
+                        ui,
+                        s2.intersect(visible),
+                        "S",
+                        tr.solo,
+                        Color32::from_rgb(0xf0, 0xf0, 0x4f),
+                        t,
+                        egui::Id::new(("solo", r.track.0)),
+                    );
+                    app.auto.add(&format!("timeline.track.{label}.solo"), s2, "Solo Track");
+                    if so.clicked() {
+                        actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "solo": !tr.solo})));
+                    }
+                    let vr = small(if compact { 56.0 } else { x + 42.0 }, lower_y);
+                    if let Some(a) = super::voiceover::header_button(app, ui, r.track, vr, visible, &label, t) {
+                        vo_action = Some(a);
+                    }
+                    let kr = small(if compact { 78.0 } else { x + 64.0 }, lower_y);
+                    super::timeline_automation::header_button(app, ui, seq, r, kr, visible, &label, t);
+                }
+            }
+            // 5. name on the lower line (or inline when short); the 96 px header has room beside the eye
+            if compact && r.kind == TrackKind::Video && hrect.height() >= 44.0 {
+                p.text(pos2(hrect.min.x + 28.0, lower_y), Align2::LEFT_CENTER, &tr.name, Tokens::ui(10.5), t.text_dim);
+            } else if !compact && hrect.height() >= 40.0 {
+                p.text(pos2(hrect.min.x + 94.0, hrect.min.y + 34.0), Align2::LEFT_CENTER, &tr.name, Tokens::ui(11.0), t.text_dim);
+            }
         }
         // resize track height by dragging the header's bottom edge, or the outer edge of the top video
         // track or the last audio track, which also reaches into the empty space past it
@@ -1519,6 +1587,179 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
     }
     if let Some(a) = vo_action {
         super::voiceover::run(app, &ui.ctx().clone(), a);
+    }
+}
+
+/// 画一条剪映式轨道头：左侧 26×18 彩色徽标（白色 10 px 粗体轨号）、类型小字（视频/音频，
+/// 10 px `text_dim`）、右侧一行图标（12 px 命中框 / 11 px 图标 / 4 px 间距）；第二行放同步锁、
+/// 配音、关键帧与轨名。
+///
+/// 徽标保留 `timeline.track.*.sourcePatch` 的命中与命令（旧版第一行那颗 V1/A1 药丸），类型小字
+/// 保留 `timeline.track.*.target`（旧版第二颗药丸），其余 id 与旧版一致——只换画法，不换语义。
+/// 行高、命中与拖拽仍由 `draw_headers` 统一处理；本函数只画、只把要执行的命令交给调用方。
+#[allow(clippy::too_many_arguments)]
+fn draw_jianying_header(
+    app: &mut FilmcraftApp,
+    ui: &mut egui::Ui,
+    seq: &Sequence,
+    r: &Row,
+    tr: &Track,
+    hrect: Rect,
+    visible: Rect,
+    label: &str,
+    patched: bool,
+    active: bool,
+    targeted: bool,
+    actions: &mut Vec<(String, Value)>,
+    vo_action: &mut Option<super::voiceover::Action>,
+    t: &Tokens,
+) {
+    let painter = ui.painter().with_clip_rect(visible);
+    // ---- 徽标（源补丁）
+    let badge = Rect::from_min_size(pos2(hrect.min.x + 2.0, hrect.min.y + 3.0), vec2(JY_BADGE_W, JY_BADGE_H));
+    let kind_col = if r.kind == TrackKind::Video { JY_BADGE_VIDEO } else { JY_BADGE_AUDIO };
+    // 只有左侧两个角是圆的：徽标贴着轨道头的左边。
+    let round_left = egui::CornerRadius { nw: 4, ne: 0, sw: 4, se: 0 };
+    let bresp = ui.interact(badge.intersect(visible), egui::Id::new(("patch", r.track.0)), Sense::click());
+    painter.rect_filled(badge, round_left, if patched { kind_col } else { kind_col.gamma_multiply(0.45) });
+    if bresp.hovered() {
+        painter.rect_filled(badge, round_left, Color32::from_rgba_unmultiplied(0xff, 0xff, 0xff, 0x1c));
+    }
+    // 活动轨道：徽标描 1 px 白边（行底已由 `draw_headers` 铺成 `row_selected`）。
+    if active {
+        painter.rect_stroke(badge, round_left, Stroke::new(1.0, Color32::WHITE), StrokeKind::Inside);
+    }
+    painter.text(badge.center(), Align2::CENTER_CENTER, label, Tokens::semibold(10.0), Color32::WHITE);
+    // 徽标与源补丁共用同一个命中区：`badge` 让控制通道直接读到徽标矩形，`sourcePatch` 保留原名。
+    app.auto.add(&format!("timeline.track.{label}.badge"), badge, label);
+    app.auto.add(&format!("timeline.track.{label}.sourcePatch"), badge, "Source patch");
+    if bresp.clicked() {
+        actions.push(("timeline.setTargeting".into(), json!({"track": r.track.0, "sourcePatch": !patched})));
+    }
+
+    // ---- 类型小字（视频 / 音频），兼作 targeting 开关：打开时字下描 1 px 强调色横线。
+    let kind_text = if r.kind == TrackKind::Video { tl!("Video") } else { tl!("Audio") };
+    let galley = painter.layout_no_wrap(kind_text.to_owned(), Tokens::ui(10.0), t.text_dim);
+    let kind_w = galley.size().x.min(JY_KIND_MAX_W);
+    let kind_r = Rect::from_min_size(pos2(badge.max.x + 3.0, badge.min.y), vec2(kind_w.max(4.0), JY_BADGE_H));
+    let tresp = ui.interact(kind_r.intersect(visible), egui::Id::new(("target", r.track.0)), Sense::click());
+    if tresp.hovered() {
+        painter.rect_filled(kind_r, 2.0, t.hover);
+    }
+    painter.with_clip_rect(kind_r.intersect(visible)).galley(pos2(kind_r.min.x, kind_r.center().y - galley.size().y / 2.0), galley, t.text_dim);
+    if targeted {
+        painter.line_segment([pos2(kind_r.min.x, kind_r.max.y - 2.0), pos2(kind_r.max.x, kind_r.max.y - 2.0)], Stroke::new(1.0, t.accent));
+    }
+    app.auto.add(&format!("timeline.track.{label}.target"), kind_r, "Toggle track targeting");
+    if tresp.clicked() {
+        actions.push(("timeline.setTargeting".into(), json!({"track": r.track.0, "targeted": !targeted})));
+    }
+
+    // ---- 右侧一行图标，自左向右：视频 眼睛 + 锁；音频 静音 + 独奏 + 锁。
+    // 96 px 的头放不下三个时先收窄命中框与间距，最后才把独奏退回第二行——图标绝不压到类型小字。
+    let right = hrect.max.x - 3.0;
+    let space = right - kind_r.max.x - 3.0;
+    let wanted = if r.kind == TrackKind::Video { 2 } else { 3 };
+    let mut solo_below = false;
+    let (box_w, gap) = match icon_row(wanted, space) {
+        Some(v) => v,
+        None => {
+            solo_below = r.kind == TrackKind::Audio;
+            icon_row(2, space).unwrap_or((10.0, 1.0))
+        }
+    };
+    let count = if solo_below { 2 } else { wanted };
+    // 图标带右对齐，但绝不越过类型小字（轨道头被拖得极窄时靠这句兜底）。
+    let x0 = (right - count as f32 * box_w - (count as f32 - 1.0) * gap).max(kind_r.max.x + 2.0);
+    let slot = |i: usize| Rect::from_min_size(pos2(x0 + i as f32 * (box_w + gap), badge.center().y - box_w / 2.0), vec2(box_w, box_w));
+    // 锁在最右，位置与旧版一致（命中框更小，语义不变）。
+    let lock_r = slot(count - 1);
+    let lresp = jy_icon(
+        ui,
+        lock_r,
+        visible,
+        if tr.locked { Icon::Lock } else { Icon::Unlock },
+        if tr.locked { t.icon_active } else { t.text_dim },
+        t,
+        egui::Id::new(("locked", r.track.0)),
+    );
+    app.auto.add(&format!("timeline.track.{label}.locked"), lock_r, "Toggle Track Lock");
+    if lresp.clicked() {
+        actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "locked": !tr.locked})));
+    }
+    if r.kind == TrackKind::Video {
+        let eye_r = slot(0);
+        let eyeresp = jy_icon(
+            ui,
+            eye_r,
+            visible,
+            if tr.enabled { Icon::Eye } else { Icon::EyeOff },
+            if tr.enabled { t.text_dim } else { t.text_faint },
+            t,
+            egui::Id::new(("enabled", r.track.0)),
+        );
+        app.auto.add(&format!("timeline.track.{label}.enabled"), eye_r, "Toggle Track Output");
+        if eyeresp.clicked() {
+            actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "enabled": !tr.enabled})));
+        }
+    } else {
+        let mute_r = slot(0);
+        let mresp = jy_icon(
+            ui,
+            mute_r,
+            visible,
+            if tr.muted { Icon::Mute } else { Icon::Speaker },
+            if tr.muted { t.text } else { t.text_dim },
+            t,
+            egui::Id::new(("mute", r.track.0)),
+        );
+        app.auto.add(&format!("timeline.track.{label}.muted"), mute_r, "Mute Track");
+        if mresp.clicked() {
+            actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "muted": !tr.muted})));
+        }
+        if !solo_below {
+            let solo_r = slot(1);
+            let sresp = jy_solo(ui, solo_r, visible, tr.solo, t, egui::Id::new(("solo", r.track.0)));
+            app.auto.add(&format!("timeline.track.{label}.solo"), solo_r, "Solo Track");
+            if sresp.clicked() {
+                actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "solo": !tr.solo})));
+            }
+        }
+    }
+
+    // ---- 第二行：同步锁 +（放不下的独奏）+ 配音（音频）+ 关键帧/自动化，余下的宽度给轨名。
+    let lower_y = (hrect.min.y + 32.0).min(hrect.max.y - 8.0);
+    let put = |x: f32| Rect::from_center_size(pos2(x + 6.0, lower_y), vec2(12.0, 12.0));
+    let mut x = hrect.min.x + 4.0;
+    let sr = put(x);
+    let sresp = jy_icon(ui, sr, visible, Icon::SyncLock, if tr.sync_lock { t.text_dim } else { t.text_faint }, t, egui::Id::new(("syncLock", r.track.0)));
+    app.auto.add(&format!("timeline.track.{label}.syncLock"), sr, "Toggle Sync Lock");
+    if sresp.clicked() {
+        actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "syncLock": !tr.sync_lock})));
+    }
+    x += 14.0;
+    if solo_below {
+        let r2 = put(x);
+        let sresp = jy_solo(ui, r2, visible, tr.solo, t, egui::Id::new(("solo", r.track.0)));
+        app.auto.add(&format!("timeline.track.{label}.solo"), r2, "Solo Track");
+        if sresp.clicked() {
+            actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "solo": !tr.solo})));
+        }
+        x += 14.0;
+    }
+    if r.kind == TrackKind::Audio {
+        let vr = put(x);
+        if let Some(a) = super::voiceover::header_button(app, ui, r.track, vr, visible, label, t) {
+            *vo_action = Some(a);
+        }
+        x += 14.0;
+    }
+    let kr = put(x);
+    super::timeline_automation::header_button(app, ui, seq, r, kr, visible, label, t);
+    x += 14.0;
+    // 轨名：余下 ≥22 px、行高 ≥44 px 才画，长名字由轨道头右缘裁掉。
+    if hrect.height() >= 44.0 && hrect.max.x - 4.0 - x >= 22.0 {
+        painter.text(pos2(x, lower_y), Align2::LEFT_CENTER, &tr.name, Tokens::ui(10.0), t.text_dim);
     }
 }
 

@@ -16,11 +16,23 @@ struct Driver {
 
 impl Driver {
     fn demo() -> Self {
+        Self::sized(egui::vec2(1600.0, 980.0))
+    }
+
+    /// 剪映工作区的轨道头走 96 px 的紧凑布局。`size` 是窗口逻辑点数（控制通道看到的坐标）。
+    ///
+    /// 设 `JY_HEADER_PNG=1` 时用 wgpu 渲染器建 harness，测试末尾会把窗口存成 PNG（需要 GPU）；
+    /// 不设时保持无渲染器的快速路径，测试照常跑。
+    fn sized(size: egui::Vec2) -> Self {
         let mut session = Session::default();
         session.execute("file.openDemoProject", json!({})).expect("demo project");
         let (tx, rx) = channel();
         let app = FilmcraftApp::new(session).with_control(rx);
-        let harness = Harness::builder().with_size(egui::vec2(1600.0, 980.0)).with_max_steps(10_000).build_eframe(move |_cc| app);
+        let mut b = Harness::builder().with_size(size).with_max_steps(10_000);
+        if std::env::var_os("JY_HEADER_PNG").is_some() {
+            b = b.wgpu();
+        }
+        let harness = b.build_eframe(move |_cc| app);
         let mut d = Driver { harness, tx };
         d.frames(4);
         // 剪映工作区：轨道头走 96 px 的紧凑布局。
@@ -281,4 +293,54 @@ fn dragging_a_clip_near_the_primary_track_lands_on_it() {
     assert!(on(0), "the clip landed on the primary track V1: {after}");
     assert!(!on(1), "the clip left V2 instead of staying on its row: {after}");
     assert_eq!(d.ok("ui.inspect", json!({}))["timeline"]["primaryTrackSnapped"], json!(true), "ui.inspect reports the primary-track magnet");
+}
+
+/// 剪映式轨道头的徽标：26×18、贴在轨道头左侧 2 px、整块落在自己的行里；徽标就是源补丁
+/// （只换画法，命中与命令不变），类型小字与一行图标都排在徽标右侧。
+///
+/// 控制通道跑在 1280×1024 的逻辑点上（桌面尺寸），矩形由 `ui.elements` 读出，不是从代码推的。
+/// `JY_HEADER_PNG=1` 时另存一张 `ui-screenshots/jianying-track-badges-1280x1024.png` 供人工比对。
+#[test]
+fn jianying_track_badges_sit_at_the_left_of_their_row() {
+    let mut d = Driver::sized(egui::vec2(1280.0, 1024.0));
+    for label in ["V1", "A1"] {
+        let header = d.rect(&format!("timeline.track.{label}.header"));
+        let badge = d.rect(&format!("timeline.track.{label}.badge"));
+        eprintln!("1280x1024 {label}: header = {header:?}, badge = {badge:?}");
+        assert!(header[2] > 0.0 && header[2] <= MAX_HEADER_W, "{label} header is {:.1} px wide", header[2]);
+        assert!(header[3] >= 40.0, "{label} row is {:.1} px high: the badge layout needs the two-row header", header[3]);
+        assert!((badge[2] - 26.0).abs() < 0.5, "{label} badge is {:.1} px wide, want 26", badge[2]);
+        assert!((badge[3] - 18.0).abs() < 0.5, "{label} badge is {:.1} px high, want 18", badge[3]);
+        assert!((badge[0] - header[0] - 2.0).abs() < 0.5, "{label} badge starts at x {:.1}, want the header's left + 2", badge[0]);
+        assert!(badge[1] >= header[1] - 0.5 && badge[1] + badge[3] <= header[1] + header[3] + 0.5, "{label} badge {badge:?} leaves its row {header:?}");
+        // 徽标与源补丁是同一个矩形：命中不改，只是画成了剪映的彩色徽标。
+        assert_eq!(badge, d.rect(&format!("timeline.track.{label}.sourcePatch")), "{label} badge must be the source-patch hit rect");
+        // 类型小字 + 右上角的图标（眼睛/静音、锁）在徽标右侧，且与徽标同一条中心线。
+        let icons = if label == "V1" {
+            vec![format!("timeline.track.{label}.enabled"), format!("timeline.track.{label}.locked")]
+        } else {
+            vec![format!("timeline.track.{label}.muted"), format!("timeline.track.{label}.locked")]
+        };
+        for id in std::iter::once(format!("timeline.track.{label}.target")).chain(icons) {
+            let r = d.rect(&id);
+            assert!(r[0] >= badge[0] + badge[2], "{id} starts at x {:.1}, left of the badge's right edge {:.1}", r[0], badge[0] + badge[2]);
+            assert!(r[1] >= header[1] - 0.5 && r[1] + r[3] <= header[1] + header[3] + 0.5, "{id} leaves its row: {r:?} vs {header:?}");
+            assert!((r[1] + r[3] / 2.0 - (badge[1] + badge[3] / 2.0)).abs() < 1.0, "{id} is not on the badge's centre line: {r:?} vs {badge:?}");
+            eprintln!("1280x1024 {label}: {id} -> {r:?}");
+        }
+    }
+    // 视频轨在音频轨上方：V1 的徽标比 A1 高。
+    let (v1, a1) = (d.rect("timeline.track.V1.badge"), d.rect("timeline.track.A1.badge"));
+    assert!(v1[1] < a1[1], "V1 badge y {} must be above A1 badge y {}", v1[1], a1[1]);
+
+    if std::env::var_os("JY_HEADER_PNG").is_some() {
+        d.frames(2);
+        if let Ok(img) = d.harness.render() {
+            let png = filmcraft_ui_egui::control::encode_png(img.as_raw(), img.width(), img.height()).expect("png");
+            let path = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("ui-screenshots").join("jianying-track-badges-1280x1024.png");
+            std::fs::create_dir_all(path.parent().expect("a directory")).expect("mkdir");
+            std::fs::write(&path, png).expect("write");
+            eprintln!("badge screenshot: {}", path.display());
+        }
+    }
 }
