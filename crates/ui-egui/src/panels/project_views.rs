@@ -770,7 +770,7 @@ fn list_bin(app: &mut FilmcraftApp, ui: &mut egui::Ui, bin: &Bin, depth: usize, 
         let Some(it) = app.session.project.item(id).cloned() else { continue };
         let (r, resp) = ui.allocate_exact_size(vec2(lc.width, lc.row_h), Sense::click_and_drag());
         note_hit(ui, v, id, r);
-        if app.ui.project_panel.reveal == Some(id.0) {
+        if v.inst == Inst::Main && app.ui.project_panel.reveal == Some(id.0) {
             ui.scroll_to_rect(r, Some(egui::Align::Center));
             app.ui.project_panel.reveal = None;
         }
@@ -1184,10 +1184,7 @@ pub fn freeform_view(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, v: &
                 continue;
             };
             note_hit(ui, v, ItemId(c.item), r);
-            if app.ui.project_panel.reveal == Some(c.item) {
-                ui.scroll_to_rect(r, Some(egui::Align::Center));
-                app.ui.project_panel.reveal = None;
-            }
+
             if let Some(s) = c.stack
                 && s == c.item
                 && let Some(n) = stack_n.get(&s)
