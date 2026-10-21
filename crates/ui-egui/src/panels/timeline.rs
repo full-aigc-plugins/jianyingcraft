@@ -36,6 +36,24 @@ const SNAP_PX: f32 = 9.0;
 /// 剪映工作区的轨道头宽度：≤96 px（Premiere 式工作区仍用用户设置的宽度）。
 pub(super) const COMPACT_HEADER_W: f32 = 96.0;
 
+// ---------------------------------------------------------------------------
+// 剪映专业版片段配色（对照 jianying-pro-reference.png 的主轨/音频轨）
+// ---------------------------------------------------------------------------
+
+/// 主轨视频片段底色：深灰蓝（相邻轨道交替时略亮一档，避免整片轨道糊成一块）。
+const JY_VIDEO_CLIP: Color32 = Color32::from_rgb(0x22, 0x30, 0x3a);
+const JY_VIDEO_CLIP_ALT: Color32 = Color32::from_rgb(0x26, 0x34, 0x3f);
+/// 音频片段底色：偏绿灰。
+const JY_AUDIO_CLIP: Color32 = Color32::from_rgb(0x23, 0x40, 0x2f);
+const JY_AUDIO_CLIP_ALT: Color32 = Color32::from_rgb(0x27, 0x45, 0x34);
+/// 标签色只作轻微着色（≤12 %），保留用户自定义标签的可辨识度，又不偏离剪映的中性底色。
+const CLIP_LABEL_TINT: f32 = 0.12;
+/// 片段内文字：11 px、白色 90 %。
+const CLIP_TEXT_SIZE: f32 = 11.0;
+const CLIP_TEXT_COLOR: Color32 = Color32::from_rgb(0xe6, 0xe6, 0xe6);
+/// 未选中片段的细白边框（预乘白，约 18 % 不透明度，压在深灰蓝底上）。
+const CLIP_HAIRLINE: Color32 = Color32::from_rgba_premultiplied(46, 46, 46, 46);
+
 /// The Timeline's track-header width. `Jianying` uses the narrow, two-row header (≤96 px);
 /// every other workspace keeps `TimelineView::header_w` (Premiere's wide header).
 pub(super) fn header_width(app: &FilmcraftApp) -> f32 {
@@ -564,7 +582,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             let x0 = layout.x_of(start);
             let x1 = layout.x_of(start + dur);
             let body = Rect::from_min_max(pos2(x0, r.rect.min.y + 1.0), pos2(x1.max(x0 + 1.0), r.rect.max.y - 1.0));
-            draw_clip(app, &ctx, &p, body, it, r.kind, selection.contains(&it.id), &t, rate);
+            draw_clip(app, &ctx, &p, body, it, r.kind, r.index, selection.contains(&it.id), &t, rate);
             if volume_line {
                 super::timeline_volume::paint(&p, body, it);
             }
@@ -588,7 +606,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 && let Some((_, it)) = seq.find_item(*cid)
             {
                 let body = Rect::from_min_max(pos2(layout.x_of(*start), r.rect.min.y + 1.0), pos2(layout.x_of(*start + *dur), r.rect.max.y - 1.0));
-                draw_clip(app, &ctx, &p, body, it, r.kind, true, &t, rate);
+                draw_clip(app, &ctx, &p, body, it, r.kind, r.index, true, &t, rate);
                 if volume_line {
                     super::timeline_volume::paint(&p, body, it);
                 }
@@ -599,7 +617,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 && mt.unwrap_or(home) == r.track
             {
                 let body = Rect::from_min_max(pos2(layout.x_of(*start), r.rect.min.y + 1.0), pos2(layout.x_of(*start + *dur), r.rect.max.y - 1.0));
-                draw_clip(app, &ctx, &p, body, it, r.kind, true, &t, rate);
+                draw_clip(app, &ctx, &p, body, it, r.kind, r.index, true, &t, rate);
                 app.auto.add(&format!("timeline.clip.{}.copy", cid.0), body.intersect(content), &it.name);
             }
         }
@@ -840,6 +858,25 @@ fn lighten(c: Color32, f: f32) -> Color32 {
     Color32::from_rgb(l(c.r()), l(c.g()), l(c.b()))
 }
 
+/// 把标签色按 `amount` 混进剪映底色：保留少量标签可辨识度，又不让高饱和标签色盖住深灰蓝/绿灰。
+fn tint(base: Color32, label: Color32, amount: f32) -> Color32 {
+    let a = amount.clamp(0.0, 1.0);
+    let mix = |b: u8, l: u8| (f32::from(b) * (1.0 - a) + f32::from(l) * a).round() as u8;
+    Color32::from_rgb(mix(base.r(), label.r()), mix(base.g(), label.g()), mix(base.b(), label.b()))
+}
+
+/// 剪映专业版片段底色：视频深灰蓝、音频绿灰；`track_index` 偶数/奇数轨道交替略变。
+fn clip_base(kind: TrackKind, track_index: usize, label: Color32) -> Color32 {
+    let alternate = !track_index.is_multiple_of(2);
+    let base = match (kind, alternate) {
+        (TrackKind::Video, false) => JY_VIDEO_CLIP,
+        (TrackKind::Video, true) => JY_VIDEO_CLIP_ALT,
+        (TrackKind::Audio, false) => JY_AUDIO_CLIP,
+        (TrackKind::Audio, true) => JY_AUDIO_CLIP_ALT,
+    };
+    tint(base, label, CLIP_LABEL_TINT)
+}
+
 /// Whether a clip lies inside the sequence In/Out range (Premiere brightens those).
 fn in_range(app: &FilmcraftApp, it: &TrackItem) -> bool {
     let Some(q) = app.session.active_sequence() else { return false };
@@ -914,14 +951,16 @@ fn draw_clip(
     body: Rect,
     it: &TrackItem,
     kind: TrackKind,
+    track_index: usize,
     selected: bool,
     t: &Tokens,
     rate: FrameRate,
 ) {
-    let base = label_color(app, it.label);
+    // 剪映式底色：深灰蓝（视频）/ 绿灰（音频），标签色只做轻微着色。
+    let base = clip_base(kind, track_index, label_color(app, it.label));
     let inr = in_range(app, it);
     let fill = if !it.enabled {
-        // Keep the configured label hue when disabled, with an opaque darker fill (#1190).
+        // 禁用片段保持同一底色相位的暗色，仍然不透明（#1190）。
         Color32::from_rgb(base.r() / 2, base.g() / 2, base.b() / 2)
     } else if inr {
         lighten(base, 0.12)
@@ -989,8 +1028,8 @@ fn draw_clip(
             pos2(body.min.x + 6.0, body.min.y + 8.5),
             Align2::LEFT_CENTER,
             label,
-            Tokens::ui(11.5),
-            if it.enabled { Color32::from_rgb(0xd9, 0xd9, 0xd9) } else { t.text_faint },
+            Tokens::ui(CLIP_TEXT_SIZE),
+            if it.enabled { CLIP_TEXT_COLOR } else { t.text_faint },
         );
     }
     // fx badge right-aligned in the header (italic-ish "fx")
@@ -1022,9 +1061,11 @@ fn draw_clip(
     }
     // 1 pt black separator at the clip's left edge
     p.line_segment([pos2(body.min.x + 0.5, body.min.y), pos2(body.min.x + 0.5, body.max.y)], Stroke::new(1.0, Color32::BLACK));
+    // 剪映：未选中片段是细白边框；选中片段换成主题 accent（青色 #00C1CD）2 px 描边。
     if selected {
-        p.rect_stroke(body.shrink(1.0), 0.0, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
-        p.rect_stroke(body, 0.0, Stroke::new(2.0, t.clip_selected_border), StrokeKind::Inside);
+        p.rect_stroke(body.shrink(0.5), 0.0, Stroke::new(2.0, t.accent), StrokeKind::Inside);
+    } else {
+        p.rect_stroke(body, 0.0, Stroke::new(1.0, CLIP_HAIRLINE), StrokeKind::Inside);
     }
 }
 
@@ -1268,8 +1309,11 @@ fn draw_transition(p: &egui::Painter, r: Rect, trn: &filmcraft_project::Transiti
     if r.width() > 34.0 && !audio {
         let name = trn.effect.def().map(|d| d.name).unwrap_or(&trn.effect.effect);
         let tr = Rect::from_min_size(r.min + vec2(2.0, 2.0), vec2((r.width() - 4.0).min(80.0), 13.0));
-        cp.rect_filled(tr, 0.0, Color32::from_black_alpha(170));
-        cp.text(pos2(tr.min.x + 3.0, tr.center().y), Align2::LEFT_CENTER, name, Tokens::ui(10.5), Color32::from_rgb(0xd9, 0xd9, 0xd9));
+        // 转场标签保持小胶囊：圆角取高度的一半，11 px 白字压在深色半透明底上。
+        let pill = tr.height() / 2.0;
+        cp.rect_filled(tr, pill, Color32::from_black_alpha(170));
+        cp.rect_stroke(tr, pill, Stroke::new(1.0, Color32::from_white_alpha(38)), StrokeKind::Inside);
+        cp.text(pos2(tr.min.x + 6.0, tr.center().y), Align2::LEFT_CENTER, name, Tokens::ui(10.5), CLIP_TEXT_COLOR);
     }
 }
 

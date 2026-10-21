@@ -373,12 +373,24 @@ pub fn workspace(name: &str) -> DockNode {
         ),
         // JianyingCraft 的剪映式四区：左素材 / 中预览 / 右属性+关键帧 / 底时间轴。
         // 作为可选工作区提供，不改变上游默认布局的行为契约。
+        //
+        // 宽屏 1280×1024 对齐剪映专业版截图：左素材 30%、右属性 22%、预览区高约 58%、
+        // 时间轴约 34%（≈348 pt）。这些是**窗口**比例，而 dock 自己还要扣掉剪映 rail 和
+        // 4 pt 分隔条，所以不能直接写 0.30 / 0.22：
+        // - 横向：窗口 1280 − 2 px 边框 − 72 pt rail = 1206 pt dock；去掉 4 pt 分隔条后
+        //   可用 1202 pt。左 384 pt（30%）→ Ratio 384/1202 ≈ 0.32；右 282 pt（22%）是
+        //   第二层 hsplit 的第二子项，中间剩 532 pt，该层可用 814 pt → Ratio 532/814
+        //   ≈ 0.653。
+        // - 竖向：`Ratio` 表示**上半区**（预览）的占比。窗口 1024 − 56 pt 顶栏 − 1 pt
+        //   上边距 − 22 pt 状态栏 ≈ 945 pt body，再让 4 pt 分隔条后 941 pt；时间轴
+        //   348 pt（34%）→ 上半区 Ratio = (941 − 348)/941 ≈ 0.63。
+        // 用户拖动/保存过的布局由 `saved_docking` 优先，这里只改内置默认值。
         "Jianying" => vsplit(
-            Ratio(0.62),
+            Ratio(0.63),
             hsplit(
-                FixedA(320.0),
+                Ratio(0.32),
                 tabs(&[Project, MediaBrowser, Libraries, Info], 0),
-                hsplit(FixedB(340.0), tabs(&[Program], 0), tabs(&[Properties, EffectControls, EssentialGraphics, Text], 0)),
+                hsplit(Ratio(0.653), tabs(&[Program], 0), tabs(&[Properties, EffectControls, EssentialGraphics, Text], 0)),
             ),
             tabs(&[Timeline, AudioMeters], 0),
         ),
