@@ -1246,7 +1246,7 @@ impl FilmcraftApp {
                 }
                 contents.push(content);
             } else {
-                let chrome = dock::draw_group_chrome_details(ui, group, &seqs, &t, &mut self.auto);
+                let chrome = dock::draw_group_chrome_details_with(ui, group, &seqs, &t, &mut self.auto, jianying);
                 if let Some(target) = target(group, chrome.tabs, true) {
                     targets.push(target);
                 }
@@ -1404,7 +1404,8 @@ impl FilmcraftApp {
                 panels: floating.panels.clone(),
                 active: floating.active,
             };
-            let chrome = dock::draw_group_chrome_details(ui, &group, seqs, &t, &mut self.auto);
+            let chrome =
+                dock::draw_group_chrome_details_with(ui, &group, seqs, &t, &mut self.auto, class == LayoutClass::Wide && self.ui.workspace == "Jianying");
             actions.extend(chrome.actions);
             if let Some(active) = group.panels.get(group.active).copied() {
                 self.panel_body(ui, active, group.content, class);

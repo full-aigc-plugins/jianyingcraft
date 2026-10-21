@@ -1,8 +1,11 @@
 //! Premiere-style docking: a tree of splits and tab groups. Panels are rounded frames separated by
 //! thin gutters; each group has a tab strip (active tab bright, with a panel menu "≡"); the focused
 //! panel gets a blue outline. Gutters drag to resize; workspaces are serialized trees.
+//!
+//! 剪映专业版工作区（`Jianying`）里，含时间轴的组不画这条页签条：换成一条 26 pt 的序列标题行
+//! （[`draw_jianying_timeline_header`]），序列切换改由标题行上的 ▾ 列表承担。
 
-use egui::{Align2, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
+use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use serde::{Deserialize, Serialize};
 
 use craft_ui::layout::{ResizeHandle, ResizeHandleStyle, SplitAxis, SplitSize as SharedSplitSize, split_rect};
@@ -712,10 +715,29 @@ pub struct Chrome {
 }
 
 pub fn draw_group_chrome_details(ui: &mut egui::Ui, g: &Group, seqs: &SeqTabs, t: &Tokens, reg: &mut crate::automation::Registry) -> Chrome {
+    draw_group_chrome_details_with(ui, g, seqs, t, reg, false)
+}
+
+/// [`draw_group_chrome_details`]，外加「剪映工作区」开关。
+///
+/// `jianying` 为真且该组含 [`PanelKind::Timeline`] 时不画 Premiere 的页签条，改画一条 26 pt 的
+/// 序列标题行（见 [`draw_jianying_timeline_header`]）；其余组、其余工作区一律照旧，页签条原样保留。
+pub fn draw_group_chrome_details_with(
+    ui: &mut egui::Ui,
+    g: &Group,
+    seqs: &SeqTabs,
+    t: &Tokens,
+    reg: &mut crate::automation::Registry,
+    jianying: bool,
+) -> Chrome {
     let mut actions = Vec::new();
     let mut tab_rects: Vec<(PanelKind, Rect)> = Vec::new();
     let painter = ui.painter().clone();
     painter.rect_filled(g.rect, t.radius, t.panel_bg);
+    // 剪映专业版的时间轴组没有页签条：换成轻量标题行，序列切换改由标题行右端的 ▾ 承担。
+    if jianying && g.panels.contains(&PanelKind::Timeline) {
+        return draw_jianying_timeline_header(ui, g, seqs, t, reg);
+    }
     let active_panel = g.panels.get(g.active).copied();
     let compact = g.panels.len() == 1 && g.panels[0].compact();
     // A narrow header grip moves the entire panel, including Timeline panels whose tabs
@@ -995,6 +1017,199 @@ pub fn draw_group_chrome_details(ui: &mut egui::Ui, g: &Group, seqs: &SeqTabs, t
     Chrome { actions, tabs: tab_rects }
 }
 
+/// 剪映专业版时间轴组标题行的高度。
+///
+/// 对照截图：时间轴上沿没有 Premiere 的 32 pt 页签条，只有一条贴边的轻量头。这里取 26 pt——
+/// 比页签条矮 6 pt，视觉上退成「标题」而不是「页签」。
+pub const JIANYING_TIMELINE_HEADER_H: f32 = 26.0;
+
+/// 把标题按字符边界收缩到 `max_w` 以内，末尾补省略号。
+///
+/// 序列名是用户数据（可以任意长）：直接画会溢出到右侧按钮上，按字节切又会切坏 UTF-8，所以按
+/// `char` 逐个回退并实测宽度。文本很短，代价可以忽略。
+fn fit_title(painter: &egui::Painter, text: &str, font: egui::FontId, max_w: f32) -> String {
+    let width = |s: &str| painter.layout_no_wrap(s.to_owned(), font.clone(), Color32::WHITE).size().x;
+    if max_w <= 0.0 {
+        return String::new();
+    }
+    if width(text) <= max_w {
+        return text.to_owned();
+    }
+    let mut out = text.to_owned();
+    while !out.is_empty() {
+        // `pop` 按 `char` 去掉一个完整字符，不会切在 UTF-8 中间。
+        out.pop();
+        let candidate = format!("{out}…");
+        if width(&candidate) <= max_w {
+            return candidate;
+        }
+    }
+    String::new()
+}
+
+/// 剪映专业版时间轴组的轻量标题行（26 pt），取代 Premiere 的页签条。
+///
+/// 左边是**序列名**（semibold 12、白色），紧跟一个 ▾；点它弹出「打开中的序列」列表，选一条就走
+/// [`DockAction::OpenSequence`]，与原来点序列页签等价。组里还有 Audio Meters 时，右端再放一个
+/// 「音频电平表」文字按钮：点它切到电平表，电平表已经显示时点它回到时间轴。
+///
+/// 页签虽然不画，自动化契约不缩水：`panel.tab.Timeline`、`panel.tab.AudioMeters`、
+/// `panel.menu.Timeline`、`panel.menu.AudioMeters`、`panel.drag.<活动面板>` 照旧登记；序列列表的
+/// 每一项是 `timeline.seq.item.<id>`，▾ 本身是 `timeline.seq.pick`。
+fn draw_jianying_timeline_header(ui: &mut egui::Ui, g: &Group, seqs: &SeqTabs, t: &Tokens, reg: &mut crate::automation::Registry) -> Chrome {
+    let mut actions = Vec::new();
+    let mut tab_rects: Vec<(PanelKind, Rect)> = Vec::new();
+    let painter = ui.painter().clone();
+    let Some(active) = g.panels.get(g.active).copied() else {
+        return Chrome { actions, tabs: tab_rects };
+    };
+    // dock 按 `t.tab_h` 预留了页签条的高度；这里只用其中的 26 pt，余下的留作时间轴上方的呼吸位。
+    let reserved = (g.content.min.y - g.rect.min.y).max(0.0);
+    let row_h = JIANYING_TIMELINE_HEADER_H.min(reserved);
+    // 组太矮 / 太窄时不画标题行：宁可少一条装饰，也不把时间轴压没。
+    if row_h < 14.0 || g.rect.width() < 64.0 {
+        return Chrome { actions, tabs: tab_rects };
+    }
+    let strip = Rect::from_min_size(g.rect.min, vec2(g.rect.width(), row_h));
+    painter.rect_filled(strip, 0.0, t.tl_header_bg);
+    painter.line_segment([strip.left_bottom(), strip.right_bottom()], Stroke::new(1.0, t.text_dim.gamma_multiply(0.22)));
+
+    // 左端 10 pt 拖拽手柄：整组移动 / 拖出浮动，行为与原页签条一致。
+    let grip = Rect::from_min_size(strip.min, vec2(10.0_f32.min(strip.width()), row_h));
+    let grip_response = ui.interact(grip, egui::Id::new(("panel-drag", g.path.clone())), Sense::drag());
+    reg.add_response(&format!("panel.drag.{}", active.id()), &grip_response, "Move panel");
+    if grip_response.drag_started() {
+        actions.push(DockAction::BeginDrag(active));
+    }
+
+    // 右端从右往左排：「音频电平表」文字按钮（组里还有电平表时才有）。
+    let mut right = strip.max.x - 6.0;
+    let mut meters_response: Option<egui::Response> = None;
+    if g.panels.contains(&PanelKind::AudioMeters) && row_h >= 20.0 && strip.width() > 150.0 {
+        let meters_active = active == PanelKind::AudioMeters;
+        let label = crate::i18n::t(PanelKind::AudioMeters.title()).to_string();
+        let color = if meters_active { t.text } else { t.text_dim };
+        let galley = painter.layout_no_wrap(label.clone(), Tokens::ui(11.5), color);
+        let galley_size = galley.size();
+        let w = (galley_size.x + 14.0).min(strip.width() * 0.4);
+        let rect = Rect::from_min_size(pos2(right - w, strip.center().y - 9.0), vec2(w, 18.0));
+        right = rect.min.x - 6.0;
+        let response = ui.interact(rect, egui::Id::new(("jy-meters", g.path.clone())), Sense::click());
+        response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, meters_active, label.as_str()));
+        reg.add_response(&format!("panel.tab.{}", PanelKind::AudioMeters.id()), &response, PanelKind::AudioMeters.title());
+        if response.hovered() || meters_active {
+            painter.rect_filled(rect, 4.0, t.hover);
+        }
+        painter.galley(pos2(rect.center().x - galley_size.x / 2.0, rect.center().y - galley_size.y / 2.0), galley, color);
+        paint_widget_focus(&painter, &response, t);
+        tab_rects.push((PanelKind::AudioMeters, rect));
+        if response.clicked() {
+            // 已经停在电平表上时，这个按钮就是「回到时间轴」。
+            let target = if meters_active { PanelKind::Timeline } else { PanelKind::AudioMeters };
+            actions.push(DockAction::Activate(target));
+            actions.push(DockAction::Focus(target));
+        }
+        if response.secondary_clicked() {
+            let at = response.interact_pointer_pos().unwrap_or(rect.left_bottom());
+            actions.push(DockAction::PanelMenu(PanelKind::AudioMeters, at));
+        }
+        meters_response = Some(response);
+    }
+
+    // 序列名 + ▾：一段连续的点选区域（整块都能点开列表，不必瞄准小箭头）。
+    let active_seq = seqs.open.iter().find(|(id, _)| seqs.active == Some(*id));
+    let has_list = !seqs.open.is_empty();
+    let fallback = crate::i18n::t(PanelKind::Timeline.title()).to_string();
+    let title = active_seq.map(|(_, name)| name.clone()).unwrap_or(fallback);
+    let title_x = strip.min.x + 12.0;
+    let arrow_gap = if has_list { 20.0 } else { 0.0 };
+    let font = Tokens::semibold(12.0);
+    let title = fit_title(&painter, &title, font.clone(), (right - title_x - arrow_gap).max(0.0));
+    let galley = painter.layout_no_wrap(title.clone(), font, Color32::WHITE);
+    let (title_w, title_h) = (galley.size().x, galley.size().y);
+    let pick_rect = Rect::from_min_size(pos2(title_x - 6.0, strip.min.y), vec2((title_w + arrow_gap + 8.0).clamp(0.0, strip.width()), row_h));
+    let pick_response = ui.interact(pick_rect, egui::Id::new(("panel-tab", g.path.clone(), "Timeline")), Sense::click());
+    pick_response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, active == PanelKind::Timeline, title.as_str()));
+    reg.add_response(&format!("panel.tab.{}", PanelKind::Timeline.id()), &pick_response, PanelKind::Timeline.title());
+    tab_rects.push((PanelKind::Timeline, pick_rect));
+    if pick_response.hovered() {
+        painter.rect_filled(pick_rect, 4.0, t.hover);
+    }
+    paint_widget_focus(&painter, &pick_response, t);
+    painter.galley(pos2(title_x, strip.center().y - title_h / 2.0), galley, Color32::WHITE);
+    let arrow = Rect::from_center_size(pos2(title_x + title_w + 10.0, strip.center().y), vec2(14.0, 14.0));
+    if has_list {
+        icons::paint(&painter, arrow, Icon::ChevronDown, if pick_response.hovered() { t.text } else { t.text_dim });
+        reg.add("timeline.seq.pick", arrow, "Open sequences");
+    }
+    if pick_response.secondary_clicked() {
+        let at = pick_response.interact_pointer_pos().unwrap_or(pick_rect.left_bottom());
+        actions.push(DockAction::PanelMenu(PanelKind::Timeline, at));
+    }
+    // 中键关掉当前序列（原页签条上中键点序列页签就是这件事）。
+    if pick_response.middle_clicked()
+        && let Some((id, _)) = active_seq
+    {
+        actions.push(DockAction::CloseSequence(*id));
+    }
+
+    // ▾ 弹出打开中的序列列表；点一条就切过去，与原页签条上的序列页签等价。
+    if has_list {
+        let pick_id = egui::Id::new(("jy-seq-list", g.path.clone()));
+        let ctx = ui.ctx().clone();
+        let open = ctx.data(|d| d.get_temp::<bool>(pick_id)).unwrap_or(false);
+        let clicked = pick_response.clicked();
+        if clicked {
+            ctx.data_mut(|d| d.insert_temp(pick_id, !open));
+        }
+        let opened = if clicked { !open } else { open };
+        if opened {
+            let mut picked: Option<u64> = None;
+            let anchor = pick_rect.left_bottom();
+            let area = egui::Area::new(pick_id.with("area")).order(egui::Order::Foreground).pivot(Align2::LEFT_TOP).fixed_pos(anchor).show(&ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(160.0);
+                    // 打开很多序列时列表滚动，而不是把窗口撑出屏幕。
+                    egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                        for (id, name) in &seqs.open {
+                            let label = if seqs.active == Some(*id) { format!("✓ {name}") } else { name.clone() };
+                            let row = ui.button(label);
+                            reg.add_response(&format!("timeline.seq.item.{id}"), &row, name);
+                            if row.clicked() {
+                                picked = Some(*id);
+                            }
+                        }
+                    });
+                });
+            });
+            if let Some(id) = picked {
+                actions.push(DockAction::OpenSequence(id));
+                actions.push(DockAction::Focus(PanelKind::Timeline));
+                ctx.data_mut(|d| d.remove::<bool>(pick_id));
+            } else if !clicked && area.response.clicked_elsewhere() {
+                // 打开的那一帧里 `clicked_elsewhere` 必然为真（弹层当时还不存在），跳过。
+                ctx.data_mut(|d| d.remove::<bool>(pick_id));
+            }
+        }
+    }
+
+    // 电平表的按钮与序列名各自登记自己的面板菜单，切面板不会让菜单消失。
+    if let Some(response) = &meters_response {
+        reg.add_response(&format!("panel.menu.{}", PanelKind::AudioMeters.id()), response, "panel menu");
+    }
+    reg.add_response(&format!("panel.menu.{}", PanelKind::Timeline.id()), &pick_response, "panel menu");
+
+    // 指针在组里按下就把焦点交给指针下那个面板（与页签条同一套规则）。
+    if ui.rect_contains_pointer(g.rect) && ui.input(|i| i.pointer.any_pressed()) {
+        let panel = ui
+            .input(|i| i.pointer.interact_pos().filter(|_| i.pointer.primary_pressed() || i.pointer.secondary_pressed()))
+            .and_then(|pos| tab_rects.iter().find(|(_, rect)| rect.contains(pos)).map(|(panel, _)| *panel))
+            .unwrap_or(active);
+        actions.push(DockAction::Focus(panel));
+    }
+    Chrome { actions, tabs: tab_rects }
+}
+
 /// Paint once after the group's contents so child backgrounds cannot hide its focus (#1075).
 pub(crate) fn paint_group_focus(ui: &egui::Ui, group: &Group, focused: PanelKind, tokens: &Tokens) {
     if group.panels.get(group.active).copied() == Some(focused) {
@@ -1026,6 +1241,156 @@ fn node_at<'a>(node: &'a DockNode, path: &[bool]) -> Option<&'a DockNode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::theme::ThemeKind;
+
+    /// 一帧的最小外壳：装好字体，用一个 `Group` 跑一遍页签条，返回本帧的 [`Chrome`]。
+    fn frame(ctx: &egui::Context, g: &Group, seqs: &SeqTabs, jianying: bool, events: Vec<egui::Event>, reg: &mut crate::automation::Registry) -> Chrome {
+        let t = Tokens::for_kind(ThemeKind::Dark);
+        let mut out: Option<Chrome> = None;
+        let input = egui::RawInput { events, screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(640.0, 420.0))), ..Default::default() };
+        let mut output = ctx.run_ui(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                out = Some(draw_group_chrome_details_with(ui, g, seqs, &t, reg, jianying));
+            });
+        });
+        // 测试里没有渲染后端：贴图增量必须显式丢弃，否则 epaint 在 drop 时会 panic。
+        output.textures_delta.clear();
+        out.unwrap_or_default()
+    }
+
+    fn press(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE }
+    }
+
+    /// 本帧登记过的元素矩形（按 id）。
+    fn rect_of(reg: &crate::automation::Registry, id: &str) -> Option<Rect> {
+        reg.elements.iter().find(|e| e.id == id).map(|e| Rect::from_min_size(pos2(e.rect[0], e.rect[1]), vec2(e.rect[2], e.rect[3])))
+    }
+
+    fn has(reg: &crate::automation::Registry, id: &str) -> bool {
+        reg.elements.iter().any(|e| e.id == id)
+    }
+
+    /// 剪映式时间轴组：序列 + 电平表。
+    fn timeline_group(active: usize) -> Group {
+        Group {
+            path: "t".to_string(),
+            rect: Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 260.0)),
+            // dock 按 `t.tab_h` 预留了 32 pt 的页签条高度。
+            content: Rect::from_min_size(pos2(0.0, 32.0), vec2(600.0, 228.0)),
+            panels: vec![PanelKind::Timeline, PanelKind::AudioMeters],
+            active,
+        }
+    }
+
+    fn two_sequences() -> SeqTabs {
+        SeqTabs { open: vec![(7, "Main Edit".to_string()), (9, "Second".to_string())], active: Some(7) }
+    }
+
+    /// 剪映工作区的时间轴组要换成 26 pt 轻量头，而不是 32 pt 的页签条；自动化 id 一个都不能少。
+    #[test]
+    fn jianying_timeline_group_gets_a_light_header_instead_of_the_tab_strip() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx, &Tokens::for_kind(ThemeKind::Dark));
+        let g = timeline_group(0);
+        let seqs = two_sequences();
+        let mut reg = crate::automation::Registry::default();
+        let chrome = frame(&ctx, &g, &seqs, true, Vec::new(), &mut reg);
+
+        // 轻量头只有 26 pt；页签条是 t.tab_h（32 pt）。序列名占满整条头，电平表按钮落在头里面。
+        let (_, header) = chrome.tabs.iter().find(|(panel, _)| *panel == PanelKind::Timeline).expect("the sequence name is a drop target");
+        assert!((header.height() - JIANYING_TIMELINE_HEADER_H).abs() < 0.01, "the sequence header is {} pt tall, want 26", header.height());
+        let (_, meters) = chrome.tabs.iter().find(|(panel, _)| *panel == PanelKind::AudioMeters).expect("the meters button is a drop target");
+        assert!(meters.max.y <= header.max.y + 0.01, "the meters button spills below the 26 pt header: {meters:?} vs {header:?}");
+        assert!(meters.min.x > header.min.x + 60.0, "the meters button should sit at the right end of the header: {meters:?}");
+
+        // 页签不画了，但契约在：tab / menu / drag 三个前缀照旧，序列 ▾ 也有自己的 id。
+        for id in ["panel.tab.Timeline", "panel.tab.AudioMeters", "panel.menu.Timeline", "panel.menu.AudioMeters", "panel.drag.Timeline", "timeline.seq.pick"] {
+            assert!(has(&reg, id), "the light header no longer registers {id}");
+        }
+    }
+
+    /// 其余工作区照旧：同一个组还是 32 pt 的页签条（回归护栏）。
+    #[test]
+    fn other_workspaces_keep_the_tab_strip() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx, &Tokens::for_kind(ThemeKind::Dark));
+        let tab_h = Tokens::for_kind(ThemeKind::Dark).tab_h;
+        let g = timeline_group(0);
+        let seqs = two_sequences();
+        let mut reg = crate::automation::Registry::default();
+        let chrome = frame(&ctx, &g, &seqs, false, Vec::new(), &mut reg);
+        let height = chrome.tabs.iter().find(|(panel, _)| *panel == PanelKind::Timeline).map(|(_, rect)| rect.height()).unwrap_or(0.0);
+        assert!((height - tab_h).abs() < 0.01, "the Premiere tab strip should still be {tab_h} pt, got {height}");
+        assert!(has(&reg, "panel.tab.Timeline"), "the tab strip still registers the Timeline tab");
+    }
+
+    /// 点序列名弹出打开中的序列列表，选一条就走 `OpenSequence`（与原序列页签等价）。
+    #[test]
+    fn the_sequence_list_switches_sequences() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx, &Tokens::for_kind(ThemeKind::Dark));
+        let g = timeline_group(0);
+        let seqs = two_sequences();
+        let mut reg = crate::automation::Registry::default();
+        let _ = frame(&ctx, &g, &seqs, true, Vec::new(), &mut reg);
+        let pick = rect_of(&reg, "panel.tab.Timeline").expect("the sequence name is drawn").center();
+
+        reg.begin_frame();
+        let _ = frame(&ctx, &g, &seqs, true, vec![egui::Event::PointerMoved(pick)], &mut reg);
+        reg.begin_frame();
+        let _ = frame(&ctx, &g, &seqs, true, vec![press(pick, true)], &mut reg);
+        reg.begin_frame();
+        let _ = frame(&ctx, &g, &seqs, true, vec![press(pick, false)], &mut reg);
+
+        reg.begin_frame();
+        let _ = frame(&ctx, &g, &seqs, true, vec![egui::Event::PointerMoved(egui::Pos2::new(600.0, 400.0))], &mut reg);
+        // 列表列出全部打开中的序列，活动那条打勾。
+        let first = rect_of(&reg, "timeline.seq.item.7").expect("the open list should list the active sequence");
+        let second = rect_of(&reg, "timeline.seq.item.9").expect("the open list should list every open sequence");
+        assert!(first.height() > 0.0 && second.height() > 0.0, "the list rows have no size: {first:?} {second:?}");
+
+        reg.begin_frame();
+        let _ = frame(&ctx, &g, &seqs, true, vec![egui::Event::PointerMoved(second.center())], &mut reg);
+        reg.begin_frame();
+        let _ = frame(&ctx, &g, &seqs, true, vec![press(second.center(), true)], &mut reg);
+        reg.begin_frame();
+        let chrome = frame(&ctx, &g, &seqs, true, vec![press(second.center(), false)], &mut reg);
+        assert!(chrome.actions.contains(&DockAction::OpenSequence(9)), "picking a sequence did not activate it: {:?}", chrome.actions);
+    }
+
+    /// 「音频电平表」按钮：点它切到电平表，电平表已经显示时点它回到时间轴。
+    #[test]
+    fn the_meters_button_toggles_the_audio_meters() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx, &Tokens::for_kind(ThemeKind::Dark));
+        let seqs = two_sequences();
+        let mut reg = crate::automation::Registry::default();
+
+        let g = timeline_group(0);
+        let _ = frame(&ctx, &g, &seqs, true, Vec::new(), &mut reg);
+        let button = rect_of(&reg, "panel.tab.AudioMeters").expect("the meters button is drawn").center();
+        reg.begin_frame();
+        let _ = frame(&ctx, &g, &seqs, true, vec![egui::Event::PointerMoved(button)], &mut reg);
+        reg.begin_frame();
+        let _ = frame(&ctx, &g, &seqs, true, vec![press(button, true)], &mut reg);
+        reg.begin_frame();
+        let chrome = frame(&ctx, &g, &seqs, true, vec![press(button, false)], &mut reg);
+        assert!(chrome.actions.contains(&DockAction::Activate(PanelKind::AudioMeters)), "the meters button did not switch panels: {:?}", chrome.actions);
+
+        // 电平表已经是活动面板：同一个按钮现在负责回到时间轴。
+        let g = timeline_group(1);
+        let mut reg = crate::automation::Registry::default();
+        let _ = frame(&ctx, &g, &seqs, true, Vec::new(), &mut reg);
+        let button = rect_of(&reg, "panel.tab.AudioMeters").expect("the meters button is drawn").center();
+        reg.begin_frame();
+        let _ = frame(&ctx, &g, &seqs, true, vec![egui::Event::PointerMoved(button)], &mut reg);
+        reg.begin_frame();
+        let _ = frame(&ctx, &g, &seqs, true, vec![press(button, true)], &mut reg);
+        reg.begin_frame();
+        let chrome = frame(&ctx, &g, &seqs, true, vec![press(button, false)], &mut reg);
+        assert!(chrome.actions.contains(&DockAction::Activate(PanelKind::Timeline)), "the meters button did not go back to the timeline: {:?}", chrome.actions);
+    }
 
     #[test]
     fn split_first_never_panics_on_tiny_areas() {

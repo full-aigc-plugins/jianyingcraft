@@ -1494,6 +1494,32 @@ pub fn ruler_steps(frame_px: f64, base: i64) -> (i64, i64) {
     (minor, label_step)
 }
 
+/// 剪映式标尺的两档步进，单位是帧：`(次刻度, 主标签)`。
+///
+/// 剪映的标尺按帧编号（起点 `00:00:00:00`，之后是 `10f`、`20f`…），不按时间码，所以步进从
+/// 10 帧起步；标签挤不下时沿 10 → 20 → 30 → 60 → 120 … 的阶梯放宽，窄屏自然落到 20f / 30f
+/// 一档。次刻度 5 帧一格，太密时退到主步进的 1/2（再不行与主刻度同档），保证每个主标签都
+/// 落在刻度上。只改变标签与刻度，`Layout` 的坐标与点击语义不变。
+pub fn jianying_ruler_steps(frame_px: f64) -> (i64, i64) {
+    // 帧标签（`10f`）只有时间码的三分之一宽：34 pt 就够读，次刻度 6 pt 就分得开。
+    const LABEL_PT: f64 = 34.0;
+    const TICK_PT: f64 = 6.0;
+    let steps = [10, 20, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 18000, 36000];
+    // NaN / 负值（损坏的缩放）在比较里一律为假，落到最宽的一档。
+    let label = steps.iter().copied().find(|s| *s as f64 * frame_px >= LABEL_PT).unwrap_or(36000);
+    // 剪映的次刻度是 5 帧一格；挤不下就退到主步进的 1/2，再不行与主刻度同档。
+    // 阶梯里的主步进都是 10 的倍数，5 帧的次刻度必然落在每个主标签上。
+    let minor = [5, label / 2].into_iter().find(|m| *m >= 1 && *m as f64 * frame_px >= TICK_PT).unwrap_or(label);
+    (minor, label)
+}
+
+/// 剪映标尺的主标签：起点是完整时间码（`00:00:00:00`），之后按帧编号（`10f`、`20f`…）。
+///
+/// 负帧（损坏的滚动量）按 0 处理，标签与刻度仍落在同一 `Tick` 上；只影响文字。
+fn jianying_ruler_label(f: i64, rate: FrameRate, drop_frame: bool) -> String {
+    if f > 0 { format!("{f}f") } else { format_time(rate.tick_of(f.max(0)), rate, drop_frame, TimeDisplay::Timecode, 48000) }
+}
+
 fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequence, layout: &Layout, t: &Tokens, seq_id: ItemId) {
     let p = ui.painter().clone();
     let rate = seq.settings.frame_rate;
@@ -1587,7 +1613,11 @@ fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequenc
     let marker_y = ruler.min.y + 2.0;
     let label_y = ruler.min.y + 24.0;
     let tick_base = ruler.max.y - 3.0;
-    let (minor, label_step) = ruler_steps(layout.pps / rate.as_f64(), rate.timecode_base());
+    let (minor, label_step) = if app.ui.workspace == "Jianying" {
+        jianying_ruler_steps(layout.pps / rate.as_f64())
+    } else {
+        ruler_steps(layout.pps / rate.as_f64(), rate.timecode_base())
+    };
     // In/Out band
     if seq.mark_in.is_some() || seq.mark_out.is_some() {
         let a = layout.x_of(seq.mark_in.unwrap_or(Tick::ZERO));
@@ -1613,14 +1643,21 @@ fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequenc
     }
     let f0 = rate.frame_at(layout.tick_at(ruler.min.x)).max(0);
     let f1 = rate.frame_at(layout.tick_at(ruler.max.x)) + 1;
+    // 剪映：主刻度是白色小竖线、按帧编号；其它工作区保持时间码与统一刻度色。
+    let jianying = app.ui.workspace == "Jianying";
+    let major_tick = if jianying { Color32::from_rgb(0xf2, 0xf2, 0xf2) } else { t.tl_ruler_tick };
     let mut f = (f0 / minor) * minor;
     while f <= f1 {
         let x = layout.x_of(rate.tick_of(f));
         let major = f % label_step == 0;
         let h = if major { 10.0 } else { 4.0 };
-        clip.line_segment([pos2(x, tick_base - h), pos2(x, tick_base)], Stroke::new(1.0, t.tl_ruler_tick));
+        clip.line_segment([pos2(x, tick_base - h), pos2(x, tick_base)], Stroke::new(1.0, if major { major_tick } else { t.tl_ruler_tick }));
         if major {
-            let label = format_time(rate.tick_of(f), rate, seq.settings.drop_frame, TimeDisplay::Timecode, 48000);
+            let label = if jianying {
+                jianying_ruler_label(f, rate, seq.settings.drop_frame)
+            } else {
+                format_time(rate.tick_of(f), rate, seq.settings.drop_frame, TimeDisplay::Timecode, 48000)
+            };
             clip.text(pos2(x + 1.0, label_y), Align2::CENTER_CENTER, label, Tokens::ui(11.0), t.tl_ruler_text);
         }
         f += minor;
@@ -3534,5 +3571,56 @@ mod ruler_tests {
         }
         let (minor, label) = ruler_steps(1.0, i64::MAX);
         assert!(minor >= 1 && label >= 1 && label % minor == 0, "an unrepresentable rate: tick {minor}, label {label}");
+    }
+}
+
+#[cfg(test)]
+mod jianying_ruler_tests {
+    use super::{jianying_ruler_label, jianying_ruler_steps};
+    use filmcraft_time::FrameRate;
+
+    /// 剪映标尺只按帧编号：10 帧起步，每个主标签都落在刻度上，标签与次刻度都不挤在一起。
+    #[test]
+    fn labels_count_frames_and_sit_on_evenly_spaced_ticks() {
+        for frame_px in [0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 4.0, 8.0, 20.0, 400.0] {
+            let (minor, label) = jianying_ruler_steps(frame_px);
+            let what = format!("{frame_px} pt a frame: tick {minor}, label {label}");
+            assert!(label >= 10, "labels count at least ten frames: {what}");
+            assert!(minor >= 1, "{what}");
+            assert_eq!(label % minor, 0, "every label must fall on a tick: {what}");
+            assert!(label as f64 * frame_px >= 34.0 || label == 36000, "labels at least 34 pt apart: {what}");
+            assert!(minor as f64 * frame_px >= 6.0 || minor == label, "ticks at least 6 pt apart: {what}");
+        }
+    }
+
+    /// 1280 宽、200 pt 一秒时 25 fps 的标尺是 10 帧一档，中间 5 帧一根次刻度。
+    #[test]
+    fn two_hundred_points_a_second_labels_every_ten_frames() {
+        assert_eq!(jianying_ruler_steps(200.0 / 25.0), (5, 10));
+        // 100 pt 一秒时 `10f` 仍有 40 pt 宽，保持 10 帧一档。
+        assert_eq!(jianying_ruler_steps(100.0 / 25.0), (5, 10));
+        // 默认的 40 pt 一秒太窄，按需求退到 30 帧一档（窄屏的 20/30 帧档）。
+        assert_eq!(jianying_ruler_steps(40.0 / 25.0), (5, 30));
+        // 放大到 400 pt 一秒仍是 10 帧一档，不会比 10 帧更密。
+        assert_eq!(jianying_ruler_steps(400.0 / 25.0), (5, 10));
+    }
+
+    /// 起点是时间码（`00:00:SS:FF`），之后全是帧编号。
+    #[test]
+    fn the_origin_is_a_timecode_and_the_rest_are_frame_counts() {
+        assert_eq!(jianying_ruler_label(0, FrameRate::FPS_25, false), "00:00:00:00");
+        assert_eq!(jianying_ruler_label(10, FrameRate::FPS_25, false), "10f");
+        assert_eq!(jianying_ruler_label(250, FrameRate::FPS_25, false), "250f");
+        // 负帧（损坏的滚动量）仍给出可读的起点，不 panic。
+        assert_eq!(jianying_ruler_label(-7, FrameRate::FPS_25, false), "00:00:00:00");
+    }
+
+    /// 损坏的缩放值仍给出可用且可整除的步进。
+    #[test]
+    fn damaged_zooms_give_usable_strides() {
+        for frame_px in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0] {
+            let (minor, label) = jianying_ruler_steps(frame_px);
+            assert!(minor >= 1 && label >= 10 && label % minor == 0, "{frame_px} pt a frame: tick {minor}, label {label}");
+        }
     }
 }
